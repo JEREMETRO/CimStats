@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CIM2 存档统计</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div><p class="eyebrow">CITIES IN MOTION 2</p><h1>存档统计工作台</h1></div>
+      <div id="status" class="status">等待存档</div>
+    </header>
+    <section id="dropzone" class="dropzone" tabindex="0">
+      <input id="file" type="file" accept=".save" hidden>
+      <div class="drop-icon">↓</div>
+      <h2>拖入 .save 存档</h2>
+      <p>或点击选择文件，随后自动解码并生成线路与公司工作簿</p>
+      <button id="choose" type="button">选择存档</button>
+    </section>
+    <section id="workspace" class="workspace hidden">
+      <div class="toolbar">
+        <label>线路筛选 <input id="query" type="search" placeholder="公司、线路号或制式"></label>
+        <label>公司 <select id="company"><option value="">全部公司</option></select></label>
+        <label>制式 <select id="mode"><option value="">全部制式</option></select></label>
+        <span id="count" class="count"></span>
+      </div>
+      <div class="grid">
+        <div class="panel table-panel"><div class="panel-head"><h2>线路信息</h2></div><div class="table-wrap"><table id="lines"><thead></thead><tbody></tbody></table></div></div>
+        <div class="panel detail-panel"><div class="panel-head"><h2 id="detail-title">选择线路</h2></div><div id="detail" class="detail-empty">从左侧选择线路查看时刻表</div></div>
+      </div>
+      <div class="downloads"><a id="line-download" class="button" href="#">下载线路工作簿</a><a id="company-download" class="button secondary" href="#">下载公司工作簿</a></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

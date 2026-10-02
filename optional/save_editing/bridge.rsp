@@ -1,0 +1,6 @@
+/target:library
+/nologo
+/optimize+
+/out:bin/CIM2RuntimeScheduleBridge.dll
+/r:"D:/Program Files (x86)/Steam/steamapps/common/Cities in Motion 2/CIM2_Data/Managed/Assembly-CSharp.dll"
+CIM2RuntimeScheduleBridge.cs

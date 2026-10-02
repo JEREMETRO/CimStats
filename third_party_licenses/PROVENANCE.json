@@ -1,0 +1,868 @@
+{
+  "date": "2026-10-02",
+  "scope": "License/notice texts only; selected from actual old EXE matching components, not all installed Python distributions",
+  "license_count": 68,
+  "files": [
+    {
+      "source_candidate": "new-files/third_party_licenses/beautifulsoup4-4.14.3.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/beautifulsoup4-4.14.3.dist-info/licenses/LICENSE",
+      "sha256": "55b4d8d4b1e5bc86d10efac91b74c87bcb77526b0f5b9edaf8b9cd2adc7397b2",
+      "bytes": 1441,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Download, https://www.crummy.com/software/BeautifulSoup/bs4/download/",
+        "Homepage, https://www.crummy.com/software/BeautifulSoup/bs4/"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/certifi-2026.4.22.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/certifi-2026.4.22.dist-info/licenses/LICENSE",
+      "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "bytes": 989,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/certifi/python-certifi"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/cffi-2.1.1.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/cffi-2.1.1.dist-info/licenses/LICENSE",
+      "sha256": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63",
+      "bytes": 1123,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://cffi.readthedocs.io/",
+        "Changelog, https://cffi.readthedocs.io/en/latest/whatsnew.html",
+        "Download, https://github.com/python-cffi/cffi/releases",
+        "Contact, https://groups.google.com/forum/#!forum/python-cffi",
+        "Source Code, https://github.com/python-cffi/cffi",
+        "Issue Tracker, https://github.com/python-cffi/cffi/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/chardet-7.4.3.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/chardet-7.4.3.dist-info/licenses/LICENSE",
+      "sha256": "0517f574b0183d991eb7a9ec5dbf0add8d8ade5ac00341bd28ca0c18914d52e5",
+      "bytes": 653,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/chardet/chardet",
+        "Repository, https://github.com/chardet/chardet",
+        "Bug Tracker, https://github.com/chardet/chardet/issues",
+        "Documentation, https://chardet.readthedocs.io",
+        "Changelog, https://chardet.readthedocs.io/en/latest/changelog.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/charset_normalizer-3.4.7.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/charset_normalizer-3.4.7.dist-info/licenses/LICENSE",
+      "sha256": "18577485d3704f1a479ded8e573c0976cfed315fd2fd17983fa988da4c2f70d1",
+      "bytes": 1092,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Changelog, https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+        "Documentation, https://charset-normalizer.readthedocs.io/",
+        "Code, https://github.com/jawah/charset_normalizer",
+        "Issue tracker, https://github.com/jawah/charset_normalizer/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/clr_loader-0.3.1.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/clr_loader-0.3.1.dist-info/licenses/LICENSE",
+      "sha256": "dd6bdca10cdc3b24c6b0b6cef5fd611b7feb6917f127833283ddcdb310d3b453",
+      "bytes": 1079,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Sources, https://github.com/pythonnet/clr-loader",
+        "Documentation, https://pythonnet.github.io/clr-loader/"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/colorama-0.4.6.dist-info/licenses/LICENSE.txt",
+      "destination": "third_party_licenses/colorama-0.4.6.dist-info/licenses/LICENSE.txt",
+      "sha256": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318",
+      "bytes": 1491,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/tartley/colorama"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/contourpy-1.3.3.dist-info/LICENSE",
+      "destination": "third_party_licenses/contourpy-1.3.3.dist-info/LICENSE",
+      "sha256": "8553102e03001dd966278098cc027d0683c412b34ea141351b060be4330f39a9",
+      "bytes": 1563,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/contourpy/contourpy",
+        "Changelog, https://contourpy.readthedocs.io/en/latest/changelog.html",
+        "Documentation, https://contourpy.readthedocs.io",
+        "Repository, https://github.com/contourpy/contourpy"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/cssselect-1.4.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/cssselect-1.4.0.dist-info/licenses/LICENSE",
+      "sha256": "5c8da9f744e0afba81a48c9b5dbe73048f798b3287d6f1af8a05ee08ebb10892",
+      "bytes": 1517,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/scrapy/cssselect"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/cycler-0.12.1.dist-info/LICENSE",
+      "destination": "third_party_licenses/cycler-0.12.1.dist-info/LICENSE",
+      "sha256": "f1218143d766da3fea66f13396b7f15df46a83303f29bf96ba6e98eb4d42f408",
+      "bytes": 1497,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://matplotlib.org/cycler/",
+        "repository, https://github.com/matplotlib/cycler"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/darkdetect-0.8.0.dist-info/LICENSE",
+      "destination": "third_party_licenses/darkdetect-0.8.0.dist-info/LICENSE",
+      "sha256": "69bb84664eff933addcb271c866d67622d9c2c53a5bda31b1a7523569c250afe",
+      "bytes": 1495,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, http://github.com/albertosottile/darkdetect",
+        "download, http://github.com/albertosottile/darkdetect/releases"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/iniconfig-2.3.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/iniconfig-2.3.0.dist-info/licenses/LICENSE",
+      "sha256": "3409fa91f7ace557894632676656e32264fe5ef7581535725dc9a23774551bd4",
+      "bytes": 1098,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/pytest-dev/iniconfig"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/jinja2-3.1.6.dist-info/licenses/LICENSE.txt",
+      "destination": "third_party_licenses/jinja2-3.1.6.dist-info/licenses/LICENSE.txt",
+      "sha256": "3b49dcee4105eb37bac10faf1be260408fe85d252b8e9df2e0979fc1e094437b",
+      "bytes": 1475,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Changes, https://jinja.palletsprojects.com/changes/",
+        "Chat, https://discord.gg/pallets",
+        "Documentation, https://jinja.palletsprojects.com/",
+        "Donate, https://palletsprojects.com/donate",
+        "Source, https://github.com/pallets/jinja/"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/kiwisolver-1.5.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/kiwisolver-1.5.0.dist-info/licenses/LICENSE",
+      "sha256": "b24c2bf6185f31a124ad6bacccae3071bdc7ad7882de00b00110aa62abb76a15",
+      "bytes": 3360,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://github.com/nucleic/kiwi",
+        "documentation, https://kiwisolver.readthedocs.io/en/latest/",
+        "repository, https://github.com/nucleic/kiwi",
+        "changelog, https://github.com/nucleic/kiwi/blob/main/releasenotes.rst"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/lxml-6.1.0.dist-info/licenses/LICENSE.txt",
+      "destination": "third_party_licenses/lxml-6.1.0.dist-info/licenses/LICENSE.txt",
+      "sha256": "e7c3ce8d76331b0101cc46790ab43958ea90a364bcf962ed8763d5a818340e69",
+      "bytes": 1538,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/lxml/lxml",
+        "Bug Tracker, https://bugs.launchpad.net/lxml"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/lxml-6.1.0.dist-info/licenses/LICENSES.txt",
+      "destination": "third_party_licenses/lxml-6.1.0.dist-info/licenses/LICENSES.txt",
+      "sha256": "ce53f508d0cb88bdb4621e236ca34881a3fa1805f97dfccf38960128a4e2ead9",
+      "bytes": 1543,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/lxml/lxml",
+        "Bug Tracker, https://bugs.launchpad.net/lxml"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/markupsafe-3.0.3.dist-info/licenses/LICENSE.txt",
+      "destination": "third_party_licenses/markupsafe-3.0.3.dist-info/licenses/LICENSE.txt",
+      "sha256": "4631ec0db5fd90a547e336817264c6798214338146f8ac94b4a57f96ee8c9ec4",
+      "bytes": 1503,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Donate, https://palletsprojects.com/donate",
+        "Documentation, https://markupsafe.palletsprojects.com/",
+        "Changes, https://markupsafe.palletsprojects.com/page/changes/",
+        "Source, https://github.com/pallets/markupsafe/",
+        "Chat, https://discord.gg/pallets"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/matplotlib/mpl-data/fonts/ttf/LICENSE_DEJAVU",
+      "destination": "third_party_licenses/matplotlib/mpl-data/fonts/ttf/LICENSE_DEJAVU",
+      "sha256": "d75938dec098f06f0ac3c00853065d94f020be1c3c62ef1dc2975ba15b4d9b0e",
+      "bytes": 4816,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://matplotlib.org",
+        "Download, https://matplotlib.org/stable/install/index.html",
+        "Documentation, https://matplotlib.org",
+        "Source Code, https://github.com/matplotlib/matplotlib",
+        "Bug Tracker, https://github.com/matplotlib/matplotlib/issues",
+        "Forum, https://discourse.matplotlib.org/",
+        "Donate, https://numfocus.org/donate-to-matplotlib"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/matplotlib/mpl-data/fonts/ttf/LICENSE_STIX",
+      "destination": "third_party_licenses/matplotlib/mpl-data/fonts/ttf/LICENSE_STIX",
+      "sha256": "bab3d31dfef07f483624f2f65f2711e76065b8e7273278b1c071ede1041c9959",
+      "bytes": 5476,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://matplotlib.org",
+        "Download, https://matplotlib.org/stable/install/index.html",
+        "Documentation, https://matplotlib.org",
+        "Source Code, https://github.com/matplotlib/matplotlib",
+        "Bug Tracker, https://github.com/matplotlib/matplotlib/issues",
+        "Forum, https://discourse.matplotlib.org/",
+        "Donate, https://numfocus.org/donate-to-matplotlib"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/matplotlib-3.10.9.dist-info/LICENSE",
+      "destination": "third_party_licenses/matplotlib-3.10.9.dist-info/LICENSE",
+      "sha256": "dbb9ad7495a83b0f2f48c94b06e23020587d82f8d1492dcb717fb1ebc2f86c18",
+      "bytes": 40129,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://matplotlib.org",
+        "Download, https://matplotlib.org/stable/install/index.html",
+        "Documentation, https://matplotlib.org",
+        "Source Code, https://github.com/matplotlib/matplotlib",
+        "Bug Tracker, https://github.com/matplotlib/matplotlib/issues",
+        "Forum, https://discourse.matplotlib.org/",
+        "Donate, https://numfocus.org/donate-to-matplotlib"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/more_itertools-11.0.2.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/more_itertools-11.0.2.dist-info/licenses/LICENSE",
+      "sha256": "09f1c8c9e941af3e584d59641ea9b87d83c0cb0fd007eb5ef391a7e2643c1a46",
+      "bytes": 1053,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://more-itertools.readthedocs.io/en/stable/",
+        "Homepage, https://github.com/more-itertools/more-itertools"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/numpy/core/include/numpy/random/LICENSE.txt",
+      "destination": "third_party_licenses/numpy/core/include/numpy/random/LICENSE.txt",
+      "sha256": "d544761558b510866c21f7e8a2d5716fca76e0b98117e3b6b86314db7244d150",
+      "bytes": 1039,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://numpy.org",
+        "Documentation, https://numpy.org/doc/",
+        "Source, https://github.com/numpy/numpy",
+        "Download, https://pypi.org/project/numpy/#files",
+        "Tracker, https://github.com/numpy/numpy/issues",
+        "Release notes, https://numpy.org/doc/stable/release"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/numpy/ma/LICENSE",
+      "destination": "third_party_licenses/numpy/ma/LICENSE",
+      "sha256": "d78dbb208b80d92b4d333e41a4baae50d12444f46e53199fa7726a91de6e2da7",
+      "bytes": 1616,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://numpy.org",
+        "Documentation, https://numpy.org/doc/",
+        "Source, https://github.com/numpy/numpy",
+        "Download, https://pypi.org/project/numpy/#files",
+        "Tracker, https://github.com/numpy/numpy/issues",
+        "Release notes, https://numpy.org/doc/stable/release"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/numpy/random/LICENSE.md",
+      "destination": "third_party_licenses/numpy/random/LICENSE.md",
+      "sha256": "b4bc2f4fa1c95778f1ed3dd8f14706bece399475b978f9f34b5d3cd72521b48a",
+      "bytes": 3582,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://numpy.org",
+        "Documentation, https://numpy.org/doc/",
+        "Source, https://github.com/numpy/numpy",
+        "Download, https://pypi.org/project/numpy/#files",
+        "Tracker, https://github.com/numpy/numpy/issues",
+        "Release notes, https://numpy.org/doc/stable/release"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/numpy-1.26.4.dist-info/LICENSE.txt",
+      "destination": "third_party_licenses/numpy-1.26.4.dist-info/LICENSE.txt",
+      "sha256": "e261222a74adff28f88160dac1c5cb302d93b67e9ca989eb83bf311e11a9970a",
+      "bytes": 48688,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://numpy.org",
+        "Documentation, https://numpy.org/doc/",
+        "Source, https://github.com/numpy/numpy",
+        "Download, https://pypi.org/project/numpy/#files",
+        "Tracker, https://github.com/numpy/numpy/issues",
+        "Release notes, https://numpy.org/doc/stable/release"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/packaging-26.2.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/packaging-26.2.dist-info/licenses/LICENSE",
+      "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48",
+      "bytes": 197,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://packaging.pypa.io/",
+        "Source, https://github.com/pypa/packaging"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/packaging-26.2.dist-info/licenses/LICENSE.APACHE",
+      "destination": "third_party_licenses/packaging-26.2.dist-info/licenses/LICENSE.APACHE",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "bytes": 10174,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://packaging.pypa.io/",
+        "Source, https://github.com/pypa/packaging"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/packaging-26.2.dist-info/licenses/LICENSE.BSD",
+      "destination": "third_party_licenses/packaging-26.2.dist-info/licenses/LICENSE.BSD",
+      "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5",
+      "bytes": 1344,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://packaging.pypa.io/",
+        "Source, https://github.com/pypa/packaging"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pillow-12.2.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pillow-12.2.0.dist-info/licenses/LICENSE",
+      "sha256": "75bb81b58f9b39786eeb2e56a1eb829aae501042d49e1dc766ca187b6ce9656f",
+      "bytes": 78014,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Release notes, https://pillow.readthedocs.io/en/stable/releasenotes/index.html",
+        "Changelog, https://github.com/python-pillow/Pillow/releases",
+        "Documentation, https://pillow.readthedocs.io",
+        "Funding, https://tidelift.com/subscription/pkg/pypi-pillow?utm_source=pypi-pillow&utm_medium=pypi",
+        "Homepage, https://python-pillow.github.io",
+        "Mastodon, https://fosstodon.org/@pillow",
+        "Source, https://github.com/python-pillow/Pillow"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pluggy-1.6.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pluggy-1.6.0.dist-info/licenses/LICENSE",
+      "sha256": "d6b65e6c213a5d0b577911d34d6e5949b9f59d76c238c5071a2f3fc16cfb2606",
+      "bytes": 1110,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": "Installed exact-version metadata and RECORD"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/psutil-7.2.2.dist-info/LICENSE",
+      "destination": "third_party_licenses/psutil-7.2.2.dist-info/LICENSE",
+      "sha256": "c7adc4d5d1337a548b967421f1fbe258b93033a0417708fd6f4e38f8ecbceb80",
+      "bytes": 1577,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": "https://github.com/giampaolo/psutil"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pycparser-3.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pycparser-3.0.dist-info/licenses/LICENSE",
+      "sha256": "0c846399369ea76ddd7b5c44fe6d16497415fcf015f5cbb508c24bf98b81c5b1",
+      "bytes": 1543,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/eliben/pycparser"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pygments-2.21.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pygments-2.21.0.dist-info/licenses/LICENSE",
+      "sha256": "a9d66f1d526df02e29dce73436d34e56e8632f46c275bbdffc70569e882f9f17",
+      "bytes": 1331,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://pygments.org",
+        "Documentation, https://pygments.org/docs",
+        "Source, https://github.com/pygments/pygments",
+        "Bug Tracker, https://github.com/pygments/pygments/issues",
+        "Changelog, https://github.com/pygments/pygments/blob/master/CHANGES"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pyparsing-3.3.2.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pyparsing-3.3.2.dist-info/licenses/LICENSE",
+      "sha256": "a5425f9dc14ac74d4c5f0b679e941f2442e32cca7452a4418d5b1a49893ebe4e",
+      "bytes": 1062,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://pyparsing-docs.readthedocs.io/en/latest/",
+        "Homepage, https://github.com/pyparsing/pyparsing/",
+        "Source, https://github.com/pyparsing/pyparsing.git"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pyside6_fluent_widgets-1.11.3.dist-info/LICENSE",
+      "destination": "third_party_licenses/pyside6_fluent_widgets-1.11.3.dist-info/LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://qfluentwidgets.com/",
+        "Source Code, https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/PySide6",
+        "Bug Tracker, https://github.com/zhiyiYo/PyQt-Fluent-Widgets/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pysidesix_frameless_window-0.8.2.dist-info/LICENSE",
+      "destination": "third_party_licenses/pysidesix_frameless_window-0.8.2.dist-info/LICENSE",
+      "sha256": "a5681bf9b05db14d86776930017c647ad9e6e56ff6bbcfdf21e5848288dfaf1b",
+      "bytes": 7651,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": "https://github.com/zhiyiYo/PyQt-Frameless-Window/tree/PySide6"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pytest-9.1.1.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pytest-9.1.1.dist-info/licenses/LICENSE",
+      "sha256": "ca836a5f9ecca3b2f350230faa20a48fb8b145653b5568d784862df864706b9b",
+      "bytes": 1091,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Changelog, https://docs.pytest.org/en/stable/changelog.html",
+        "Contact, https://docs.pytest.org/en/stable/contact.html",
+        "Funding, https://docs.pytest.org/en/stable/sponsor.html",
+        "Homepage, https://docs.pytest.org/en/latest/",
+        "Source, https://github.com/pytest-dev/pytest",
+        "Tracker, https://github.com/pytest-dev/pytest/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/python_dateutil-2.9.0.post0.dist-info/LICENSE",
+      "destination": "third_party_licenses/python_dateutil-2.9.0.post0.dist-info/LICENSE",
+      "sha256": "ba00f51a0d92823b5a1cde27d8b5b9d2321e67ed8da9bc163eff96d5e17e577e",
+      "bytes": 2889,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Documentation, https://dateutil.readthedocs.io/en/stable/",
+        "Source, https://github.com/dateutil/dateutil"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pythonnet-3.1.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pythonnet-3.1.0.dist-info/licenses/LICENSE",
+      "sha256": "e1dc3a6ff017a6800dc27a7220500f512b95fbcd996d38ebbbff85c693245369",
+      "bytes": 1104,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://pythonnet.github.io/",
+        "Sources, https://github.com/pythonnet/pythonnet"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/pyyaml-6.0.3.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/pyyaml-6.0.3.dist-info/licenses/LICENSE",
+      "sha256": "8d3928f9dc4490fd635707cb88eb26bd764102a7282954307d3e5167a577e8a4",
+      "bytes": 1101,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Bug Tracker, https://github.com/yaml/pyyaml/issues",
+        "CI, https://github.com/yaml/pyyaml/actions",
+        "Documentation, https://pyyaml.org/wiki/PyYAMLDocumentation",
+        "Mailing lists, http://lists.sourceforge.net/lists/listinfo/yaml-core",
+        "Source Code, https://github.com/yaml/pyyaml"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/scipy/_lib/_uarray/LICENSE",
+      "destination": "third_party_licenses/scipy/_lib/_uarray/LICENSE",
+      "sha256": "e4c4acc31e8287066d7c995d26e3ef902ca1977ee187b260b11c278366503811",
+      "bytes": 1543,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://scipy.org/",
+        "documentation, https://docs.scipy.org/doc/scipy/",
+        "source, https://github.com/scipy/scipy",
+        "download, https://github.com/scipy/scipy/releases",
+        "tracker, https://github.com/scipy/scipy/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/scipy/fft/_pocketfft/LICENSE.md",
+      "destination": "third_party_licenses/scipy/fft/_pocketfft/LICENSE.md",
+      "sha256": "c04661685cff9d8035fe1c4c3ab357e7f7633cafc06a73e9d90c3c5fede8a86a",
+      "bytes": 1523,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://scipy.org/",
+        "documentation, https://docs.scipy.org/doc/scipy/",
+        "source, https://github.com/scipy/scipy",
+        "download, https://github.com/scipy/scipy/releases",
+        "tracker, https://github.com/scipy/scipy/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/scipy/integrate/LICENSE_DOP",
+      "destination": "third_party_licenses/scipy/integrate/LICENSE_DOP",
+      "sha256": "6cc2ed6e35b8f376ff3d8f86aeef4e0c34c2309bd6f4a0565936d577839ba023",
+      "bytes": 3648,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://scipy.org/",
+        "documentation, https://docs.scipy.org/doc/scipy/",
+        "source, https://github.com/scipy/scipy",
+        "download, https://github.com/scipy/scipy/releases",
+        "tracker, https://github.com/scipy/scipy/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/scipy/spatial/qhull_src/COPYING_QHULL.txt",
+      "destination": "third_party_licenses/scipy/spatial/qhull_src/COPYING_QHULL.txt",
+      "sha256": "2a6ebb495e26dd5f88cbc40c593733da6edb27b64936f70409cd5a1acafb1c32",
+      "bytes": 1759,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://scipy.org/",
+        "documentation, https://docs.scipy.org/doc/scipy/",
+        "source, https://github.com/scipy/scipy",
+        "download, https://github.com/scipy/scipy/releases",
+        "tracker, https://github.com/scipy/scipy/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/scipy-1.17.1.dist-info/LICENSE.txt",
+      "destination": "third_party_licenses/scipy-1.17.1.dist-info/LICENSE.txt",
+      "sha256": "564d63dbef2ef3eb1dec94908966d3edf5f11c487ee2cf2baf8bf3faef01bdd9",
+      "bytes": 46756,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "homepage, https://scipy.org/",
+        "documentation, https://docs.scipy.org/doc/scipy/",
+        "source, https://github.com/scipy/scipy",
+        "download, https://github.com/scipy/scipy/releases",
+        "tracker, https://github.com/scipy/scipy/issues"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/backports.tarfile-1.2.0.dist-info/LICENSE",
+      "destination": "third_party_licenses/setuptools/_vendor/backports.tarfile-1.2.0.dist-info/LICENSE",
+      "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741",
+      "bytes": 1023,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/jaraco.text-4.0.0.dist-info/LICENSE",
+      "destination": "third_party_licenses/setuptools/_vendor/jaraco.text-4.0.0.dist-info/LICENSE",
+      "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741",
+      "bytes": 1023,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/jaraco_context-6.1.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/setuptools/_vendor/jaraco_context-6.1.0.dist-info/licenses/LICENSE",
+      "sha256": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683",
+      "bytes": 1076,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/jaraco_functools-4.4.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/setuptools/_vendor/jaraco_functools-4.4.0.dist-info/licenses/LICENSE",
+      "sha256": "5a57cb4db85e2a2dd88c290628908add57e3451449e0a9a71fdfb38776fd759d",
+      "bytes": 1076,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE",
+      "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48",
+      "bytes": 197,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.APACHE",
+      "destination": "third_party_licenses/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.APACHE",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "bytes": 10174,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.BSD",
+      "destination": "third_party_licenses/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.BSD",
+      "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5",
+      "bytes": 1344,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/tomli-2.4.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/setuptools/_vendor/tomli-2.4.0.dist-info/licenses/LICENSE",
+      "sha256": "b80816b0d530b8accb4c2211783790984a6e3b61922c2b5ee92f3372ab2742fe",
+      "bytes": 1072,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/_vendor/wheel-0.46.3.dist-info/licenses/LICENSE.txt",
+      "destination": "third_party_licenses/setuptools/_vendor/wheel-0.46.3.dist-info/licenses/LICENSE.txt",
+      "sha256": "30c23618679108f3e8ea1d2a658c7ca417bdfc891c98ef1a89fa4ff0c9828654",
+      "bytes": 1107,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/config/_validate_pyproject/NOTICE",
+      "destination": "third_party_licenses/setuptools/config/_validate_pyproject/NOTICE",
+      "sha256": "09c9bcea95ca086f8bc5bed174e40bc835b297d40fb5f86bbbb570fe0a5581a7",
+      "bytes": 18737,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools/config/NOTICE",
+      "destination": "third_party_licenses/setuptools/config/NOTICE",
+      "sha256": "2dddf08818297a3b89d43d95ff659d8da85741108c9136dfa3a4d856c0623bd8",
+      "bytes": 493,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/setuptools-84.0.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/setuptools-84.0.0.dist-info/licenses/LICENSE",
+      "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741",
+      "bytes": 1023,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/six-1.17.0.dist-info/LICENSE",
+      "destination": "third_party_licenses/six-1.17.0.dist-info/LICENSE",
+      "sha256": "4375ba20e2b9c6c4e7cad2940a628fd90e95cc3d50ee92aae755715d8ba1fbd0",
+      "bytes": 1066,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": "https://github.com/benjaminp/six"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/soupsieve-2.8.3.dist-info/licenses/LICENSE.md",
+      "destination": "third_party_licenses/soupsieve-2.8.3.dist-info/licenses/LICENSE.md",
+      "sha256": "76a0acdb98c3a63681e20b6f096699ef8cad5fb35d56eef8387e0fa71d797a9a",
+      "bytes": 1096,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Homepage, https://github.com/facelessuser/soupsieve"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/typing_extensions-4.15.0.dist-info/licenses/LICENSE",
+      "destination": "third_party_licenses/typing_extensions-4.15.0.dist-info/licenses/LICENSE",
+      "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+      "bytes": 13936,
+      "reason": "Component/module observed in existing EXE; package license/notice retained",
+      "upstream": [
+        "Bug Tracker, https://github.com/python/typing_extensions/issues",
+        "Changes, https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+        "Documentation, https://typing-extensions.readthedocs.io/",
+        "Home, https://github.com/python/typing_extensions",
+        "Q & A, https://github.com/python/typing/discussions",
+        "Repository, https://github.com/python/typing_extensions"
+      ]
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/upstream-sources/Cython-3.2.4/COPYING.txt",
+      "destination": "third_party_licenses/upstream-sources/Cython-3.2.4/COPYING.txt",
+      "sha256": "e1eb1c49a8508e8173dac30157e4a6439a44ad8846194746c424fbc3fc2b95d7",
+      "bytes": 756,
+      "reason": "Missing wheel license; exact-version official PyPI sdist hash verified",
+      "upstream": "https://files.pythonhosted.org/packages/91/85/7574c9cd44b69a27210444b6650f6477f56c75fee1b70d7672d3e4166167/cython-3.2.4.tar.gz"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/upstream-sources/Cython-3.2.4/LICENSE.txt",
+      "destination": "third_party_licenses/upstream-sources/Cython-3.2.4/LICENSE.txt",
+      "sha256": "9568a2b155e66ac3e0ba1fd80b52b827b9460e6cf6f233125e7cbca8e206ddc3",
+      "bytes": 10174,
+      "reason": "Missing wheel license; exact-version official PyPI sdist hash verified",
+      "upstream": "https://files.pythonhosted.org/packages/91/85/7574c9cd44b69a27210444b6650f6477f56c75fee1b70d7672d3e4166167/cython-3.2.4.tar.gz"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/upstream-sources/openpyxl-3.1.5/LICENCE.rst",
+      "destination": "third_party_licenses/upstream-sources/openpyxl-3.1.5/LICENCE.rst",
+      "sha256": "0c84bb42f5d367e5ebf9fc2dde35b16141df5ee0fdc189250858bc6c5560f69e",
+      "bytes": 1131,
+      "reason": "Missing wheel license; exact-version official PyPI sdist hash verified",
+      "upstream": "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/upstream-sources/et_xmlfile-2.0.0/LICENCE.python",
+      "destination": "third_party_licenses/upstream-sources/et_xmlfile-2.0.0/LICENCE.python",
+      "sha256": "4ccdaaebc0f44b83720ec0399bb7ab329adce067dd62f73c5535a2dc05628ab2",
+      "bytes": 14688,
+      "reason": "Missing wheel license; exact-version official PyPI sdist hash verified",
+      "upstream": "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/upstream-sources/et_xmlfile-2.0.0/LICENCE.rst",
+      "destination": "third_party_licenses/upstream-sources/et_xmlfile-2.0.0/LICENCE.rst",
+      "sha256": "0c84bb42f5d367e5ebf9fc2dde35b16141df5ee0fdc189250858bc6c5560f69e",
+      "bytes": 1131,
+      "reason": "Missing wheel license; exact-version official PyPI sdist hash verified",
+      "upstream": "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/CPython/LICENSE.txt",
+      "destination": "third_party_licenses/CPython/LICENSE.txt",
+      "sha256": "e502c6b880ff58d614901495a9009c136539cd0b1e2a2abb8fc00b934c203419",
+      "bytes": 36874,
+      "reason": "python312.dll present in existing EXE; full CPython terms retained",
+      "upstream": "Installed CPython 3.12.10 LICENSE.txt"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/Qt/GPL-3.0.txt",
+      "destination": "third_party_licenses/Qt/GPL-3.0.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149,
+      "reason": "Selected Qt open-source GPL/LGPL full standard texts",
+      "upstream": "Existing exact EXE license text; Qt official 6.11 licensing"
+    },
+    {
+      "source_candidate": "new-files/third_party_licenses/Qt/LGPL-3.0.txt",
+      "destination": "third_party_licenses/Qt/LGPL-3.0.txt",
+      "sha256": "a5681bf9b05db14d86776930017c647ad9e6e56ff6bbcfdf21e5848288dfaf1b",
+      "bytes": 7651,
+      "reason": "Selected Qt open-source GPL/LGPL full standard texts",
+      "upstream": "Existing exact EXE license text; Qt official 6.11 licensing"
+    }
+  ],
+  "excluded": [
+    {
+      "package": "dnfile",
+      "reason": "No matching component in existing EXE; development/build/declared-only evidence remains in audit, not runtime license tree"
+    },
+    {
+      "package": "pyinstaller",
+      "reason": "No matching component in existing EXE; development/build/declared-only evidence remains in audit, not runtime license tree"
+    },
+    {
+      "package": "pyinstaller-hooks-contrib",
+      "reason": "No matching component in existing EXE; development/build/declared-only evidence remains in audit, not runtime license tree"
+    },
+    {
+      "path": "new-files/third_party_licenses/pyside6-6.11.2.dist-info/licenses/LicenseRef-Qt-Commercial.txt",
+      "reason": "Commercial terms not selected; not evidence of entitlement"
+    },
+    {
+      "path": "new-files/third_party_licenses/pyside6_addons-6.11.2.dist-info/licenses/LicenseRef-Qt-Commercial.txt",
+      "reason": "Commercial terms not selected; not evidence of entitlement"
+    },
+    {
+      "path": "new-files/third_party_licenses/pyside6_essentials-6.11.2.dist-info/licenses/LicenseRef-Qt-Commercial.txt",
+      "reason": "Commercial terms not selected; not evidence of entitlement"
+    },
+    {
+      "path": "new-files/third_party_licenses/setuptools/_vendor/autocommand-2.2.2.dist-info/LICENSE",
+      "reason": "Vendored distribution has no matching module in existing EXE"
+    },
+    {
+      "path": "new-files/third_party_licenses/setuptools/_vendor/importlib_metadata-8.7.1.dist-info/licenses/LICENSE",
+      "reason": "Vendored distribution has no matching module in existing EXE"
+    },
+    {
+      "path": "new-files/third_party_licenses/setuptools/_vendor/more_itertools-10.8.0.dist-info/licenses/LICENSE",
+      "reason": "Vendored distribution has no matching module in existing EXE"
+    },
+    {
+      "path": "new-files/third_party_licenses/setuptools/_vendor/platformdirs-4.4.0.dist-info/licenses/LICENSE",
+      "reason": "Vendored distribution has no matching module in existing EXE"
+    },
+    {
+      "path": "new-files/third_party_licenses/setuptools/_vendor/zipp-3.23.0.dist-info/licenses/LICENSE",
+      "reason": "Vendored distribution has no matching module in existing EXE"
+    },
+    {
+      "path": "new-files/third_party_licenses/shiboken6-6.11.2.dist-info/licenses/LicenseRef-Qt-Commercial.txt",
+      "reason": "Commercial terms not selected; not evidence of entitlement"
+    },
+    {
+      "package": "UnityPy",
+      "reason": "No matching component in existing EXE; development/build/declared-only evidence remains in audit, not runtime license tree"
+    }
+  ],
+  "future_binary_cleared": false,
+  "qt_imported": false,
+  "build_run": false
+}

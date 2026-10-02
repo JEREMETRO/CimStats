@@ -1,0 +1,3 @@
+-r requirements-desktop.txt
+pytest>=8,<10
+dnfile>=0.15
