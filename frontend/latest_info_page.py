@@ -70,35 +70,26 @@ class TodayTrendPanel(ChartPanel):
             full_names[key] = f'{full_names[key]} [{key}]'
         super().set_result(result, full_names)
 
-    def _build_legend(self, groups):
-        super()._build_legend(groups)
-        for key, button in self.legend_buttons.items():
-            if key in getattr(self, '_short_company_names', {}):
-                button.setText(self._short_company_names[key])
-                full = f'{self._raw_company_names[key]}\n公司标识：{key}'
-                button.setToolTip(full)
-                button.setAccessibleName(full)
-        self._reflow_legend()
+    def _legend_text(self, key):
+        short = getattr(self, '_short_company_names', {})
+        if self._combined_totals and key in short:
+            return short[key]
+        return super()._legend_text(key)
 
-    def _open_fullscreen(self):
-        if self.result is None:
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle(self.title_label.text())
-        dialog.setStyleSheet(f'QDialog {{background:{tokens.PAGE_BG};}}')
-        box = QVBoxLayout(dialog)
-        box.setContentsMargins(tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG)
+    def _legend_tooltip(self, key):
+        raw = getattr(self, '_raw_company_names', {})
+        if self._combined_totals and key in raw:
+            return f'{raw[key]}\n公司标识：{key}'
+        return ''
+
+    def _create_clone(self, dialog):
         clone = TodayTrendPanel(self.title_label.text(), default_mode='line', allowed_modes=('line',), parent=dialog)
-        clone.fullscreen_button.hide()
         clone._hidden_groups = set(self._hidden_groups)
         clone.set_company_palette({key: value.name() for key, value in self._company_palette.items()})
         clone.set_category_palette(self._category_palette)
         clone.set_result(self.result, self._raw_company_names)
         clone.set_axis_spec(self._axis_override)
-        box.addWidget(clone)
-        dialog.resize(1100, 700)
-        self._fullscreen_dialog = dialog
-        dialog.showMaximized()
+        return clone
 
 
 def card(name, radius=tokens.RADIUS_KPI, *, elevated=True):
@@ -394,7 +385,6 @@ class LatestInfoPage(QWidget):
         board.setContentsMargins(0, 0, 0, 0)
         board.setSpacing(0)
         self._build_header(board)
-        board.addSpacing(tokens.SPACE_XS)
         self.columns = QGridLayout()
         self.columns.setContentsMargins(0, 0, 0, 0)
         self.columns.setSpacing(12)
@@ -507,7 +497,7 @@ class LatestInfoPage(QWidget):
         self.clear_session()
 
     def _build_header(self, layout):
-        header = QWidget()
+        header = QWidget(self)
         header.setFixedHeight(40)
         row = QHBoxLayout(header)
         row.setContentsMargins(0, 0, 0, 0)
@@ -560,7 +550,10 @@ class LatestInfoPage(QWidget):
         self.open_button.setFixedHeight(36)
         self.open_button.clicked.connect(self.open_save_requested.emit)
         row.addWidget(self.open_button)
-        layout.addWidget(header)
+        # The application header owns title and actions; this row stays only
+        # as the source of the page's action signals.
+        self.page_header = header
+        header.hide()
 
     def _build_city(self, layout):
         self.city = CitySummaryCard()

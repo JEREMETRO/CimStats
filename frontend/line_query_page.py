@@ -353,7 +353,7 @@ class LinesPage(QWidget):
         self.line_table.horizontalHeader().setStretchLastSection(self.expanded)
 
     def _compact_width(self):
-        return 436 if self.width() >= 1280 else (320 if self.width() >= 1050 else 260)
+        return 436 if self.width() >= 1150 else (340 if self.width() >= 940 else 260)
 
     def _left_rect(self):
         return QRect(0,0,self.width() if self.expanded else self._compact_width(),self.height())

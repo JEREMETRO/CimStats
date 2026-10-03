@@ -76,16 +76,20 @@ def test_city_filters_use_compact_row_and_restore_company_layout():
     page.show()
     page.tab_bar.setCurrentItem('city')
     QTest.qWait(30)
-    assert page._fields[1].layout().direction() == QBoxLayout.Direction.LeftToRight
-    assert page.toolbar_grid.getItemPosition(page.toolbar_grid.indexOf(page.bottom_strip))[0] == 0
-    assert page.toolbar_grid.getItemPosition(page.toolbar_grid.indexOf(page._fields[5]))[0] == 1
-    assert page.toolbar_host.height() < 85
-    assert all(tile.height() >= 104 for tile in page.city_dashboard.tiles.values())
-    page.reflow(650)
-    assert page.toolbar_grid.getItemPosition(page.toolbar_grid.indexOf(page.bottom_strip))[0] == 1
-    page.tab_bar.setCurrentItem('company')
+    # Every tab shares one filter layout: captioned fields in one row, the
+    # actual date range on a caption line below. City hides company and mode.
+    grid = page.toolbar_grid
+    row_of = lambda widget: grid.getItemPosition(grid.indexOf(widget))[0]
+    assert page._fields[0].isHidden() and page._fields[3].isHidden()
     assert page._fields[1].layout().direction() == QBoxLayout.Direction.TopToBottom
-    assert page.bottom_strip.layout().indexOf(page.filter_detail_host) == 0
+    assert row_of(page._fields[1]) == row_of(page._fields[2]) == 0
+    assert row_of(page.filter_detail_host) == 1
+    assert page.filter_detail_host.layout().indexOf(page._fields[5]) == 0
+    assert page._fields[1].width() <= 360 and page._fields[2].width() <= 200
+    assert all(tile.height() >= 104 for tile in page.city_dashboard.tiles.values())
+    page.tab_bar.setCurrentItem('company')
+    QTest.qWait(30)
+    assert [row_of(field) for field in page._fields[:4]] == [0, 0, 0, 0]
     assert page.filter_detail_host.layout().indexOf(page._fields[5]) == 0
     page.close()
 
@@ -106,7 +110,7 @@ def test_city_fullscreen_keeps_selected_curves_mode_and_legend():
     clone.legend_buttons['WhiteCollar'].click()
     assert 'WhiteCollar' not in panel._hidden_groups
     assert set(widget.selected_curves) == {'平均', 'WhiteCollar'}
-    assert all(item.isVisible() for item, _ in panel._category_items['WhiteCollar'])
+    assert 'WhiteCollar' not in panel.chart_views[0].hidden
     panel._fullscreen_dialog.close()
     widget.close()
 
@@ -123,7 +127,8 @@ def test_city_legend_toggle_can_hide_all_and_persists_without_changing_average(t
     panel.legend_buttons['平均'].click()
     assert widget.selected_curves == ()
     assert set(panel.legend_buttons) == {'平均', 'WhiteCollar'}
-    assert all(not item.isVisible() for entries in panel._category_items.values() for item, _ in entries)
+    assert panel.chart_views[0].hidden == {'平均', 'WhiteCollar'}
+    assert not panel.chart_views[0].visible_series()
     assert widget.tiles['trip-time'].model.value == 50
     widget.close()
     restored = CityDashboard(settings)

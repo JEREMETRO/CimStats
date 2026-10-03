@@ -136,14 +136,15 @@ def test_navigation_renames_only_home_and_keeps_other_pages(window):
     assert [button.text() for button in window.nav_buttons] == ['最新信息', '线路查询', '统计数据']
     assert window.pages.count() == 3
     assert isinstance(window.pages.widget(0), LatestInfoPage)
+    # One shared header: only its title and the statistics sub-tabs change.
     window.navigate(0)
-    assert window.legacy_header.isHidden() and window.stats_header.isHidden()
+    assert window.header.title.text() == '最新信息' and window.stats_tabs.isHidden()
     window.navigate(1)
     assert window.pages.currentWidget() is window.lines_page
-    assert window.legacy_header.isVisible() and window.line_footer.isHidden()
+    assert window.header.title.text() == '线路查询' and window.stats_tabs.isHidden()
     window.navigate(2)
     assert window.pages.currentWidget() is window.statistics_page
-    assert window.stats_header.isVisible() and window.line_footer.isHidden()
+    assert window.header.title.text() == '统计数据' and window.stats_tabs.parentWidget() is window.header
 
 
 def test_reminders_have_one_home_entry_and_keep_shared_thresholds(window):
@@ -265,7 +266,8 @@ def test_reimport_clears_before_parser_runs_and_preserves_open_action(window, qt
     target.write_bytes(b'fixture')
     window.start_parse(target)
     assert controller.snapshot is None and controller.alerts_snapshot is None
-    assert not window.export_line_button.isEnabled() and not window.export_company_button.isEnabled()
+    assert not window.header.export_actions['line_workbook'].isEnabled()
+    assert not window.header.export_actions['company_workbook'].isEnabled()
     calls = []
     def open_dialog(*_args, **_kwargs):
         calls.append('open')
@@ -538,7 +540,6 @@ def test_component_statistics_has_no_second_reminder_ui(component, qt_applicatio
             statistics.reflow(width)
             statistics.set_filters_collapsed(True, animate=False)
             statistics.set_filters_collapsed(False, animate=False)
-            assert statistics.export_button.isVisibleTo(statistics)
     finally:
         statistics.stop_workers()
         statistics.close()
@@ -618,9 +619,10 @@ def test_component_shell_failure_invalidates_home(component, qt_application):
     widget = NS(setEnabled=lambda _v: None, setText=lambda _v: None, setToolTip=lambda _v: None, hide=lambda: None)
     shell = NS(_awaiting_dashboards=False, _ready_timer=NS(stop=lambda: None), loading_overlay=NS(finish=lambda: None),
                _progress_timer=NS(stop=lambda: None), cancel_action=widget, progress=widget,
-               status_label=widget, stats_file_time=widget, latest_info_controller=controller,
-               statistics_page=NS(clear_session=lambda: None), data=controller.data,
-               export_line_button=widget, export_company_button=widget)
+               latest_info_controller=controller, statistics_page=NS(clear_session=lambda: None),
+               data=controller.data, header=NS(save_chip=NS(set_context=lambda *_: None)),
+               empty_state=NS(set_note=lambda _v: None), _refresh_body=lambda: None,
+               _refresh_exports=lambda: None)
     shell_method('on_failed')(shell, '已取消解析')
     assert controller.snapshot is None and controller.alerts_snapshot is None
 

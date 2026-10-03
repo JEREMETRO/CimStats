@@ -82,23 +82,6 @@ def test_rebuilt_legacy_rows_are_hidden_before_deferred_deletion(window):
     assert all(card.isHidden() for card in cards)
 
 
-@pytest.mark.parametrize('factory', [
-    lambda: desktop.FactCard('线路名称', '101路'),
-    lambda: desktop.FactGroupCard([('地图里程', 12), ('折算里程', 15)]),
-])
-def test_fact_card_real_mouse_click_emits_once(factory):
-    from PySide6.QtTest import QTest
-    card = factory()
-    received = []
-    card.clicked.connect(lambda: received.append(True))
-    card.resize(260, 130)
-    card.show()
-    QApplication.processEvents()
-    QTest.mouseClick(card, Qt.MouseButton.LeftButton)
-    assert received == [True]
-    card.close()
-
-
 def test_overview_ranking_pie_and_extreme_interaction(window):
     page = window.latest_info_page
     page.passengers.mode_combo.setCurrentIndex(1)

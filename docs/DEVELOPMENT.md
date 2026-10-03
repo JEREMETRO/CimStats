@@ -65,6 +65,8 @@ py -3.12 -m PyInstaller --clean CIM2_SaveStats.spec
 ## 代码规范
 
 - 强调字体使用 `frontend/stats_typography.py`
+- 应用外壳（顶栏、存档信息、空状态）在 `frontend/app_shell.py`；通用小部件在 `frontend/ui_kit.py`
+- 所有图表通过 `frontend/chart_canvas.py` 绘制：调用方只构造 `ChartData`/`Series`，布局、刻度、悬停与缩放由画布负责
 - UI 遵循 Fluent 设计规范
 - 数据处理保留原始分组和完整性标记
 - 测试覆盖核心解析和统计逻辑

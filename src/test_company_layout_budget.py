@@ -21,7 +21,10 @@ def test_summary_fold_grows_charts_and_restore_preserves_objects(mode, monkeypat
     panels = list(dashboard.shared_panels.values()) or [p for g in dashboard.groups.values() for p in g.panels.values()]
     before = [p.height() for p in panels]
     views = [tuple(p.chart_views) for p in panels]
-    plots = [(view, view.chart().plotArea().height()) for p in panels for view in p.chart_views]
+    for p in panels:
+        for view in p.chart_views:
+            view.grab()
+    plots = [(view, view.plot_rect().height()) for p in panels for view in p.chart_views]
     assert plots
     snapshot, token = page.snapshot, page.token
     dashboard.set_summary_collapsed(True)
@@ -33,7 +36,9 @@ def test_summary_fold_grows_charts_and_restore_preserves_objects(mode, monkeypat
     assert len(set(samples)) > 2
     assert samples == sorted(samples)
     assert [tuple(p.chart_views) for p in panels] == views
-    assert all(view.chart().plotArea().height() > old for view, old in plots)
+    for view, _ in plots:
+        view.grab()
+    assert all(view.plot_rect().height() > old for view, old in plots)
     dashboard.set_summary_collapsed(False); QTest.qWait(400)
     assert [p.height() for p in panels] == before
     assert page.snapshot is snapshot and page.token == token
@@ -67,12 +72,12 @@ def test_period_field_keeps_primary_filters_and_actions_anchored(width):
     page = _loaded_page(); page.resize(width, 960); page.show(); page.reflow(width); QTest.qWait(50)
     grid = page.toolbar_grid
     primary = [grid.getItemPosition(grid.indexOf(field)) for field in page._fields[:4]]
-    actions = grid.getItemPosition(grid.indexOf(page.bottom_strip))
-    physical = [w.mapTo(page.filter_card, QPoint()) for w in [*page._fields[:4], page.export_button]]
+    details = grid.getItemPosition(grid.indexOf(page.filter_detail_host))
+    physical = [w.mapTo(page.filter_card, QPoint()) for w in page._fields[:4]]
     height = page.filter_card.height()
     page.compare_field.show(); page._layout_signature = None; page.reflow(width); QTest.qWait(50)
     assert [grid.getItemPosition(grid.indexOf(field)) for field in page._fields[:4]] == primary
-    assert grid.getItemPosition(grid.indexOf(page.bottom_strip)) == actions
-    assert [w.mapTo(page.filter_card, QPoint()) for w in [*page._fields[:4], page.export_button]] == physical
+    assert grid.getItemPosition(grid.indexOf(page.filter_detail_host)) == details
+    assert [w.mapTo(page.filter_card, QPoint()) for w in page._fields[:4]] == physical
     assert page.filter_card.height() == height
     page.close()

@@ -54,7 +54,7 @@ def test_loading_overlay_estimated_progress_and_failure(qt_application, monkeypa
     assert window.loading_overlay.read.text() == '当前阶段：准备图表'
     window.on_failed('验证失败')
     assert not window.loading_overlay.isVisible()
-    assert '验证失败' in window.status_label.text()
+    assert '验证失败' in window.status_text
     assert window.statusBar().isHidden()
 
 
@@ -240,13 +240,13 @@ def test_structured_progress_updates_estimate_without_showing_raw_json(qt_applic
         def update(self, elapsed, rss, stage): return 17
     window._progress_predictor = Predictor()
     window._parse_started = time.monotonic()
-    before = window.status_label.text()
+    before = window.status_text
     window.on_parse_log('CIM2_PROGRESS {"lines": 7}')
     assert observed == [{'lines': 7}]
-    assert window.status_label.text() == before
+    assert window.status_text == before
     assert window.loading_overlay.percent.text() == '预计进度：17%'
     window.on_parse_log('CIM2_PROGRESS invalid')
-    assert window.status_label.text() == before
+    assert window.status_text == before
     window._progress_predictor.actual_progress = True
     window.on_parse_log('CIM2_PROGRESS {"event":"progress","phase":"history","done":3,"total":10}')
     assert window.loading_overlay.percent.text() == '阶段进度：17%'
@@ -264,7 +264,7 @@ def test_structured_progress_updates_estimate_without_showing_raw_json(qt_applic
     window.on_parse_log('CIM2_PROGRESS {"event":"progress","phase":"validation","done":2,"total":2}')
     assert observed[-1]['done'] == 2 and observed[-1]['total'] == 2
     assert window.loading_overlay.read.text() == '当前阶段：校验输出：2/2'
-    assert window.status_label.text() == before
+    assert window.status_text == before
     window.close()
 
 
@@ -276,9 +276,8 @@ def test_filter_heights_action_widths_and_no_extra_status_row(qt_application, mo
     page = window.statistics_page
     assert {control.height() for control in (page.company_selector, page.range_combo, page.grain_combo,
             page.mode_host, page.analysis_mode_control, page.network_mode_control)} == {36}
-    assert page.export_button.width() == window.stats_open_button.width()
-    assert window.status_label.isHidden()
-    assert window.content_layout.indexOf(window.status_label) == -1
+    assert window.header.open_button.height() == window.header.export_button.height() == 36
+    assert window.statusBar().isHidden()
     window.close()
 
 

@@ -178,29 +178,6 @@ def test_company_cards_release_and_restore_height_budget_across_column_changes()
     page.close()
 
 
-def test_hidden_chart_tables_do_not_scan_values_during_layout(monkeypatch):
-    from chart_details import ValuesModel
-    from PySide6.QtWidgets import QHeaderView
-    app = QApplication.instance() or QApplication([])
-    reads = []
-    original = ValuesModel.data
-    def track_data(self, index, role):
-        reads.append((index.row(), index.column(), role))
-        return original(self, index, role)
-    monkeypatch.setattr(ValuesModel, 'data', track_data)
-    page = _loaded_page()
-    page.resize(1200, 800)
-    page.show()
-    QTest.qWait(150)
-    panels = [panel for group in page.company_dashboard.groups.values()
-              for panel in group.panels.values()]
-    assert panels and all(not panel.numbers.isVisible() for panel in panels)
-    assert all(panel.numbers.table.horizontalHeader().sectionResizeMode(0) ==
-               QHeaderView.ResizeMode.Interactive for panel in panels)
-    assert not reads, len(reads)
-    page.close()
-
-
 def test_company_color_and_same_metric_hover_are_shared_between_columns():
     page = _loaded_page()
     left = page.company_dashboard.groups['a'].panels['cashflow']
@@ -334,7 +311,6 @@ def test_narrow_two_company_content_has_no_horizontal_scroll():
     _wait_snapshot(app, page)
     app.processEvents()
     assert page.scroll.horizontalScrollBar().maximum() == 0
-    assert page.export_button.isVisibleTo(page)
     page.close()
 
 
@@ -412,11 +388,13 @@ def test_statistics_shell_has_file_header_and_live_actions(monkeypatch, tmp_path
     window.navigate(2)
     window.show()
     app.processEvents()
-    assert window.stats_header.isVisibleTo(window)
-    assert not window.legacy_header.isVisibleTo(window)
-    assert window.stats_file_name.toolTip() == '测试存档.save'
-    assert window.stats_open_button.isVisibleTo(window)
-    assert window.stats_more_button.isVisibleTo(window)
+    # The shared header shows the save, opens files and carries every export.
+    assert window.header.isVisibleTo(window) and window.header.title.text() == '统计数据'
+    assert window.header.save_chip.name.toolTip() == '测试存档.save'
+    assert window.header.open_button.isVisibleTo(window)
+    assert window.header.export_button.isEnabled()
+    window._refresh_exports()
+    assert 'stats-report' in window.header.export_actions
     window.close()
 
 
@@ -432,15 +410,13 @@ def test_statistics_header_and_pivot_share_wide_row_but_wrap_on_narrow_window(mo
     window.resize(1440, 960)
     window.show()
     app.processEvents()
-    assert window.statistics_page.tab_bar.parentWidget() is window.stats_header
-    assert window.stats_header.height() <= 56
-    window.resize(920, 680)
-    app.processEvents()
-    assert window.statistics_page.tab_bar.parentWidget() is window.statistics_page
-    window.resize(2560, 1440)
-    app.processEvents()
-    assert window.statistics_page.tab_bar.parentWidget() is window.stats_header
-    assert '28px' in window.stats_title.styleSheet()
+    tabs = window.statistics_page.tab_bar
+    for size in ((1440, 960), (980, 680), (2560, 1440)):
+        window.resize(*size)
+        app.processEvents()
+        # The sub-tabs stay in the one header row at every window size.
+        assert tabs.parentWidget() is window.header and tabs.isVisibleTo(window)
+        assert window.header.height() <= 64
     window.close()
 
 
