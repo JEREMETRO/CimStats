@@ -23,6 +23,7 @@ def main(launcher: Path, argv):
     source.add_argument('--job', type=Path)
     parser.add_argument('--tag', default='真实存档验收')
     parser.add_argument('--expected-dpr', type=float, required=True)
+    parser.add_argument('--keep-open', action='store_true')
     args = parser.parse_args(argv)
     original = args.save or args.job
     if not original.exists():
@@ -47,6 +48,11 @@ def main(launcher: Path, argv):
                 return
             try:
                 _exercise(window, desktop_app, args)
+                if args.keep_open:
+                    window.resize(960, 680)
+                    window.navigate(0)
+                    window.show()
+                    return
                 code = 0
             except Exception:
                 (args.output / 'failure.txt').write_text(traceback.format_exc(), encoding='utf-8')
@@ -59,12 +65,24 @@ def main(launcher: Path, argv):
         QTimer.singleShot(0, begin)
         return window
 
-    return bootstrap_main(launcher, window_factory=factory, trace_path=args.output / 'startup.json')
+    result = bootstrap_main(launcher, window_factory=factory, trace_path=args.output / 'startup.json')
+    if result:
+        return result
+    try:
+        trace = json.loads((args.output / 'startup.json').read_text(encoding='utf-8'))
+        names = [event['event'] for event in trace]
+        assert 'helper_spawn_started' not in names
+        assert names.index('logo_first_paint') < names.index('desktop_import_started') < names.index('window_first_paint')
+        assert len({event['window_id'] for event in trace if 'window_id' in event}) == 1
+    except Exception:
+        (args.output / 'failure.txt').write_text(traceback.format_exc(), encoding='utf-8')
+        return 1
+    return 0
 
 
 def _exercise(win, desktop_app, args):
     from dataclasses import replace
-    from PySide6.QtCore import QEventLoop, QPoint, QTimer
+    from PySide6.QtCore import QEventLoop, QPoint, QTimer, Qt
     from PySide6.QtWidgets import QApplication, QToolTip
     from shiboken6 import isValid
     from report_model import load_session
@@ -100,13 +118,19 @@ def _exercise(win, desktop_app, args):
             foreground.restype = ctypes.c_void_p
             if widget.window().isActiveWindow() and foreground() == int(widget.window().winId()):
                 position = widget.mapToGlobal(QPoint(0, 0))
-                composited = args.output / (name + '-composited.png')
-                widget.screen().grabWindow(0, position.x(), position.y(),
-                                           widget.width(), widget.height()).save(str(composited))
+                pixels = widget.screen().grabWindow(0, position.x(), position.y(),
+                                                    widget.width(), widget.height())
+                if foreground() == int(widget.window().winId()):
+                    composited = args.output / (name + '-composited.png')
+                    assert pixels.save(str(composited))
         records.append({'case':name, 'size':[widget.width(), widget.height()],
                         'screenshot':str(path), 'composited':str(composited) if composited else None})
 
     assert abs(win.devicePixelRatioF() - args.expected_dpr) < .001, (win.devicePixelRatioF(), args.expected_dpr)
+    from app_metadata import APP_NAME
+    assert win.windowTitle() == APP_NAME
+    assert win.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert win.titleBar.height() == 32 and win.titleBar.iconLabel.isVisible()
     capture('startup-welcome')
     digest = None
     if args.save:
@@ -168,6 +192,74 @@ def _exercise(win, desktop_app, args):
     assert demand.complete and not demand.context and demand.title == '车辆'
     assert next(c for c in page.network_snapshot.charts if c.key == 'vehicles-running') == average_chart
     capture('demand-with-average-trend')
+    page.network_mode_control.setCurrentKey('period')
+    wait_until(lambda: page.network_snapshot is not None
+               and page.network_snapshot.options.mode == 'period'
+               and not page.network_workers and not page.workers)
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    comparison = next(p for p in page.network_dashboard.findChildren(ChartPanel)
+                      if p.chart_views and p.mode == 'trend-bar'
+                      and len({s.stack or s.key for s in p.chart_views[0].data.series}) >= 2)
+    ancestor = comparison.parentWidget()
+    while ancestor is not None:
+        if callable(getattr(ancestor, 'ensureWidgetVisible', None)):
+            ancestor.ensureWidgetVisible(comparison)
+            break
+        ancestor = ancestor.parentWidget()
+    settle()
+    bar_evidence = []
+
+    def inspect_bars(panel, name):
+        canvas = panel.chart_views[0]
+        canvas.grab()
+        hits = {}
+        for index, stack, path in canvas._bar_hits:
+            hits.setdefault(stack, (index, path.boundingRect().center()))
+        assert len(hits) >= 2, name
+        for position, (stack, (index, point)) in enumerate(list(hits.items())[:2]):
+            QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, point,
+                canvas.mapToGlobal(point.toPoint()), Qt.MouseButton.NoButton,
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+            settle()
+            canvas.grab()
+            assert canvas._hover == index and canvas._hover_stack == stack
+            rows = canvas._tooltip_rows(index, stack)
+            members = [s for s in canvas.visible_series() if (s.stack or s.key) == stack
+                       and index < len(s.values) and s.values[index] is not None]
+            assert rows and len(rows) == len(members)
+            tip = canvas._overflow_tip
+            if tip is not None and tip.isVisible():
+                assert tip.height() >= tip.content_layout[1]
+                assert tip.screen().availableGeometry().contains(tip.geometry())
+                capture(name + '-' + str(position) + '-tooltip', tip, delay=0, activate=False)
+            capture(name + '-' + str(position), panel, activate=False)
+            bar_evidence.append({'case':name, 'stack':stack,
+                                 'title':members[0].titles[index], 'rows':len(rows),
+                                 'overflow':bool(tip is not None and tip.isVisible())})
+        QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, QPointF(1, 1),
+            canvas.mapToGlobal(QPoint(1, 1)), Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+        settle()
+        assert canvas._hover is None
+        assert canvas._overflow_tip is None or not canvas._overflow_tip.isVisible()
+
+    inspect_bars(comparison, 'comparison-bars')
+    clone = comparison._open_fullscreen()
+    settle()
+    inspect_bars(clone, 'comparison-bars-expanded')
+    clone.fullscreen_button.click()
+    settle()
+    compact_comparison = comparison._create_clone(win)
+    compact_comparison.set_compact_height(190)
+    compact_comparison.setGeometry(80, 130, 400, 190)
+    compact_comparison.show()
+    compact_comparison.raise_()
+    settle()
+    inspect_bars(compact_comparison, 'comparison-bars-400x190')
+    compact_comparison.close()
+    compact_comparison.deleteLater()
+    settle()
     company = next(p for p in page.company_dashboard.findChildren(ChartPanel) if p.result is not None and p.chart_views)
     compact = ChartPanel(company.title_label.text(), default_mode=company.mode,
                          allowed_modes=company._allowed_modes if company._restricted_modes else None)
@@ -255,10 +347,41 @@ def _exercise(win, desktop_app, args):
             workbooks.append({'path':str(path), 'sheets':workbook.sheetnames})
         finally:
             workbook.close()
+    from datetime import datetime, timedelta
+    from PySide6.QtSvgWidgets import QSvgWidget
+    from about_dialog import AboutDialog
+    from stats_range_picker import RangePicker
+    from stats_dialogs import _MessageSurface
+    from window_chrome import FluentFileDialog
+    now = datetime(2013, 5, 21)
+    dialogs = [('about', AboutDialog(win)),
+               ('range', RangePicker(now - timedelta(days=1), now, parent=win)),
+               ('message', _MessageSurface('验证窗口', '窗口行为检查', win)),
+               ('file-picker', FluentFileDialog(win, '打开存档', str(job), '存档 (*.save)'))]
+    for name, dialog in dialogs:
+        dialog.show()
+        settle()
+        if dialog.isWindow():
+            assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+        else:
+            assert dialog.window() is win
+        icon = dialog.windowIcon().pixmap(16, 16).toImage()
+        assert not icon.isNull()
+        assert all(icon.pixelColor(x, y).alpha() == 0
+                   for x in range(icon.width()) for y in range(icon.height()))
+        if name == 'about':
+            assert not dialog.findChildren(QSvgWidget)
+        if hasattr(dialog, 'titleBar'):
+            assert not dialog.titleBar.iconLabel.isVisible()
+        capture('secondary-' + name, dialog)
+        dialog.close()
+        settle()
+        dialog.deleteLater()
+        settle()
     report = {'frozen':bool(getattr(sys, 'frozen', False)), 'executable':sys.executable,
               'scale':os.environ.get('QT_SCALE_FACTOR', '1'), 'dpr':win.devicePixelRatioF(),
               'real_job':str(job), 'real_history_rows':len(data.get('history', [])),
               'current_demand':str(demand.value), 'raw_save':str(args.save) if args.save else None,
               'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True,
-              'exported_workbooks':workbooks, 'cases':records}
+              'comparison_bars':bar_evidence, 'exported_workbooks':workbooks, 'cases':records}
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
