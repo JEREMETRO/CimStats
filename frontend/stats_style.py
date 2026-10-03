@@ -6,7 +6,7 @@ from stats_tokens import (ACCENT, BORDER, CARD_BG, CARD_PADDING, CONTROL_GAP,
                           GRID_COLOR, NARROW_PAGE_MARGIN, PAGE_BG, PAGE_MARGIN,
                           RADIUS_CARD, SECTION_GAP, TEXT_PRIMARY, TEXT_SECONDARY)
 from stats_tokens import TOOLTIP_TEXT, TOOLTIP_BG, TOOLTIP_BORDER, TOOLTIP_FONT_SIZE, TOOLTIP_RADIUS
-from stats_typography import tooltip_font
+from stats_typography import tooltip_font, ui_font
 
 NARROW_MARGIN = NARROW_PAGE_MARGIN
 
@@ -44,7 +44,7 @@ def initialize_theme(app):
     """Initialize the same native Fluent theme for the app and QA windows."""
     import os
     from pathlib import Path
-    from PySide6.QtGui import QColor, QFont, QFontDatabase
+    from PySide6.QtGui import QColor, QFontDatabase
     from qfluentwidgets import Theme, ToolTip as FluentToolTip, setTheme, setThemeColor, qconfig
     from touch_input import install_touch_input
 
@@ -124,8 +124,7 @@ def initialize_theme(app):
                 QFontDatabase.addApplicationFont(str(font_path))
         app.setProperty('statsFontsLoaded', True)
     qconfig.set(qconfig.fontFamilies, [FONT_FAMILY], save=False)
-    font = QFont(FONT_FAMILY)
-    font.setPixelSize(FONT_SIZE_BODY)
+    font = ui_font(FONT_SIZE_BODY)
     if app.font() != font:
         app.setFont(font)
     if app.styleSheet() != STYLE:

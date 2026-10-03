@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QLa
                                QVBoxLayout, QWidget)
 
 import stats_tokens as tokens
+from stats_typography import ui_font
 
 
 def elision_tooltip(full, shown, company_id=None):
@@ -108,9 +109,7 @@ class LegendChip(QAbstractButton):
         self.setCheckable(True)
         self.setChecked(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        font = QFont(tokens.FONT_FAMILY)
-        font.setPixelSize(11 if compact else tokens.FONT_SIZE_CAPTION)
-        self.setFont(font)
+        self.setFont(ui_font(11 if compact else tokens.FONT_SIZE_CAPTION))
         self.setAccessibleName(text)
         self._refresh_tooltip()
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)

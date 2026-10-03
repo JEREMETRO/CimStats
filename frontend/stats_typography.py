@@ -17,6 +17,23 @@ MEDIUM_NUMERIC_WEIGHT = QFont.Weight.DemiBold
 LARGE_NUMERIC_WEIGHT = QFont.Weight.Bold
 
 
+def _smooth_windows_font(font: QFont) -> QFont:
+    # DirectWrite's default/vertical hinting leaves small YaHei CJK strokes
+    # stepped. Natural symmetric rendering smooths both axes at device DPR;
+    # pixel size, family, weight and optical axes remain owned by the caller.
+    if os.name == 'nt':
+        font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    return font
+
+
+def ui_font(size: int, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
+    """Ordinary UI font in logical pixels, with continuous Windows glyph edges."""
+    result = QFont(tokens.FONT_FAMILY)
+    result.setPixelSize(size)
+    result.setWeight(QFont.Weight(int(weight)))
+    return _smooth_windows_font(result)
+
+
 def numeric_font(size: int, *, large: bool = False) -> QFont:
     """Home numeric hierarchy; labels and units keep the ordinary font."""
     result = emphasis_font(size, LARGE_NUMERIC_WEIGHT if large else MEDIUM_NUMERIC_WEIGHT)
@@ -77,7 +94,7 @@ def emphasis_font(size: int, weight: QFont.Weight = QFont.Weight.DemiBold) -> QF
     if result.families()[0].startswith('Segoe UI Variable') and hasattr(result, 'setVariableAxis'):
         # Do not pin wght: rich-text spans must remain able to change weight.
         result.setVariableAxis(QFont.Tag('opsz'), 36. if size >= 20 else 20. if size >= 14 else 8.)
-    return result
+    return _smooth_windows_font(result)
 
 
 def tooltip_font() -> QFont:
@@ -86,7 +103,7 @@ def tooltip_font() -> QFont:
     result.setFamilies(['Segoe UI', tokens.FONT_FAMILY])
     result.setPixelSize(tokens.TOOLTIP_FONT_SIZE)
     result.setWeight(QFont.Weight.Normal)
-    return result
+    return _smooth_windows_font(result)
 
 
 def typography_status() -> dict:
