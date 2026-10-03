@@ -123,6 +123,49 @@ def test_compact_start_clips_detail_instead_of_overlapping_summary_and_chart(sou
     source._fullscreen_dialog.cancel()
 
 
+@pytest.mark.parametrize('motion', [False, True])
+def test_multicompany_comparison_final_layout_fits_current_window(monkeypatch, motion):
+    from PySide6.QtCore import QPoint, QRect
+    from test_stats_charts import panel, result, bucket
+    import stats_motion
+    monkeypatch.setattr(stats_motion, 'animations_enabled', lambda: motion)
+    window = QMainWindow()
+    central = QWidget(window)
+    window.setCentralWidget(central)
+    widget = panel('客流', modes=True, default_mode='trend-bar')
+    QVBoxLayout(central).addWidget(widget)
+    groups = ('BlueCollar', 'WhiteCollar', 'BusinessPeople', 'Pensioner', 'Student', 'Tourist')
+    series = {(company, group): [bucket(1, 123.239), bucket(2, 111.112)]
+              for company in ('a', 'b') for group in groups}
+    original = result(series, metric='transport-by-group', comparison=series)
+    widget.set_result(original, {'a': '公司甲', 'b': '公司乙'})
+    window.resize(960, 680)
+    window.show()
+    QApplication.instance().processEvents()
+    try:
+        clone = widget._open_fullscreen()
+        view = widget._fullscreen_dialog
+        if motion:
+            view.animation.setCurrentTime(view.animation.duration())
+        QApplication.instance().processEvents()
+        assert view.rect().contains(clone.geometry())
+        for canvas in clone.chart_views:
+            assert view.rect().contains(QRect(canvas.mapTo(view, QPoint()), canvas.size()))
+        assert clone.chart_host.geometry().top() > clone.detail_summary.geometry().bottom()
+        assert clone.result is original
+        window.resize(800, 600)
+        QApplication.instance().processEvents()
+        assert view.rect().contains(clone.geometry())
+        clone.fullscreen_button.click()
+        if motion:
+            view.animation.setCurrentTime(view.animation.duration() // 2)
+            assert clone.chart_host.geometry().top() > clone.detail_summary.geometry().bottom()
+            view.animation.setCurrentTime(view.animation.duration())
+        assert not view.isVisible()
+    finally:
+        window.close()
+
+
 def test_host_resize_escape_and_source_hide_clean_up_detail(source, host):
     clone = source._open_fullscreen()
     view = source._fullscreen_dialog

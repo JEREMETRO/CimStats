@@ -45,10 +45,15 @@ class InlineChartDetail(QFrame):
 
     def set_panel(self, panel):
         self.panel = panel
+        self._panel_minimum_height = panel.minimumHeight()
         # Early frames are smaller than a readable detail layout. Clip the
         # natural panel instead of forcing fixed summary rows over the canvas.
-        panel.setMinimumHeight(max(panel.minimumHeight(), panel.minimumSizeHint().height()))
+        self._protect_panel_layout()
         self.layout().addWidget(panel)
+
+    def _protect_panel_layout(self):
+        self.panel.setMinimumHeight(max(self._panel_minimum_height,
+                                        self.panel.minimumSizeHint().height()))
 
     def _source_rect(self):
         host = self.parentWidget()
@@ -107,6 +112,10 @@ class InlineChartDetail(QFrame):
             self._complete_return()
         else:
             self.setGeometry(self.parentWidget().rect())
+            # The starting width may have stacked summary cards into many rows.
+            # That temporary floor must not clip the final, wider chart layout.
+            self.panel.setMinimumHeight(self._panel_minimum_height)
+            self.layout().activate()
 
     def _complete_return(self):
         if self._returned:
@@ -139,6 +148,7 @@ class InlineChartDetail(QFrame):
             event.ignore()
             if not self._returning:
                 self._returning = True
+                self._protect_panel_layout()
                 self._transition(self._source_rect(), expanding=False)
 
     def keyPressEvent(self, event):
