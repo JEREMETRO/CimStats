@@ -198,6 +198,8 @@ class ChartCanvas(QWidget):
         self._font.setPixelSize(tokens.FONT_SIZE_CAPTION)
         self._strong = QFont(self._font)
         self._strong.setWeight(QFont.Weight.DemiBold)
+        from touch_input import install_touch_input
+        install_touch_input()
 
     # ------------------------------------------------------------------ API
     def set_data(self, data: ChartData | None) -> None:
@@ -885,6 +887,29 @@ class ChartCanvas(QWidget):
                 f"{format_value(round(hovered['value'], 2))} {data.unit}".strip(), '')])
 
     # ------------------------------------------------------------- pointer
+    def touch_pan(self, global_start, global_point):
+        """Reserve horizontal touchscreen movement for an already zoomed detail."""
+        if not self.zoomable or self._window is None:
+            return False
+        if self._drag_origin is None:
+            self._drag_origin = (self.mapFromGlobal(global_start.toPoint()).x(), self.window())
+        origin, (first, last) = self._drag_origin
+        position = self.mapFromGlobal(global_point.toPoint()).x()
+        slot = self._plot.width() / max(1, last - first)
+        shift = round((origin - position) / max(1., slot))
+        self.set_window(first + shift, last + shift)
+        return True
+
+    def touch_cancel(self, *, clear_inspection=False):
+        self._drag_origin = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        if clear_inspection:
+            changed = self._hover is not None
+            self._hover = self._hover_slice = None
+            self.update()
+            if changed and self.data is not None and self.data.kind in ('line', 'bar'):
+                self.hover_changed.emit(None)
+
     def _slice_at(self, point: QPointF):
         for part in self._slices:
             if part.get('legend') is not None and part['legend'].contains(point):

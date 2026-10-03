@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QVariantAnimation, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
-from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QScroller
+from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout
 from qfluentwidgets import ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
 
 import stats_tokens as tokens
@@ -191,8 +191,8 @@ class StatisticsScrollArea(ScrollArea):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         viewport = self.viewport()
-        viewport.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
-        QScroller.grabGesture(viewport, QScroller.ScrollerGestureType.TouchGesture)
+        from touch_input import install_touch_input
+        install_touch_input()
         # Run before the library wheel delegate so precision touchpad deltas survive.
         viewport.installEventFilter(self)
 

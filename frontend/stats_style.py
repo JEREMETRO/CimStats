@@ -43,6 +43,9 @@ def initialize_theme(app):
     from pathlib import Path
     from PySide6.QtGui import QColor, QFont, QFontDatabase
     from qfluentwidgets import Theme, setTheme, setThemeColor, qconfig
+    from touch_input import install_touch_input
+
+    install_touch_input(app)
 
     if not hasattr(app, '_stats_tooltip_style'):
         from PySide6.QtCore import QObject, QEvent

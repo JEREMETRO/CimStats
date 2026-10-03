@@ -15,7 +15,7 @@ from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollBar
 from stats_controls import StatisticsScrollArea
 
 
-def test_statistics_scroll_area_uses_fluent_overlay_and_touch_scroller():
+def test_statistics_scroll_area_uses_fluent_overlay_and_shared_touch_policy():
     app = QApplication.instance() or QApplication([])
     scroll = StatisticsScrollArea()
     content = QWidget()
@@ -28,7 +28,7 @@ def test_statistics_scroll_area_uses_fluent_overlay_and_touch_scroller():
     assert isinstance(scroll.scrollDelagate.vScrollBar, SmoothScrollBar)
     assert scroll.scrollDelagate.vScrollBar.isVisible()
     assert not scroll.verticalScrollBar().isVisible()
-    assert QScroller.grabbedGesture(scroll.viewport()) != 0
+    assert hasattr(app, '_cimstats_touch_input')
     assert scroll.viewport().testAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
     QScroller.scroller(scroll.viewport()).scrollTo(QPointF(0, 100), 0)
     app.processEvents()

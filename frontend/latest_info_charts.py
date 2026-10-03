@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QEvent, Qt, QPointF, QRect, QRectF, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QPainter
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolTip,
                               QStackedWidget, QVBoxLayout, QWidget)
 from qfluentwidgets import DropDownPushButton, FluentIcon, RoundMenu, TransparentPushButton, TransparentToolButton
 from display_rules import display_mode
@@ -463,6 +463,17 @@ class ModeRing(QWidget):
         sector = self._hit(event.position())
         self.setToolTip(f'{self.display_labels.get(sector[2], sector[2])} · {shown(sector[3])} · {sector[3] / self.total * 100:.1f}%' if sector else '线路占比')
         super().mouseMoveEvent(event)
+
+    def touch_inspect(self, global_point):
+        """Expose the existing mouse tooltip while a finger inspects a sector."""
+        point = global_point.toPoint()
+        if self._hit(QPointF(self.mapFromGlobal(point))) is not None:
+            QToolTip.showText(point, self.toolTip(), self)
+        else:
+            QToolTip.hideText()
+
+    def touch_inspect_end(self):
+        QToolTip.hideText()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
