@@ -12,8 +12,8 @@ sys.path[:0] = [str(root / 'src'), str(root / 'tools')]
 from app_metadata import application_metadata, icon_directory
 from candidate_package import bundle_data, managed_data
 metadata = application_metadata(root)
-if metadata.name != 'CimStats' or metadata.version != '0.1.0':
-    raise RuntimeError('Integrate and freeze the approved CimStats 0.1.0 source before building')
+if metadata.name != 'CimStats' or metadata.version != (root / 'VERSION').read_text(encoding='utf-8-sig').strip():
+    raise RuntimeError('Integrate and freeze the approved CimStats VERSION before building')
 if os.environ.get('CIMSTATS_LOCAL_REVIEW_BUILD') != '1':
     raise RuntimeError('This spec is a local review candidate; invoke the guarded build script')
 if not re.fullmatch(r'\d+\.\d+\.\d+', metadata.version):

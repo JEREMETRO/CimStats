@@ -88,7 +88,9 @@ class CandidateRules(unittest.TestCase):
 
 class SpecContract(unittest.TestCase):
     """Evaluate spec flow using fake builders: no Qt/CLR or build execution."""
-    def evaluate(self, *, local_review=True, version='0.1.0'):
+    def evaluate(self, *, local_review=True, version=None):
+        if version is None:
+            version = (candidate_package.ROOT/'VERSION').read_text(encoding='utf-8-sig').strip()
         observed = {}
         hooks = ModuleType('PyInstaller.utils.hooks')
         hooks.collect_submodules = lambda name: []

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0',
+    [string]$Version = '',
     [string]$PythonExe = '',
     [string]$SourceManifest = '',
     [string]$ManagedRoot = '',
@@ -21,7 +21,9 @@ function Assert-BuildPath([string]$Path) {
     }
     return $full
 }
-if ($Version -ne '0.1.0') { throw 'This reviewed candidate workflow targets CimStats 0.1.0' }
+$currentVersion = (Get-Content -LiteralPath (Join-Path $workspaceRoot 'VERSION') -Raw).Trim()
+if (-not $Version) { $Version = $currentVersion }
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION must contain major.minor.patch' }
 if (-not $Build) {
     [ordered]@{
         build_requested = $false
@@ -55,7 +57,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Source snapshot missing or changed; no build s
 & $PythonExe -B -c 'import PyInstaller,dnfile,PySide6,pythonnet; print("Build modules available")'
 if ($LASTEXITCODE -ne 0) { throw 'Build dependencies unavailable; no installation attempted' }
 if (-not $CandidateName) { $CandidateName = "CimStats-$Version-review-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8) }
-if ($CandidateName -notmatch '^CimStats-0\.1\.0-review-[A-Za-z0-9-]+$') { throw 'Invalid unique local candidate name' }
+if ($CandidateName -notmatch ('^CimStats-' + [regex]::Escape($Version) + '-review-[A-Za-z0-9-]+$')) { throw 'Invalid unique local candidate name' }
 $candidateRoot = Assert-BuildPath (Join-Path $workspaceRoot "build/candidates/$CandidateName")
 if (Test-Path -LiteralPath $candidateRoot) { throw 'Candidate exists; choose a new name. It will not be overwritten.' }
 $null = New-Item -ItemType Directory -Path $candidateRoot

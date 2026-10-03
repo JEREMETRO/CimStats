@@ -105,15 +105,18 @@ def test_release_notes_match_restored_chart_presentation():
     assert '完整数值表' not in notes
 
 
-def test_formal_010_release_records_known_issues_and_download_name():
+def test_formal_release_download_matches_version_and_retains_010_history():
     readme = (ROOT / 'README.md').read_text(encoding='utf-8')
     notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
     release = (ROOT / 'docs/RELEASE.md').read_text(encoding='utf-8')
     spec = (ROOT / 'CIM2_SaveStats.spec').read_text(encoding='utf-8')
-    assert 'CimStats_x64_v0.1.0.exe' in readme
+    version = (ROOT / 'VERSION').read_text(encoding='utf-8-sig').strip()
+    assert f'CimStats_x64_v{version}.exe' in readme
+    assert f'## {version} - ' in notes
+    historical_notes = notes.split('## 0.1.0 - 2026-10-03', 1)[1].split('## CimStats 0.1.0', 1)[0]
     assert '## 0.1.0 - 2026-10-03' in notes
-    assert '悬停标签' in notes and '背景颜色' in notes and '控件显示被截断' in notes
-    assert '正式版' in release and '/releases/tag/v0.1.0' in release
+    assert '悬停标签' in historical_notes and '背景颜色' in historical_notes and '控件显示被截断' in historical_notes
+    assert '正式版' in release and f'/releases/tag/v{version}' in release
     assert "StringStruct('Comments', metadata.license_spdx)" in spec
 
 
