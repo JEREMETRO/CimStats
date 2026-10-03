@@ -598,6 +598,7 @@ def test_departure_donut_is_left_of_complete_six_mode_list(page, qt_application)
     panel = child(page, 'departureStructure')
     ring = panel.ring
     ring_rect = bounds(ring, panel)
+    expected_shares = ('21.9%', '20.6%', '19.3%', '18.0%', '10.3%', '9.6%')
     for i, entry in enumerate(data.departure_modes):
         row = child(panel, f'mode-row-{i}')
         assert ring_rect.right() < bounds(row, panel).left()
@@ -605,7 +606,7 @@ def test_departure_donut_is_left_of_complete_six_mode_list(page, qt_application)
         name = next(widget for widget in row.findChildren(QLabel) if widget.text() == entry.mode)
         assert name.contentsRect().width() >= name.fontMetrics().horizontalAdvance(entry.mode)
         assert row.number.text() == f'{entry.value} 班'
-        assert f'{Decimal(entry.value) / 155 * 100:.1f}%' in label_texts(row)
+        assert expected_shares[i] in row.toolTip()
 
 
 def test_donut_nonpositive_and_missing_modes_do_not_create_clickable_sectors(page, qt_application):

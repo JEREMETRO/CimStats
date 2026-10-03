@@ -140,7 +140,13 @@ def test_satisfaction_title_picker_is_consistent_in_all_company_modes(qt_applica
     page = StatisticsPage(); page.resize(width, 960); page.show()
     companies = [{'公司标识': str(i), '公司名称': f'公司{i}'} for i in range(company_count)]
     page.set_session({'history': [], 'simulation_time': '2013-04-10 23:59:22', 'companies': companies})
-    page.analysis_mode_control.setCurrentKey(mode)
+    if company_count == 1 and mode == 'companies':
+        assert not page.analysis_mode_control._buttons['companies'].isEnabled()
+        with pytest.raises(ValueError, match='disabled segment'):
+            page.analysis_mode_control.setCurrentKey(mode)
+        assert page.analysis_mode == 'default'
+    else:
+        page.analysis_mode_control.setCurrentKey(mode)
     deadline = time.monotonic() + 10
     while (page.snapshot is None or len(page.company_dashboard.groups) != company_count) and time.monotonic() < deadline:
         qt_application.processEvents(); time.sleep(.01)
