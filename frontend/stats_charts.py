@@ -15,7 +15,7 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QVBoxLayout, QWidget)
-from qfluentwidgets import FluentIcon, TransparentToolButton
+from qfluentwidgets import FluentIcon, TransparentPushButton, TransparentToolButton
 
 from chart_canvas import AxisSpec, ChartCanvas, ChartData, Series, format_value
 from chart_details import DetailSummary
@@ -120,7 +120,7 @@ class ChartPanel(QFrame):
             attach_card_elevation(self, radius=tokens.RADIUS_CARD)
         self.surface_motion = SurfaceMotion(self)
         self.setStyleSheet(
-            'QFrame#chartPanel { background: transparent; border: 0; }' if self._detailed else
+            f'QFrame#chartPanel {{ background: {tokens.CARD_BG}; border: 0; }}' if self._detailed else
             f'QFrame#chartPanel {{ background: {tokens.CARD_BG}; '
             f'border: 1px solid {tokens.BORDER}; border-radius: {tokens.RADIUS_CARD}px; }}')
         self.result = None
@@ -171,13 +171,20 @@ class ChartPanel(QFrame):
         self._mode_slot = QHBoxLayout()
         self._mode_slot.setContentsMargins(0, 0, 0, 0)
         header.addLayout(self._mode_slot)
-        self.fullscreen_button = TransparentToolButton(self)
-        self.fullscreen_button.setIcon(FluentIcon.FULL_SCREEN)
-        self.fullscreen_button.setIconSize(QSize(14, 14))
-        self.fullscreen_button.setFixedSize(30, 30)
-        self.fullscreen_button.setToolTip('放大查看')
-        self.fullscreen_button.setAccessibleName('放大查看图表')
-        self.fullscreen_button.clicked.connect(self._open_fullscreen)
+        if self._detailed:
+            self.fullscreen_button = TransparentPushButton(FluentIcon.BACK_TO_WINDOW, '缩小', self)
+            self.fullscreen_button.setIconSize(QSize(16, 16))
+            self.fullscreen_button.setFixedHeight(32)
+            self.fullscreen_button.setAccessibleName('缩小图表，返回原图')
+            self.fullscreen_button.clicked.connect(parent.accept)
+        else:
+            self.fullscreen_button = TransparentToolButton(self)
+            self.fullscreen_button.setIcon(FluentIcon.FULL_SCREEN)
+            self.fullscreen_button.setIconSize(QSize(14, 14))
+            self.fullscreen_button.setFixedSize(30, 30)
+            self.fullscreen_button.setToolTip('放大查看')
+            self.fullscreen_button.setAccessibleName('放大查看图表')
+            self.fullscreen_button.clicked.connect(self._open_fullscreen)
         header.addWidget(self.fullscreen_button)
         self._layout.addLayout(header)
         self.detail_summary = DetailSummary(self)
@@ -544,7 +551,7 @@ class ChartPanel(QFrame):
         show_chart = has_data and self.mode != 'summary'
         self.summary_label.setVisible(not show_chart)
         self.chart_host.setVisible(show_chart)
-        self.fullscreen_button.setEnabled(show_chart)
+        self.fullscreen_button.setEnabled(self._detailed or show_chart)
         self.period_label.hide()
         if not has_data:
             self.summary_label.setText(label('missing') if self.result is None else '暂无可用数据')
@@ -704,12 +711,12 @@ class ChartPanel(QFrame):
         if self.result is None:
             return
         dialog = QDialog(self)
+        dialog.setObjectName('chartDetailDialog')
         dialog.setWindowTitle(self.title_label.text())
-        dialog.setStyleSheet(f'QDialog {{ background: {tokens.PAGE_BG}; }}')
+        dialog.setStyleSheet(f'QDialog#chartDetailDialog {{ background: {tokens.CARD_BG}; }}')
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG)
         clone = self._create_clone(dialog)
-        clone.fullscreen_button.hide()
         layout.addWidget(clone)
         dialog.finished.connect(lambda _=None, c=clone: self._adopt_hidden(c))
         dialog.resize(1100, 700)

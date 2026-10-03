@@ -147,7 +147,7 @@ class NetworkChartPanel(ChartPanel):
         sources = self._sources() if not reason else []
         if not reason and not sources:
             reason = '暂无可用数据'
-        self.fullscreen_button.setEnabled(not reason)
+        self.fullscreen_button.setEnabled(self._detailed or not reason)
         self.chart_host.setVisible(not reason)
         self.placeholder.setVisible(bool(reason))
         if reason:
