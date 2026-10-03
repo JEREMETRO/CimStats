@@ -132,7 +132,7 @@ class CityChartPanel(ChartPanel):
             'economy': '经济增长与利率', 'energy-prices': '能源价格'}[key],
             default_mode='trend-bar' if key == 'trip-number' else 'line', parent=parent)
         self.setMinimumWidth(0)
-        self.motion = SurfaceMotion(self)
+        self.motion = self.surface_motion
 
     def _category_color(self, group):
         return QColor(series_color(group))

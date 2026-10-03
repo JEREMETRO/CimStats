@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QDialog, QGraphicsOpacityEffect, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
 from chart_canvas import ChartData, Series
 from stats_charts import ChartPanel, _number
@@ -14,7 +13,6 @@ from stats_controls import FluentSegmentedControl
 from statistics_model import period_bounds, summarize_buckets
 from ui_kit import LegendChip
 import stats_tokens as tokens
-import stats_motion as motion_policy
 
 MODE_NAMES = {'line': '趋势', 'trend-bar': '趋势', 'bar': '分布', 'pie': '比例'}
 _COMPACT_CATEGORY_NAMES = {
@@ -55,12 +53,6 @@ class NetworkChartPanel(ChartPanel):
         self.set_category_palette(tokens.DATA_CATEGORY_COLORS)
         self.summary_label.setStyleSheet(f'color: {tokens.TEXT_SECONDARY}; border: 0; background: transparent;'
                                        f' font-size: {tokens.FONT_SIZE_BODY}px;')
-        self._fade_effect = QGraphicsOpacityEffect(self.chart_host)
-        self._fade_effect.setOpacity(1)
-        self.chart_host.setGraphicsEffect(self._fade_effect)
-        self._fade_animation = QPropertyAnimation(self._fade_effect, b'opacity', self)
-        self._fade_animation.setDuration(180)
-        self._fade_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     @property
     def placeholder(self):
@@ -95,11 +87,8 @@ class NetworkChartPanel(ChartPanel):
         changed = mode != self.mode
         self.mode = mode
         self._render()
-        if changed and self.isVisible() and motion_policy.animations_enabled():
-            self._fade_animation.stop()
-            self._fade_animation.setStartValue(.25)
-            self._fade_animation.setEndValue(1.)
-            self._fade_animation.start()
+        if changed:
+            self.surface_motion.reveal()
 
     def clear(self):
         self.descriptor = None

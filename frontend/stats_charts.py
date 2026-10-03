@@ -24,7 +24,7 @@ from stats_text import group_label, label
 from stats_typography import apply_emphasis_font, emphasis_css
 import stats_tokens as tokens
 from stats_elevation import attach_card_elevation
-from stats_motion import SurfaceMotion
+from stats_motion import SurfaceMotion, attach_surface_reveal
 from statistics_model import period_bounds, summarize_buckets
 from ui_kit import FlowHost, LegendChip, SeriesLegend
 
@@ -119,6 +119,7 @@ class ChartPanel(QFrame):
         if not self._detailed:
             attach_card_elevation(self, radius=tokens.RADIUS_CARD)
         self.surface_motion = SurfaceMotion(self)
+        attach_surface_reveal(self, self.surface_motion)
         self.setStyleSheet(
             f'QFrame#chartPanel {{ background: {tokens.CARD_BG}; border: 0; }}' if self._detailed else
             f'QFrame#chartPanel {{ background: {tokens.CARD_BG}; '

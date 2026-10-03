@@ -1,7 +1,7 @@
 """Interruptible Fluent surface motion, respecting Windows client animations."""
 import os
-from PySide6.QtCore import QObject, QEvent, QEasingCurve, QVariantAnimation
-from PySide6.QtWidgets import QGraphicsOpacityEffect
+from PySide6.QtCore import QObject, QEvent, QEasingCurve, QRect, QVariantAnimation
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
 from shiboken6 import isValid
 
 
@@ -35,12 +35,34 @@ class SurfaceMotion(QObject):
         self.running = False
         self.float_in = False
         self.effect = None
+        widget.installEventFilter(self)
+
+    def eventFilter(self, widget, event):
+        if event.type() == QEvent.Type.Hide and getattr(self, 'running', False):
+            self.finish()
+        return False
 
     def reveal(self, float_in=False):
         widget = self.widget
         effect = widget.graphicsEffect()
         # A foreign effect belongs to another controller. Never clear or replace it.
         if effect is not None and effect is not self.effect:
+            return
+        # Qt widget effects must not nest: a child reveal is already included in
+        # its parent's transition. Show events arrive child-first, so an incoming
+        # parent also settles any earlier child reveals before taking ownership.
+        ancestor = None if widget.isWindow() else widget.parentWidget()
+        while ancestor is not None:
+            if ancestor.graphicsEffect() is not None:
+                self.finish()
+                return
+            ancestor = None if ancestor.isWindow() else ancestor.parentWidget()
+        for motion in widget.findChildren(SurfaceMotion):
+            if motion is not self and motion.widget.window() is widget.window():
+                motion.finish()
+        if any(child.graphicsEffect() is not None and child.window() is widget.window()
+               for child in widget.findChildren(QWidget)):
+            self.finish()
             return
         start = effect.opacity() if effect is not None else .78
         if self.animation is not None:
@@ -98,16 +120,34 @@ class CollapseMotion(QObject):
         self.surface_start = 0
         self.surface_end = 0
         self.on_progress = None
+        self._frozen_layout = None
+        if widget.parentWidget() is not None:
+            widget.parentWidget().installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Hide and getattr(self, 'animation', None) is not None:
+            self.finish()
+        return False
 
     def set_collapsed(self, collapsed):
-        start = self.widget.maximumHeight() if self.animation else self.widget.height()
+        start = (self.widget.maximumHeight() if self.animation else
+                 (0 if self.widget.isHidden() else self.widget.height()))
         if self.animation:
             self.animation.stop()
             self.animation.deleteLater()
         self.collapsed = bool(collapsed)
-        if not animations_enabled() or not self.widget.parentWidget().isVisible():
+        parent = self.widget.parentWidget() or self.widget
+        if not animations_enabled() or not parent.isVisible():
             self.finish()
             return
+        # Keep natural row geometry while the host clips it. Letting a grid
+        # relayout at every shrinking height makes fixed-height KPI rows overlap.
+        layout = self.widget.layout()
+        if self._frozen_layout is None and layout is not None and layout.isEnabled():
+            if self.widget.isHidden():
+                layout.setGeometry(QRect(0, 0, self.widget.width(), self.widget.sizeHint().height()))
+            layout.setEnabled(False)
+            self._frozen_layout = layout
         self.widget.show()
         if self.surface is not None:
             self.surface_start = self.surface.height()
@@ -139,6 +179,10 @@ class CollapseMotion(QObject):
     def finish(self):
         self.widget.setVisible(not self.collapsed)
         self.widget.setMaximumHeight(16777215)
+        if self._frozen_layout is not None:
+            self._frozen_layout.setEnabled(True)
+            self._frozen_layout.invalidate()
+            self._frozen_layout = None
         if self.surface is not None:
             self.surface.setMinimumHeight(0)
             self.surface.setMaximumHeight(16777215)
@@ -150,9 +194,9 @@ class CollapseMotion(QObject):
 
 
 class _ShowMotion(QObject):
-    def __init__(self, widget):
+    def __init__(self, widget, motion=None):
         super().__init__(widget)
-        self.motion = SurfaceMotion(widget)
+        self.motion = motion or SurfaceMotion(widget)
         widget.installEventFilter(self)
 
     def eventFilter(self, widget, event):
@@ -163,7 +207,7 @@ class _ShowMotion(QObject):
         return False
 
 
-def attach_surface_reveal(widget):
+def attach_surface_reveal(widget, motion=None):
     if not hasattr(widget, '_show_motion'):
-        widget._show_motion = _ShowMotion(widget)
+        widget._show_motion = _ShowMotion(widget, motion)
     return widget._show_motion

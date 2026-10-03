@@ -17,7 +17,7 @@ from latest_info_model import ModeCount
 from stats_charts import ChartPanel
 from stats_controls import FluentSegmentedControl
 from stats_elevation import attach_card_elevation
-from stats_motion import SurfaceMotion
+from stats_motion import SurfaceMotion, attach_surface_reveal
 from stats_typography import emphasis_font
 import stats_tokens as tokens
 
@@ -310,6 +310,7 @@ class CategoryCard(QFrame):
                           f'border:1px solid {tokens.BORDER};border-radius:{tokens.RADIUS_CHART}px;}}')
         attach_card_elevation(self, radius=tokens.RADIUS_CHART)
         self.surface_motion = SurfaceMotion(self)
+        attach_surface_reveal(self, self.surface_motion)
         self.box = QVBoxLayout(self)
         self.box.setContentsMargins(8, 8, 8, 8)
         self.box.setSpacing(4)
