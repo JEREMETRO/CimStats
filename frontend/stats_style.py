@@ -8,11 +8,14 @@ from stats_tokens import (ACCENT, BORDER, CARD_BG, CARD_PADDING, CONTROL_GAP,
 
 NARROW_MARGIN = NARROW_PAGE_MARGIN
 
-STYLE = f"""
-QMainWindow {{ background: {PAGE_BG}; }}
+TOOLTIP_STYLE = f"""
 QToolTip {{ background-color: {CARD_BG}; color: {TEXT_PRIMARY};
     border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 8px;
     font-family: "{FONT_FAMILY}"; font-size: {FONT_SIZE_CAPTION}px; }}
+"""
+
+STYLE = TOOLTIP_STYLE + f"""
+QMainWindow {{ background: {PAGE_BG}; }}
 QWidget#statsPage, QWidget#overviewPage, QWidget#linesPage {{ background: transparent; }}
 QLabel#pageTitle, QLabel#sectionTitle {{ font-size: {FONT_SIZE_PAGE_TITLE}px; font-weight: 600; color: {TEXT_PRIMARY}; }}
 QLabel#panelTitle {{ font-size: {FONT_SIZE_CHART_TITLE}px; font-weight: 600; color: {TEXT_PRIMARY}; }}
@@ -40,6 +43,22 @@ def initialize_theme(app):
     from pathlib import Path
     from PySide6.QtGui import QColor, QFont, QFontDatabase
     from qfluentwidgets import Theme, setTheme, setThemeColor, qconfig
+
+    if not hasattr(app, '_stats_tooltip_style'):
+        from PySide6.QtCore import QObject, QEvent
+
+        class TooltipStyleBoundary(QObject):
+            def eventFilter(self, watched, event):
+                # Native tips inherit the source widget's local stylesheet.
+                # An unqualified transparent background overrides application
+                # QSS and leaves a transparent (black on Windows) popup.
+                if (event.type() == QEvent.Type.Show
+                        and watched.objectName() == 'qtooltip_label'):
+                    watched.setStyleSheet(TOOLTIP_STYLE)
+                return False
+
+        app._stats_tooltip_style = TooltipStyleBoundary(app)
+        app.installEventFilter(app._stats_tooltip_style)
 
     if qconfig.theme != Theme.LIGHT:
         setTheme(Theme.LIGHT)
