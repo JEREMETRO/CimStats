@@ -35,8 +35,36 @@ def test_helper_covers_application_footprint_and_uses_centered_logo(app):
     splash = IconSplash(icon_svg_path())
     assert splash.width() >= 960 and splash.height() >= 680
     assert not splash.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    assert splash.logo_rect().center() == QPointF(splash.rect().center())
+    assert splash.logo_rect().center() == QPointF(splash.surface.rect().center())
     splash.close()
+
+
+def test_import_cover_crossfades_without_blocking_destination(window, app, monkeypatch):
+    monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
+    window.show()
+    app.processEvents()
+    overlay = window.loading_overlay
+    overlay.begin('准备读取存档')
+    assert overlay.isVisible() and overlay.cancel_button.isEnabled()
+    fade = overlay.transition
+    assert fade.isVisible() and fade.animation is not None
+    fade.animation.setCurrentTime(80)
+    assert 0 < fade.opacity < 1
+    assert fade.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    overlay.finish()
+    assert not overlay.isVisible() and fade.isVisible()
+    window._refresh_body()
+    assert fade.isVisible()
+    fade.animation.setCurrentTime(220)
+    assert not fade.isVisible() and fade.snapshot is None
+    overlay.begin('再次读取')
+    window.centralWidget().resize(900, 600)
+    assert fade.animation is None and fade.snapshot is None
+    monkeypatch.setattr('stats_motion.animations_enabled', lambda: False)
+    overlay.begin('关闭动画')
+    assert not fade.isVisible() and fade.animation is None
+    overlay.finish()
+    assert not fade.isVisible()
 
 
 def test_welcome_covers_shell_and_reveals_open_without_blocking(window, app, monkeypatch):
@@ -91,7 +119,28 @@ def test_failed_import_returns_to_retry_even_before_worker_finished(window, app,
     assert window.empty_state.isVisible()
 
 
-def test_bootstrap_handoff_retains_helper_frame_before_reveal(window, app):
+def test_logo_cover_matches_initial_welcome_in_same_window(app, monkeypatch):
+    from desktop_app import MainWindow
+    monkeypatch.setattr(MainWindow, 'check_install', lambda self: None)
+    window = MainWindow(defer_startup=True)
+    window.resize(960, 680)
+    window.setProperty('startupHandoffPending', True)
+    window.show()
+    app.processEvents()
+    identity = int(window.winId())
+    logo_rect = window._startup_surface.logo_rect()
+    logo_frame = window._startup_surface.grab().toImage()
+    window.initialize_content()
+    app.processEvents()
+    assert int(window.winId()) == identity
+    welcome = window.empty_state
+    assert welcome.reveal_progress == 0 and welcome.animation is None
+    assert welcome.logo_rect() == logo_rect
+    assert welcome.grab().toImage() == logo_frame
+    window.close()
+
+
+def test_legacy_helper_surface_matches_main_content_without_secondary_icon(window, app):
     from app_metadata import icon_svg_path
     from startup_splash import IconSplash
     window.setProperty('startupHandoffPending', True)
@@ -100,9 +149,11 @@ def test_bootstrap_handoff_retains_helper_frame_before_reveal(window, app):
     welcome = window.empty_state
     helper = IconSplash(icon_svg_path())
     helper.resize(window.size())
+    helper.show()
+    app.processEvents()
     assert welcome.reveal_progress == 0 and welcome.animation is None
     assert welcome.logo_rect() == helper.logo_rect()
-    assert welcome.grab().toImage() == helper.grab().toImage()
+    assert welcome.grab().toImage() == helper.surface.grab().toImage()
     helper.close()
 
 
@@ -201,7 +252,7 @@ def test_welcome_tab_stays_on_visible_controls(window, app, monkeypatch):
     welcome.open_button.setFocus()
     for _ in range(12):
         QTest.keyClick(window, Qt.Key.Key_Tab)
-        assert welcome.isAncestorOf(app.focusWidget())
+        assert welcome.isAncestorOf(app.focusWidget()) or window.titleBar.isAncestorOf(app.focusWidget())
 
 
 def test_dialog_and_drop_reach_parser_from_welcome(window, app, monkeypatch, tmp_path):

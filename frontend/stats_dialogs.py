@@ -3,11 +3,13 @@ from PySide6.QtWidgets import QMessageBox, QDialog
 from qfluentwidgets import MessageBox
 from stats_motion import SurfaceMotion
 import stats_motion as motion_policy
+from window_chrome import clear_secondary_window_icon
 
 
 class _MessageSurface(MessageBox):
     def __init__(self, *args):
         super().__init__(*args)
+        clear_secondary_window_icon(self)
         self.motion = SurfaceMotion(self)
         self._closing_surface = False
 

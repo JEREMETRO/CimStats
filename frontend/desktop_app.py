@@ -7,16 +7,13 @@ import sys
 import uuid
 import time
 from zipfile import BadZipFile
-import psutil
 from pathlib import Path
 from shiboken6 import isValid
 
 from PySide6.QtCore import Qt, QSettings, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QMainWindow, QStackedWidget,
+from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QIcon
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QStackedWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
-from openpyxl import load_workbook
-from openpyxl.cell.cell import ERROR_CODES
 
 PROJECT = Path(__file__).resolve().parents[1]
 SRC = PROJECT / "src"
@@ -25,23 +22,14 @@ if str(SRC) not in sys.path:
 # Namespace-qualified frontend/src imports must also work from a foreign cwd.
 if str(PROJECT) not in sys.path:
     sys.path.insert(sys.path.index(str(SRC)) + 1, str(PROJECT))
-from report_model import MODES, load_session
-from display_rules import export_precision_workbook
-from statistics_page import StatisticsPage
 from stats_style import initialize_theme
 from stats_tokens import FONT_FAMILY, FONT_SIZE_BODY, NAV_WIDTH_EXPANDED, PAGE_BG, TEXT_PRIMARY
-from qfluentwidgets import (FluentIcon, InfoBar, InfoBarPosition, NavigationDisplayMode, NavigationInterface,
-                            NavigationItemPosition)
-from app_shell import PAGE_GUTTER, AppHeader
-from startup_surface import MINIMUM_WINDOW_SIZE, center_startup_window, initial_window_size
-from startup_welcome import StartupWelcome
+from window_chrome import FluentMainWindow, FluentFileDialog as QFileDialog
+from startup_surface import (MINIMUM_WINDOW_SIZE, StartupSurface, center_startup_window,
+                             initial_window_size)
 from app_paths import jobs_directory
-from app_metadata import APP_NAME, application_version
+from app_metadata import APP_NAME, application_version, icon_svg_path
 from stats_identity import save_fingerprint
-from loading_overlay import LoadingOverlay
-from parse_progress import ParseProgressEstimator
-from statistics_model import parse_time
-from stats_dialogs import FluentMessageBox as QMessageBox
 APP_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else PROJECT
 JOBS = jobs_directory(APP_ROOT)
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "frozen", False) else PROJECT
@@ -49,6 +37,51 @@ RUNTIME_DATA = BUNDLE_ROOT / "data"
 CATALOG_DIR = BUNDLE_ROOT / "exports"
 APP_VERSION = application_version(BUNDLE_ROOT)
 DEFAULT_MANAGED = Path(r"D:\Program Files (x86)\Steam\steamapps\common\Cities in Motion 2\CIM2_Data\Managed")
+
+_UI_LOADED = False
+_UI_NAMES = {'psutil', 'load_workbook', 'ERROR_CODES', 'MODES', 'load_session',
+             'export_precision_workbook', 'StatisticsPage', 'FluentIcon', 'InfoBar',
+             'InfoBarPosition', 'NavigationDisplayMode', 'NavigationInterface',
+             'NavigationItemPosition', 'PAGE_GUTTER', 'AppHeader', 'StartupWelcome',
+             'LoadingOverlay', 'ParseProgressEstimator', 'parse_time', 'QMessageBox', 'PAGES'}
+
+
+def _load_ui_dependencies():
+    """Paint the same main window's logo before importing the business UI."""
+    global _UI_LOADED, psutil, load_workbook, ERROR_CODES, MODES, load_session
+    global export_precision_workbook, StatisticsPage, FluentIcon, InfoBar, InfoBarPosition
+    global NavigationDisplayMode, NavigationInterface, NavigationItemPosition
+    global PAGE_GUTTER, AppHeader, StartupWelcome, LoadingOverlay, ParseProgressEstimator
+    global parse_time, QMessageBox, PAGES
+    if _UI_LOADED:
+        return
+    import psutil
+    from openpyxl import load_workbook
+    from openpyxl.cell.cell import ERROR_CODES
+    from report_model import MODES, load_session
+    from display_rules import export_precision_workbook
+    from statistics_page import StatisticsPage
+    from qfluentwidgets import (FluentIcon, InfoBar, InfoBarPosition, NavigationDisplayMode,
+                                NavigationInterface, NavigationItemPosition)
+    from app_shell import PAGE_GUTTER, AppHeader
+    from startup_welcome import StartupWelcome
+    from loading_overlay import LoadingOverlay
+    from parse_progress import ParseProgressEstimator
+    from statistics_model import parse_time
+    from stats_dialogs import FluentMessageBox as QMessageBox
+    PAGES = (('overview', '最新信息', FluentIcon.HOME),
+             ('lines', '线路查询', FluentIcon.SEARCH),
+             ('statistics', '统计数据', FluentIcon.PIE_SINGLE))
+    _UI_LOADED = True
+
+
+def __getattr__(name):
+    # Existing diagnostic/test callers retain their module-level integration
+    # seams while normal startup loads them only after the first logo paint.
+    if name in _UI_NAMES:
+        _load_ui_dependencies()
+        return globals()[name]
+    raise AttributeError(name)
 
 
 def bundled_managed_root() -> Path:
@@ -213,6 +246,9 @@ class ParseWorker(QThread):
                 self.run_command([python, str(SRC / "build_line_workbook.py"), tag], env, 70, "生成线路工作簿")
                 self.run_command([python, str(SRC / "build_company_workbook.py"), tag], env, 82, "生成公司工作簿")
             self.progress.emit(92, "校验并建立查询索引")
+            from report_model import load_session
+            from openpyxl import load_workbook
+            from openpyxl.cell.cell import ERROR_CODES
             data = load_session(self.job_dir, tag, CATALOG_DIR)
             line_xlsx = self.job_dir / f"CIM2_线路发班整理_{tag}.xlsx"
             company_xlsx = self.job_dir / f"CIM2_公司信息整理_{tag}.xlsx"
@@ -278,21 +314,32 @@ class ParseWorker(QThread):
 
 
 
-PAGES = (('overview', '最新信息', FluentIcon.HOME),
-         ('lines', '线路查询', FluentIcon.SEARCH),
-         ('statistics', '统计数据', FluentIcon.PIE_SINGLE))
-
-
-class MainWindow(QMainWindow):
+class MainWindow(FluentMainWindow):
     """Application shell: navigation, one shared header, page stack and parsing."""
 
-    def __init__(self):
+    def __init__(self, *, defer_startup=None):
         super().__init__()
-        initialize_theme(QApplication.instance())
-        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon(str(icon_svg_path(BUNDLE_ROOT))))
+        self.setStyleSheet(f'QMainWindow {{ background: {PAGE_BG}; }}')
         self.resize(initial_window_size())
         self.setMinimumSize(MINIMUM_WINDOW_SIZE)
         center_startup_window(self)
+        self._content_ready = False
+        self._content_initializing = False
+        self._startup_surface = StartupSurface(icon_svg_path(BUNDLE_ROOT), self)
+        self.setCentralWidget(self._startup_surface)
+        if defer_startup is None:
+            defer_startup = bool(QApplication.instance().property('deferWindowStartup'))
+        if not defer_startup:
+            self.initialize_content()
+
+    def initialize_content(self):
+        if self._content_ready or self._content_initializing:
+            return
+        self._content_initializing = True
+        _load_ui_dependencies()
+        initialize_theme(QApplication.instance())
         self.setAcceptDrops(True)
         self.settings = QSettings("CIM2SaveStats", "Desktop")
         self.data: dict = {}
@@ -303,6 +350,8 @@ class MainWindow(QMainWindow):
         self.build_ui()
         self._enable_mica()
         self.check_install()
+        self._content_ready = True
+        self._startup_surface = None
 
     # ------------------------------------------------------------ window
     def _enable_mica(self):
@@ -312,7 +361,7 @@ class MainWindow(QMainWindow):
             return
         from qframelesswindow import WindowEffect
         self.setObjectName('micaMainWindow')
-        self.setStyleSheet('QMainWindow#micaMainWindow { background: transparent; }')
+        self.setStyleSheet(f'QMainWindow#micaMainWindow {{ background: {PAGE_BG}; }}')
         if not hasattr(self, '_mica_effect'):
             self._mica_effect = WindowEffect(self)
         self._mica_effect.setMicaEffect(self.winId(), isDarkMode=False, isAlt=False)
@@ -321,7 +370,7 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._enable_mica()
-        if not self.property('startupHandoffPending'):
+        if self._content_ready and not self.property('startupHandoffPending'):
             self.begin_welcome_transition()
 
     def begin_welcome_transition(self):
@@ -335,7 +384,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'empty_state') and self.empty_state.isVisible():
             target = (self.loading_overlay.cancel_button if self.loading_overlay.isVisible()
                       else self.empty_state.open_button)
-            target.setFocus(Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+            controls = [button for button in (self.titleBar.minBtn, self.titleBar.maxBtn,
+                        self.titleBar.closeBtn, target) if button.isVisible() and button.isEnabled()]
+            current = QApplication.focusWidget()
+            index = controls.index(current) if current in controls else (-1 if forward else 0)
+            controls[(index + (1 if forward else -1)) % len(controls)].setFocus(
+                Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
             return True
         return super().focusNextPrevChild(forward)
 
@@ -494,6 +548,7 @@ class MainWindow(QMainWindow):
             self.empty_state.raise_()
             if self.loading_overlay.isVisible():
                 self.loading_overlay.raise_()
+        self.loading_overlay.raise_transition()
         self.stats_tabs.setEnabled(bool(self.data))
 
     # ----------------------------------------------------------- exports
@@ -547,6 +602,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- close
     def closeEvent(self, event):
         self._closing_app = True
+        if not self._content_ready:
+            super().closeEvent(event)
+            return
         self._ready_timer.stop()
         self._progress_timer.stop()
         self.loading_overlay.finish()

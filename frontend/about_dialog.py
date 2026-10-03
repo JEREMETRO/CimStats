@@ -6,16 +6,16 @@ from PySide6.QtCore import Qt, QRect, QPoint, QEvent
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QApplication, QDialog, QWidget, QLabel, QVBoxLayout,
                                QHBoxLayout, QPlainTextEdit, QScrollArea, QFrame)
-from PySide6.QtSvgWidgets import QSvgWidget
 from qfluentwidgets import PushButton, MessageBoxBase
 from shiboken6 import isValid
 
-from app_metadata import (application_metadata, icon_svg_path, project_license_path,
+from app_metadata import (application_metadata, project_license_path,
                           third_party_notices_path)
 from stats_typography import apply_emphasis_font
 from stats_motion import SurfaceMotion, animations_enabled
 from stats_tokens import TEXT_PRIMARY, TEXT_SECONDARY
 from stats_dialogs import FluentMessageBox
+from window_chrome import clear_secondary_window_icon
 
 
 class _CompactDialog(MessageBoxBase):
@@ -24,6 +24,7 @@ class _CompactDialog(MessageBoxBase):
 
     def __init__(self, parent):
         super().__init__(parent)
+        clear_secondary_window_icon(self)
         self.motion = SurfaceMotion(self)
         self._closing_surface = False
         self._return_focus = None
@@ -44,6 +45,8 @@ class _CompactDialog(MessageBoxBase):
             visible = visible.intersected(screen.availableGeometry())
         if visible.isEmpty():
             visible = QRect(parent.mapToGlobal(QPoint(0, 0)), parent.size())
+        if not self.isWindow():
+            visible.moveTopLeft(parent.mapFromGlobal(visible.topLeft()))
         self.setGeometry(visible)
         self.widget.setFixedWidth(min(self.preferred_width, max(1, self.width() - 32)))
         if hasattr(self, 'content'):
@@ -127,10 +130,6 @@ class AboutDialog(_CompactDialog):
         layout.setSpacing(10)
         identity = QHBoxLayout()
         identity.setSpacing(16)
-        self.symbol = QSvgWidget(str(icon_svg_path(root)), self.content)
-        self.symbol.setFixedSize(56, 56)
-        self.symbol.setAccessibleName(self.metadata.name)
-        identity.addWidget(self.symbol)
         lines = QVBoxLayout()
         lines.setSpacing(3)
         name = QLabel(self.metadata.name, self.content)

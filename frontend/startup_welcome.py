@@ -1,4 +1,4 @@
-"""Full central-window welcome continuing the helper's startup identity."""
+"""Full central-window welcome continuing its initial logo cover."""
 from PySide6.QtCore import QEvent, QEasingCurve, Qt, Signal, QVariantAnimation
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QVBoxLayout, QWidget

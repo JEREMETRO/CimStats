@@ -1,4 +1,4 @@
-"""Show the helper before heavy imports; construct MainWindow on this Qt thread.
+"""Paint one main-window logo cover before loading its business UI.
 
 Python startup cannot cover a one-file bootloader's pre-interpreter extraction.
 Trace timestamps describe painted Qt frames, not OS compositor presentation.
@@ -11,31 +11,26 @@ import sys
 import time
 from pathlib import Path
 
-from app_metadata import (APP_NAME, TECHNICAL_APPLICATION_NAME, WINDOWS_APP_ID, application_version, bundle_root,
-                          icon_png_paths, icon_svg_path)
-from startup_transport import SplashProcess
+from app_metadata import (APP_NAME, TECHNICAL_APPLICATION_NAME, WINDOWS_APP_ID,
+                          application_version, bundle_root, icon_png_paths)
 
 
 def main(launcher: Path, *, root: Path | None = None, window_factory=None,
          trace_path: Path | None = None):
     root = root or bundle_root()
     events = []
-    owner = SplashProcess()
+    app = None
+    prior_icon = None
 
     def record(name, **details):
         events.append({'event': name, 'at': time.perf_counter(), **details})
 
     record('bootstrap_enter')
     try:
-        record('helper_spawn_started')
-        try:
-            owner.start(launcher, icon_svg_path(root))
-            record('helper_spawn_finished', pid=owner.process.pid)
-        except OSError as exc:
-            record('splash_unavailable', reason=type(exc).__name__)
         record('parent_qt_import_started')
         from PySide6.QtWidgets import QApplication
-        from PySide6.QtGui import QIcon
+        from PySide6.QtGui import QIcon, QPixmap
+        from PySide6.QtCore import Qt
         from startup_readiness import FirstFrameGate
         record('parent_qt_import_finished')
         if sys.platform == 'win32':
@@ -45,66 +40,75 @@ def main(launcher: Path, *, root: Path | None = None, window_factory=None,
         app.setApplicationName(TECHNICAL_APPLICATION_NAME)
         app.setApplicationDisplayName(APP_NAME)
         app.setApplicationVersion(application_version(root))
-        app.setQuitOnLastWindowClosed(False)
+        app.setQuitOnLastWindowClosed(True)
         record('parent_app_created')
-
-        # No artificial minimum duration: start business imports as soon as the
-        # helper acknowledges its first completed paint. Failure falls back.
-        if owner.process is not None:
-            if owner.wait_for_first_paint():
-                record('splash_first_paint_received')
-            else:
-                record('splash_unavailable', reason='first_paint_timeout_or_exit')
-                owner.close()
-        record('desktop_import_started')
-        from stats_style import initialize_theme
-        initialize_theme(app)
         if window_factory is None:
             from desktop_app import MainWindow
             window_factory = MainWindow
-        record('desktop_import_finished')
         icon = QIcon()
         for _size, path in icon_png_paths(root):
             if path.is_file():
                 icon.addFile(str(path))
-        app.setWindowIcon(icon)
+        # Only the main window owns the app icon; secondary windows do not
+        # inherit it from QApplication, even before the full theme loads.
+        prior_icon = app.windowIcon()
+        empty = QPixmap(16, 16)
+        empty.fill(Qt.GlobalColor.transparent)
+        app.setWindowIcon(QIcon(empty))
         record('window_construct_started')
-        window = window_factory()
-        record('window_construct_finished')
+        app.setProperty('deferWindowStartup', True)
+        try:
+            window = window_factory()
+        finally:
+            app.setProperty('deferWindowStartup', False)
+        record('window_construct_finished', window_id=int(window.winId()))
         window.setWindowIcon(icon)
         window.setProperty('startupHandoffPending', True)
+        gates = []
+        failure = []
 
         def ready():
-            record('window_first_paint')
-            app.setQuitOnLastWindowClosed(True)
-            owner.dismiss()
-            record('splash_dismissed')
+            record('window_first_paint', window_id=int(window.winId()))
             window.setProperty('startupHandoffPending', False)
             begin_welcome = getattr(window, 'begin_welcome_transition', None)
             if begin_welcome is not None:
                 begin_welcome()
-                record('welcome_transition_started')
+                record('welcome_transition_started', window_id=int(window.winId()))
 
-        gate = FirstFrameGate(window, ready, surface=getattr(window, 'empty_state', None))
-        app.aboutToQuit.connect(owner.dismiss)
+        def load_content():
+            record('logo_first_paint', window_id=int(window.winId()))
+            initialize = getattr(window, 'initialize_content', None)
+            if initialize is None:
+                ready()
+                return
+            try:
+                record('desktop_import_started')
+                initialize()
+                record('desktop_import_finished', window_id=int(window.winId()))
+                gates.append(FirstFrameGate(window, ready, surface=getattr(window, 'empty_state', None)))
+                window.update()
+            except BaseException as exc:
+                record('startup_failed', reason=type(exc).__name__)
+                failure.append(exc)
+                window.close()
+                app.exit(1)
+
+        gates.append(FirstFrameGate(window, load_content, surface=getattr(window, '_startup_surface', None)))
         record('window_show_requested')
         window.show()
         result = app.exec()
         record('application_exit', code=result)
-        return result
+        return 1 if failure else result
     except BaseException as exc:
         record('startup_failed', reason=type(exc).__name__)
         raise
     finally:
-        owner.close()
-        record('helper_reaped', code=owner.exit_code)
-        events.extend(owner.events)
+        if app is not None and prior_icon is not None:
+            app.setWindowIcon(prior_icon)
         destination = trace_path or (Path(os.environ['CIM2_STARTUP_TRACE'])
                                      if os.environ.get('CIM2_STARTUP_TRACE') else None)
         if destination is not None:
-            # Never include the token, command line, data, or settings in traces.
             try:
-                destination.write_text(json.dumps(sorted(events, key=lambda event: event['at']),
-                                                  indent=2), encoding='utf-8')
+                destination.write_text(json.dumps(events, indent=2), encoding='utf-8')
             except OSError:
                 pass

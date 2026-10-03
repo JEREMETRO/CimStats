@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Signal
-from PySide6.QtWidgets import QFileDialog
+from window_chrome import FluentFileDialog as QFileDialog
 from qfluentwidgets import Action, RoundMenu
 
 from stats_exports import export_png, export_xlsx, export_city_xlsx

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from window_chrome import FluentDialog
 from qfluentwidgets import CalendarPicker, CheckBox, DateTimeEdit, PrimaryPushButton, PushButton
 from stats_motion import attach_surface_reveal
 
@@ -11,7 +12,7 @@ from stats_tokens import (BORDER, CARD_BG, CONTROL_GAP, ERROR_COLOR,
                           FONT_FAMILY, TEXT_PRIMARY, TEXT_SECONDARY)
 
 
-class RangePicker(QDialog):
+class RangePicker(FluentDialog):
     """Return a half-open interval; in date-only mode the last day is included."""
 
     def __init__(self, start: datetime, end: datetime, *, title: str = '自定义时间', parent=None):
@@ -116,6 +117,7 @@ class RangePicker(QDialog):
         valid = self.selected_range() is not None
         self.apply_button.setEnabled(valid)
         self.error_label.setText('结束时间必须晚于开始时间' if not valid else '')
+        self.error_label.setVisible(not valid)
         border = ERROR_COLOR if not valid else BORDER
         for edit in (self.start_edit, self.end_edit):
             edit.setStyleSheet(f'border-color: {border};')

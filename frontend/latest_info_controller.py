@@ -5,7 +5,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QThread, QTimer, Signal, Slot
-from PySide6.QtWidgets import QApplication, QFileDialog
+from PySide6.QtWidgets import QApplication
+from window_chrome import FluentFileDialog as QFileDialog
 from qfluentwidgets import Action, RoundMenu
 from shiboken6 import isValid
 

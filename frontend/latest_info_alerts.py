@@ -17,6 +17,7 @@ from stats_alerts import _alert_id
 from stats_controls import button_text_size
 from stats_elevation import attach_card_elevation
 from stats_motion import attach_surface_reveal
+from window_chrome import FluentDialog
 from stats_text import group_label, label
 import stats_tokens as tokens
 
@@ -366,7 +367,7 @@ class LatestInfoAlertsPanel(CardWidget):
                                  '当前窗口无可比数据')
 
     def _dialog(self, title, *, width=520):
-        dialog = QDialog(self.window())
+        dialog = FluentDialog(self.window())
         dialog.setWindowTitle(title)
         dialog.setFont(font(12))
         dialog.setMinimumWidth(width)
@@ -374,7 +375,6 @@ class LatestInfoAlertsPanel(CardWidget):
         box = QVBoxLayout(dialog)
         box.setContentsMargins(20, 20, 20, 20)
         box.setSpacing(12)
-        box.addWidget(_text(title, dialog, bold=True))
         attach_surface_reveal(dialog)
         return dialog, box
 

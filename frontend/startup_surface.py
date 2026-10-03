@@ -1,7 +1,7 @@
-"""Lightweight startup identity shared by helper and in-window welcome.
+"""Lightweight startup identity shared by the main-window cover and welcome.
 
-No Fluent controls or business imports: the helper can paint before desktop
-imports, with exactly the same background and logo coordinates as the welcome.
+No Fluent controls or business imports: the main window paints its cover before
+business imports, with the same background and logo coordinates as the welcome.
 """
 from pathlib import Path
 

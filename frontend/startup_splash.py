@@ -9,27 +9,36 @@ from pathlib import Path
 
 _QT_IMPORT_STARTED = time.perf_counter()
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
-from app_metadata import APP_NAME, application_version
+from app_metadata import APP_NAME
 from startup_surface import StartupSurface, center_startup_window, initial_window_size
+from window_chrome import FluentWindow, TITLE_BAR_HEIGHT
 _QT_IMPORT_FINISHED = time.perf_counter()
 
 
-class IconSplash(StartupSurface):
+class IconSplash(FluentWindow):
     first_painted = Signal()
 
     def __init__(self, symbol: Path):
-        super().__init__(symbol, None, Qt.WindowType.Window |
-                         Qt.WindowType.WindowStaysOnTopHint |
-                         Qt.WindowType.WindowDoesNotAcceptFocus)
+        super().__init__()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAccessibleName('CimStats 启动页')
-        self.setWindowTitle(f'{APP_NAME} v{application_version()}')
-        self.setWindowIcon(QIcon(str(symbol)))
+        self.setWindowTitle(APP_NAME)
+        self.surface = StartupSurface(symbol, self)
         self.resize(initial_window_size())
+        self.surface.setGeometry(0, TITLE_BAR_HEIGHT, self.width(), self.height() - TITLE_BAR_HEIGHT)
         self._painted = False
         center_startup_window(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'surface'):
+            self.surface.setGeometry(0, TITLE_BAR_HEIGHT, self.width(), self.height() - TITLE_BAR_HEIGHT)
+
+    def logo_rect(self):
+        return self.surface.logo_rect()
 
     def paintEvent(self, event):
         super().paintEvent(event)
