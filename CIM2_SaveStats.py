@@ -57,6 +57,9 @@ if len(sys.argv) == 5 and sys.argv[1] == '--startup-splash':
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == '--ui-smoke':
+        from package_smoke import main as smoke_main
+        return smoke_main(ROOT / 'CIM2_SaveStats.py', sys.argv[2:])
     from startup_bootstrap import main as bootstrap_main
     return bootstrap_main(ROOT / 'CIM2_SaveStats.py')
 

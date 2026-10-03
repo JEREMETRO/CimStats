@@ -27,7 +27,7 @@ if (-not $Build) {
         build_requested = $false
         requested_version = $Version
         current_version = (Get-Content -LiteralPath (Join-Path $workspaceRoot 'VERSION') -Raw).Trim()
-        layout = 'onedir; package/CimStats/CimStats.exe plus _internal'
+        layout = 'onefile; package/CimStats/CimStats.exe'
         output_parent = 'build/candidates'
         source_freeze_required = $true
         local_game_runtime_requires_explicit_review_flag = $true
@@ -90,10 +90,10 @@ try {
     & $PythonExe -B src/patch_singleton_probe.py
     if ($LASTEXITCODE -ne 0) { throw 'Fresh staged probe generation failed' }
     $workPath = Assert-BuildPath (Join-Path $candidateRoot 'pyinstaller-work')
-    $outputRoot = Assert-BuildPath (Join-Path $candidateRoot 'package')
+    $outputRoot = Assert-BuildPath (Join-Path $candidateRoot 'package/CimStats')
     & $PythonExe -B -m PyInstaller --workpath $workPath --distpath $outputRoot CIM2_SaveStats.spec
-    if ($LASTEXITCODE -ne 0) { throw 'Directory candidate build failed; evidence remains in its unique directory' }
-    $package = Join-Path $outputRoot 'CimStats'
+    if ($LASTEXITCODE -ne 0) { throw 'Single-file candidate build failed; evidence remains in its unique directory' }
+    $package = $outputRoot
     foreach ($name in @('README.md','LICENSE','THIRD_PARTY_NOTICES.md')) { Copy-Item -LiteralPath (Join-Path $workspaceRoot $name) -Destination (Join-Path $package $name) }
     & $PythonExe -B tools/candidate_package.py finalize --candidate $candidateRoot --source-manifest $SourceManifest
     if ($LASTEXITCODE -ne 0) { throw 'Exact candidate inventory/source verification failed' }

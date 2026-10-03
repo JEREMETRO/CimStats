@@ -9,6 +9,7 @@ __pycache__/
 /build/
 /dist/
 /jobs/
+/docs/preflight/*.json
 /analysis/
 /archive/
 /recycle_bin/

@@ -7,6 +7,7 @@ from types import ModuleType, SimpleNamespace
 from pathlib import Path
 import os
 import importlib.metadata
+import hashlib
 import candidate_package
 from candidate_package import source_path_allowed, compare_inventory, package_blockers, validate_name, selected_documents
 
@@ -74,6 +75,9 @@ class CandidateRules(unittest.TestCase):
         for path in ('sample.save', 'nested.zip', '_internal/docs/evidence/runtime.dll'):
             self.assertEqual(package_blockers([{'path':path,'sha256':'a'*64}])[0]['kind'], 'unexpected_payload')
 
+    def test_pyinstaller_standard_library_archive_is_retained(self):
+        self.assertEqual(package_blockers([{'path':'base_library.zip','sha256':'a'*64}]), [])
+
     def test_candidate_name_cannot_escape_or_claim_publication(self):
         for value in ('../outside', 'C:/outside', 'release.zip', 'dist', 'CON'):
             with self.assertRaises(ValueError): validate_name(value)
@@ -131,6 +135,42 @@ class SpecContract(unittest.TestCase):
 
     def test_old_version_is_rejected(self):
         with self.assertRaises(RuntimeError): self.evaluate(version='1.0.0')
+
+
+class EmbeddedInventory(unittest.TestCase):
+    def inspect(self, *, missing=None, changed=None, extra=None):
+        names = ('VERSION', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
+                 'third_party_licenses/PROVENANCE.json', *[candidate_package.ICON_DIR+n for n in candidate_package.ICON_NAMES])
+        payloads = {name.replace('/', '\\'): name.encode() for name in names}
+        snapshot = {'files':{name:hashlib.sha256(name.encode()).hexdigest() for name in names}}
+        if missing: payloads.pop(missing.replace('/', '\\'))
+        if changed: payloads[changed.replace('/', '\\')] = b'changed'
+        if extra: payloads.update(extra)
+        archive = SimpleNamespace(toc=payloads, extract=payloads.__getitem__)
+        with patch('PyInstaller.archive.readers.CArchiveReader', return_value=archive):
+            return candidate_package.inspect_onefile(Path('CimStats.exe'), snapshot)
+
+    def test_onefile_embedded_required_data_is_verified(self):
+        self.assertEqual(self.inspect(), [])
+
+    def test_changed_embedded_version_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'differs: VERSION'):
+            self.inspect(changed='VERSION')
+
+    def test_missing_embedded_icon_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Missing embedded data'):
+            self.inspect(missing=candidate_package.ICON_DIR+'cimstats.ico')
+
+    def test_game_runtime_hidden_inside_exe_is_in_inventory(self):
+        rows = self.inspect(extra={'game_runtime\\Managed\\Assembly-CSharp.dll':b'original',
+                                  'data\\Assembly-CSharp.probe.dll':b'probe'})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['sha256'], hashlib.sha256(b'original').hexdigest())
+        self.assertEqual(len(package_blockers(rows)), 2)
+
+    def test_unexpected_private_save_inside_exe_is_detected(self):
+        rows = self.inspect(extra={'sample.save':b'private'})
+        self.assertEqual(package_blockers(rows)[0]['kind'], 'unexpected_payload')
 
 
 if __name__ == '__main__': unittest.main()

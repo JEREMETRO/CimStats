@@ -80,7 +80,7 @@ def package_blockers(rows):
         kind = None
         if inner.startswith('game_runtime/') or leaf.startswith(('assembly-csharp', 'assembly-unityscript')) or leaf in ('unityengine.dll','steamworksmanaged.dll'):
             kind = 'game_runtime_redistribution'
-        elif leaf.endswith(('.save','.sav','.zip','.7z','.rar')) or (inner.startswith('docs/') and leaf.endswith(('.dll','.exe','.pyd'))):
+        elif (leaf.endswith(('.save','.sav','.zip','.7z','.rar')) and inner != 'base_library.zip') or (inner.startswith('docs/') and leaf.endswith(('.dll','.exe','.pyd'))):
             kind = 'unexpected_payload'
         elif leaf.endswith(('.ttf','.otf','.woff','.woff2')): kind = 'font_clearance'
         if kind: result.append({'path':row['path'], 'sha256':row['sha256'], 'kind':kind})
@@ -203,18 +203,39 @@ def write_new(path, data):
     with path.open('x',encoding='utf-8',newline='\n') as stream: json.dump(data,stream,ensure_ascii=False,indent=2); stream.write('\n')
 
 
+def inspect_onefile(executable, snapshot):
+    """Inspect embedded bytes, including dependencies hidden inside the EXE."""
+    from PyInstaller.archive.readers import CArchiveReader
+    archive = CArchiveReader(str(executable))
+    names = {name.replace('\\', '/'): name for name in archive.toc}
+    required = ('VERSION', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
+                'third_party_licenses/PROVENANCE.json', *[ICON_DIR+n for n in ICON_NAMES])
+    for name in required:
+        if name not in names:
+            raise ValueError('Missing embedded data: '+name)
+        payload = archive.extract(names[name])
+        if hashlib.sha256(payload).hexdigest() != snapshot['files'][name]:
+            raise ValueError('Bundled legal/version/brand data differs: '+name)
+    rows = []
+    for name, original in names.items():
+        # Only material requiring payload review needs decompression here.
+        probe = {'path':name, 'sha256':''}
+        if package_blockers([probe]):
+            payload = archive.extract(original)
+            rows.append({'path':name, 'bytes':len(payload),
+                         'sha256':hashlib.sha256(payload).hexdigest()})
+    return rows
+
+
 def finalize(candidate, source_manifest):
     candidate = inside(candidate, ROOT/'build/candidates')
     validate_name(candidate.name)
     snapshot = check_freeze(ROOT, source_manifest)
     package = candidate/'package/CimStats'
-    if not (package/'CimStats.exe').is_file(): raise ValueError('Missing directory candidate executable')
-    internal = package/'_internal'
-    if (internal/'VERSION').read_text(encoding='utf-8-sig').strip() != snapshot['identity']['version']: raise ValueError('Bundled VERSION differs')
-    for name in ('LICENSE','THIRD_PARTY_NOTICES.md','third_party_licenses/PROVENANCE.json',*[ICON_DIR+n for n in ICON_NAMES]):
-        if sha(internal/name) != snapshot['files'][name]: raise ValueError('Bundled legal/brand data differs: '+name)
+    if not (package/'CimStats.exe').is_file(): raise ValueError('Missing single-file candidate executable')
+    embedded = inspect_onefile(package/'CimStats.exe', snapshot)
     # Readable legal/user documents beside the EXE, using the same explicit
-    # source list. UI About still reads its bundled _internal copies.
+    # source list. UI About still reads its one-file extracted copies.
     readable = ['README.md','LICENSE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','CONTRIBUTING.md','SECURITY.md','AGENTS.md',
                 *DOCS,*license_records(ROOT),'third_party_licenses/PROVENANCE.json']
     for name in readable:
@@ -225,15 +246,15 @@ def finalize(candidate, source_manifest):
         destination.parent.mkdir(parents=True,exist_ok=True)
         with destination.open('xb') as stream: stream.write((ROOT/name).read_bytes())
     rows = package_inventory(package)
-    blockers = package_blockers(rows)
+    blockers = package_blockers([*rows, *embedded])
     if any(row['kind']=='unexpected_payload' for row in blockers): raise ValueError('Unexpected save/archive/docs binary in candidate')
     record = {**snapshot['identity'],'source_commit':snapshot['source_commit'],'source_snapshot_sha256':sha(source_manifest),
-              'layout':'onedir','local_review_only':True,'public_release_allowed':False,'files':{row['path']:row['sha256'] for row in rows}}
+              'layout':'onefile','local_review_only':True,'public_release_allowed':False,'files':{row['path']:row['sha256'] for row in rows}}
     write_new(package/'VERSION.json',record)
     source_zip = candidate/'CorrespondingProjectSource.zip'
     with zipfile.ZipFile(source_zip,'x',compression=zipfile.ZIP_DEFLATED) as archive:
         for name in sorted(snapshot['files']): archive.write(ROOT/name,name)
-    report = {'identity':snapshot['identity'],'files':rows,'package_version_record_sha256':sha(package/'VERSION.json'),
+    report = {'identity':snapshot['identity'],'files':rows,'embedded_review_files':embedded,'package_version_record_sha256':sha(package/'VERSION.json'),
               'source_manifest_sha256':sha(source_manifest),'source_zip_sha256':sha(source_zip),
               'source_zip_scope':'Project-selected source only; not a substitute for third-party corresponding-source obligations or public-source privacy review',
               'public_release_allowed':False,'public_blocking_files':blockers,
