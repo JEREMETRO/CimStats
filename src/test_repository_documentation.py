@@ -79,6 +79,27 @@ def test_chart_and_agent_rules_share_the_identity_legend_contract():
         assert '左／右、上／下' in content
 
 
+def test_home_structure_numbers_are_the_only_compact_chart_exception():
+    for relative in ('docs/requirements/charts.md', 'docs/requirements/latest-info.md',
+                     'docs/design/architecture.md', 'docs/design/visual-design.md',
+                     'docs/testing/acceptance.md'):
+        content = (ROOT / relative).read_text(encoding='utf-8')
+        assert '客流结构' in content and '班次结构' in content
+        assert '其他' in content and '小图' in content
+    charts = (ROOT / 'docs/requirements/charts.md').read_text(encoding='utf-8')
+    assert '唯一例外' in charts and '不用悬停替代' in charts
+
+
+def test_native_save_import_is_an_explicit_window_chrome_exception():
+    for relative in ('docs/requirements/product.md', 'docs/design/architecture.md',
+                     'docs/testing/acceptance.md'):
+        content = (ROOT / relative).read_text(encoding='utf-8')
+        assert '仅导入存档' in content and 'Windows 原生打开文件对话框' in content
+        assert '例外' in content
+        if not relative.endswith('acceptance.md'):
+            assert '其他应用自有窗口' in content
+
+
 def test_ratio_rollup_retains_observed_zero_divider_numerators():
     content = (ROOT / 'docs/reference/history-metrics.md').read_text(encoding='utf-8')
     assert '10/0 + 20/10' in content and '300%' in content
