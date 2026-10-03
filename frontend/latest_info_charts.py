@@ -399,8 +399,9 @@ class ModeRing(QWidget):
     mode_requested = Signal(str)
     share_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, show_values=False):
         super().__init__(parent)
+        self.show_values = show_values
         self.counts, self.total, self.colors = (), None, {}
         self.caption = '制式占比'
         self.unit = ''
@@ -432,10 +433,16 @@ class ModeRing(QWidget):
     def _position_center(self):
         center, radius = self.geometry_for_hit()
         width = int(radius * self.inner_ratio * 2)
-        self.center_caption.setGeometry(int(center.x() - width / 2), int(center.y() - 9), width, 18)
-        self.center_note.setGeometry(int(center.x() - width / 2), int(center.y() + 9), width, 16)
-        self.center_total.hide()
+        show_total = self.show_values and self.total_fits()
+        self.center_total.setGeometry(int(center.x() - width / 2), int(center.y() - 25), width, 28)
+        self.center_total.setVisible(show_total)
+        self.center_caption.setGeometry(int(center.x() - width / 2), int(center.y() + (3 if show_total else -9)), width, 18)
+        self.center_note.setGeometry(int(center.x() - width / 2), int(center.y() + (21 if show_total else 9)), width, 16)
         self.center_total.setAccessibleName(self.center_total.text())
+
+    def total_fits(self):
+        _, radius = self.geometry_for_hit()
+        return self.center_total.fontMetrics().horizontalAdvance(self.center_total.text()) + 4 <= int(radius * self.inner_ratio * 2)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -552,8 +559,6 @@ class ModeRow(QFrame):
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.share.setFixedWidth(percent_width or self.share.fontMetrics().horizontalAdvance(percent) + 2)
         row.addWidget(self.share)
-        self.number.hide()
-        self.share.hide()
         self.setToolTip('')
 
         self.setAccessibleName(f'{count.mode} · 点击查看线路排行 {self.number.text()} {self.share.text()}')
@@ -698,7 +703,8 @@ class StructureAnalysis(CategoryCard):
         structure_box.setSpacing(8)
         lower = QHBoxLayout()
         lower.setSpacing(8)
-        self.ring = ModeRing(self)
+        # The two home distributions are the sole compact numeric exception.
+        self.ring = ModeRing(self, show_values=True)
         self.ring.setFixedSize(156, 156)
         lower.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignVCenter)
         self.mode_list = QWidget()
@@ -822,7 +828,7 @@ class StructureAnalysis(CategoryCard):
         self.view_selector.blockSignals(False)
         ring = self.ring if structure else self.share_ring
         self.total_label.setText(f'{shown(ring.total)} {self.unit}')
-        self.total_label.hide()
+        self.total_label.setVisible(structure and not self.ring.total_fits())
         content_height = max(232, *(widget.minimumSizeHint().height() for widget in
                                    (self.structure, self.ranking, self.line_share)))
         base_height = self._base_height - 232 + content_height

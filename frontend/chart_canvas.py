@@ -186,6 +186,7 @@ class _ChartTip(QWidget):
                          | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         blank = QPixmap(1, 1)
         blank.fill(Qt.GlobalColor.transparent)
@@ -195,6 +196,11 @@ class _ChartTip(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        # A reused native surface must clear old pixels, including the area
+        # outside its rounded border after a shorter tooltip replaces it.
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.canvas._draw_tooltip(painter, QRectF(self.rect()).adjusted(1, 1, -1, -1), self.content_layout)
 
@@ -773,9 +779,6 @@ class ChartCanvas(QWidget):
         tip_font = tooltip_font()
         flags = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere | Qt.AlignmentFlag.AlignVCenter
         painter.save()
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 18))
-        painter.drawRoundedRect(box.translated(0, 2), 8, 8)
         painter.setPen(QPen(QColor(tokens.TOOLTIP_BORDER), 1))
         painter.setBrush(QColor(tokens.TOOLTIP_BG))
         painter.drawRoundedRect(box, tokens.TOOLTIP_RADIUS, tokens.TOOLTIP_RADIUS)
