@@ -29,7 +29,7 @@ from stats_charts import ChartPanel
 from stats_view_model import preset_window, resolve_comparison
 from company_dashboard import CompanyDashboard, DEFAULT_SLOTS
 from stats_range_picker import RangePicker
-from stats_controls import FluentSegmentedControl, StatisticsScrollArea, SummaryToggleButton
+from stats_controls import FluentSegmentedControl, StatisticsScrollArea, SummaryToggleButton, button_text_size
 from stats_style import CARD_PADDING, CONTROL_GAP, NARROW_MARGIN, PAGE_MARGIN, SECTION_GAP
 from stats_text import label, group_label
 from stats_integration import configure_dashboard
@@ -397,8 +397,9 @@ class StatisticsPage(QWidget):
         self.company_tag_layout.setSpacing(4)
         selector_row.addWidget(self.company_tag_host, 1)
         self.company_button = DropDownPushButton('选择', self.company_selector)
-        self.company_button.setFixedWidth(70)
-        self.company_button.setFixedHeight(CONTROL_HEIGHT - 4)
+        company_button_size = button_text_size(self.company_button)
+        self.company_button.setFixedWidth(company_button_size.width())
+        self.company_button.setFixedHeight(max(CONTROL_HEIGHT - 4, company_button_size.height()))
         self.company_menu = CheckableMenu(parent=self.company_button)
         self.company_button.setMenu(self.company_menu)
         selector_row.addWidget(self.company_button)
@@ -409,6 +410,7 @@ class StatisticsPage(QWidget):
                            ('自定义时间', 'custom')):
             self.range_combo.addItem(title, userData=key)
         self.range_combo.currentIndexChanged.connect(self._range_changed)
+        self.range_combo.setMinimumWidth(button_text_size(self.range_combo).width())
         self.grain_combo = FluentComboBox(self.filter_card)
         self.grain_combo.setFixedHeight(CONTROL_HEIGHT)
         for key in ('hour', 'day', 'week', 'month'):

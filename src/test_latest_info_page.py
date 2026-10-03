@@ -396,7 +396,9 @@ def test_three_charts_use_full_width_below_upper_only_alerts(page, qt_applicatio
     assert (trend.width(), top.width(), departures.width()) == (384, 400, 400)
     assert all(rect.height() == 304 for rect in (trend, top, departures))
     alerts = bounds(child(page, 'alertHost'), page)
-    assert alerts.height() == 494 and alerts.bottom() < trend.top()
+    upper = bounds(page.main, page)
+    assert alerts.top() == upper.top() and alerts.bottom() == upper.bottom()
+    assert alerts.bottom() < trend.top()
     assert departures.right() == bounds(page.board, page).right()
 
 

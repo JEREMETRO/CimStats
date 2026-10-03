@@ -14,6 +14,7 @@ from latest_info_charts import font, label as compact_label
 from statistics_model import METRICS
 from display_rules import format_number, number_places
 from stats_alerts import _alert_id
+from stats_controls import button_text_size
 from stats_elevation import attach_card_elevation
 from stats_motion import attach_surface_reveal
 from stats_text import group_label, label
@@ -146,7 +147,6 @@ class LatestInfoAlertsPanel(CardWidget):
         self.settings = settings if settings is not None else QSettings('CIM2SaveStats', 'Desktop')
         self.setObjectName('latestInfoAlerts')
         self.setMinimumWidth(0)
-        self.setMaximumHeight(494)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setFont(font(12))
         attach_card_elevation(self)
@@ -179,7 +179,7 @@ class LatestInfoAlertsPanel(CardWidget):
         heading.addWidget(self.unread_label)
         self.all_button = PushButton('全部', self)
         self.all_button.setFont(font(12))
-        self.all_button.setFixedSize(46, 24)
+        self.all_button.setFixedSize(button_text_size(self.all_button))
         self.all_button.clicked.connect(self._show_all)
         heading.addWidget(self.all_button)
         root.addLayout(heading)
@@ -190,7 +190,7 @@ class LatestInfoAlertsPanel(CardWidget):
         context.addWidget(self.scope_label, 1)
         self.more_button = AlertMoreButton('更多', self)
         self.more_button.setFont(font(12))
-        self.more_button.setFixedSize(62, 22)
+        self.more_button.setFixedSize(button_text_size(self.more_button))
         self.more_button.setAccessibleName('更多提醒操作')
         self.more_menu = RoundMenu(parent=self.more_button)
         self.enable_action = Action('开启提醒', self.more_menu)

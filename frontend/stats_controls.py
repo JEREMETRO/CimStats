@@ -3,15 +3,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QVariantAnimation, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QVariantAnimation, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
-from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QPushButton, QStyle, QStyleOptionButton
 from qfluentwidgets import ComboBox, ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
 
 import stats_tokens as tokens
 import stats_motion as motion_policy
 
 _FONT_ID = -1
+
+
+def button_text_size(button):
+    """Measure polished text plus its real Fluent padding and arrow reserve."""
+    button.ensurePolished()
+    option = QStyleOptionButton()
+    button.initStyleOption(option)
+    ink = option.fontMetrics.boundingRect(QRect(0, 0, 10000, 10000),
+        int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine), option.text)
+    contents = QSize(max(ink.width(), option.fontMetrics.horizontalAdvance(option.text)) + 2,
+                     ink.height())
+    return button.style().sizeFromContents(QStyle.ContentsType.CT_PushButton,
+                                          option, contents, button)
 
 
 class ElidingComboBox(ComboBox):

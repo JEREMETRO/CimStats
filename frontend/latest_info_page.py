@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path, PureWindowsPath
+from math import ceil
 import sys
 
-from PySide6.QtCore import QEvent, Qt, QRect, QRectF, Signal
-from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath
+from PySide6.QtCore import QEvent, Qt, QPointF, QRect, QRectF, Signal
+from PySide6.QtGui import QAction, QColor, QFontMetricsF, QImage, QPainter, QPainterPath
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
                               QSizePolicy, QVBoxLayout, QWidget)
@@ -16,7 +17,7 @@ from latest_info_model import InfoValue, LatestInfoSnapshot
 from company_labels import company_selection_name
 from map_name_source import resolve_session_map_name
 from latest_info_charts import (DepartureStructure, PassengerRanking, font,
-                                label, numeric, short_line_name, shown)
+                                FullLabel, label, numeric, short_line_name, shown)
 from statistics_model import parse_time
 from stats_charts import ChartPanel
 from stats_controls import ElidingComboBox, StatisticsScrollArea
@@ -48,6 +49,46 @@ MODULE_ICONS = {'network': FluentIcon.BUS, 'finance': FluentIcon.MARKET,
 HIGHLIGHTS = ('当日最大客流线路', '当日最小客流线路', '当日最多班次线路', '当日最少班次线路')
 EXTREME_ROLE_COLORS = ('#D13438', '#0F9D58')
 EXTREME_ROLE_LABELS = ('客流最多', '客流最少', '班次最多', '班次最少')
+
+
+class CityTimeLabel(FullLabel):
+    """Use visible glyph centers when differently sized date/time share a row."""
+    visual_center = None
+
+    def glyph_center(self, text):
+        """Cache the hinted glyph's raster center at this widget's actual DPR."""
+        dpr = self.devicePixelRatioF()
+        key = (self.font().toString(), dpr, text)
+        if getattr(self, '_glyph_key', None) != key:
+            metrics = QFontMetricsF(self.font(), self)
+            image = QImage(ceil((metrics.horizontalAdvance(text) + 16) * dpr),
+                           ceil((metrics.height() + 16) * dpr), QImage.Format.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+            image.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(image)
+            painter.setFont(self.font())
+            painter.setPen(Qt.GlobalColor.black)
+            baseline = metrics.ascent() + 8
+            painter.drawText(QPointF(8, baseline), text)
+            painter.end()
+            rows = [y for y in range(image.height()) for x in range(image.width())
+                    if image.pixelColor(x, y).alpha() > 128]
+            self._glyph_key = key
+            self._glyph_center = ((min(rows) + max(rows) + 1) / (2 * dpr) - baseline) if rows else 0
+        return self._glyph_center
+
+    def paintEvent(self, event):
+        if self.visual_center is None:
+            return super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        metrics = QFontMetricsF(self.font(), self)
+        contents = self.contentsRect()
+        text = metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, contents.width())
+        ink = metrics.tightBoundingRect(text)
+        painter.drawText(QPointF(contents.right() + 1 - ink.right() - 1 / self.devicePixelRatioF(),
+                                self.visual_center - self.glyph_center(text)), text)
 
 
 class TodayTrendPanel(ChartPanel):
@@ -500,6 +541,7 @@ class LatestInfoPage(QWidget):
             chart.line_requested.connect(self.line_requested.emit)
         self.alert_host = QWidget()
         self.alert_host.setObjectName('alertHost')
+        self.alert_host.installEventFilter(self)
         self.alert_layout = QVBoxLayout(self.alert_host)
         self.alert_layout.setContentsMargins(0, 0, 0, 0)
         self.alert_layout.setSpacing(0)
@@ -581,9 +623,12 @@ class LatestInfoPage(QWidget):
         self.city_grid.setHorizontalSpacing(12)
         self.city_grid.setVerticalSpacing(4)
         self.city_fields = []
+        self.city_field_layouts = []
         self.city_name = label('未提供城市名称', 'cityName', 29, True)
-        self.city_date = label('未提供模拟时间', 'citySimulationDate', 14)
-        self.city_clock = label('—', 'citySimulationTime', 21, True)
+        self.city_date = CityTimeLabel('未提供模拟时间', 14)
+        self.city_date.setObjectName('citySimulationDate')
+        self.city_clock = CityTimeLabel('—', 21, True)
+        self.city_clock.setObjectName('citySimulationTime')
         for widget in (self.city_name, self.city_date, self.city_clock):
             widget.setToolTip('')
         self.city_population = label('—', 'cityPopulation', 21, True)
@@ -600,23 +645,26 @@ class LatestInfoPage(QWidget):
             box = QVBoxLayout(field)
             box.setContentsMargins(0, 0, 0, 0)
             box.setSpacing(2)
+            box.setAlignment(Qt.AlignmentFlag.AlignTop)
             if title:
                 heading = label(title, 'cityPopulationTitle', parent=field)
                 heading.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};background:transparent;')
+                self.city_population_heading = heading
                 box.addWidget(heading, 0)
             if value is self.city_clock:
                 box.addWidget(self.city_date)
-                box.addWidget(value, 1)
+                box.addWidget(value)
             elif value is self.city_population:
                 numbers = QHBoxLayout()
                 numbers.setSpacing(4)
                 numbers.addWidget(value)
                 numbers.addWidget(self.city_population_unit, 0, Qt.AlignmentFlag.AlignBaseline)
                 numbers.addStretch()
-                box.addLayout(numbers, 1)
+                box.addLayout(numbers)
             else:
-                box.addWidget(value, 1)
+                box.addWidget(value)
             self.city_fields.append(field)
+            self.city_field_layouts.append(box)
         self.city.set_visual_variant('light')
         layout.addWidget(self.city)
 
@@ -820,6 +868,55 @@ class LatestInfoPage(QWidget):
         self._alert_panel = panel
         self.alert_layout.addWidget(panel)
         panel.show()
+        self._reflow(self.width())
+
+    def _fit_city_fields(self, wide):
+        values = (self.city_name, self.city_clock, self.city_population, self.city_save)
+        for widget in (*values, self.city_date, self.city_population_heading, self.city_population_unit):
+            widget.setContentsMargins(0, 0, 0, 0)
+            # Chinese fallback glyphs can exceed the primary font's line height
+            # at fractional DPR; use the same text layout as the painter.
+            ink = widget.fontMetrics().boundingRect(QRect(0, 0, 10000, 10000),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine), widget.text())
+            widget.setFixedHeight(max(widget.fontMetrics().height(), ink.height()))
+        clock_box = self.city_field_layouts[1]
+        clock_box.setDirection(QBoxLayout.Direction.TopToBottom if wide else QBoxLayout.Direction.LeftToRight)
+        clock_box.setSpacing(2 if wide else 12)
+        clock_box.setAlignment(Qt.AlignmentFlag.AlignTop if wide else Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        clock_pair = (self.city_date, self.city_clock)
+        if not wide:
+            height = max(widget.height() for widget in clock_pair)
+            center = self.city_clock.fontMetrics().ascent() + self.city_clock.glyph_center(self.city_clock.text())
+            for widget in clock_pair:
+                widget.setFixedHeight(height)
+                widget.visual_center = center
+        else:
+            for widget in clock_pair:
+                widget.visual_center = None
+        for widget in (self.city_date, self.city_clock):
+            clock_box.setAlignment(widget, Qt.AlignmentFlag.AlignTop)
+            widget.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter if wide else
+                                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+            if wide:
+                widget.setMinimumWidth(0)
+                widget.setMaximumWidth(16777215)
+            else:
+                widget.setFixedWidth(widget.fontMetrics().horizontalAdvance(widget.text()) + 2)
+        self.city_save.setAlignment((Qt.AlignmentFlag.AlignLeft if wide else Qt.AlignmentFlag.AlignRight) |
+                                    Qt.AlignmentFlag.AlignVCenter)
+        prefixes = (0, self.city_date.height() + 2 if wide else 0,
+                    self.city_population_heading.height() + 2, 0)
+        baselines = [prefix + value.fontMetrics().ascent() for prefix, value in zip(prefixes, values)]
+        rows = ((0, 1, 2, 3),) if wide else ((0, 1), (2, 3))
+        heights = []
+        for indices in rows:
+            baseline = max(baselines[i] for i in indices)
+            heights.append(max(baseline + values[i].height() - values[i].fontMetrics().ascent() for i in indices))
+            for i in indices:
+                self.city_field_layouts[i].setContentsMargins(0, baseline - baselines[i], 0, 0)
+        margins = self.city_grid.contentsMargins()
+        return max(65 if wide else 136, sum(heights) + margins.top() + margins.bottom()
+                   + 2 * self.city.frameWidth() + (len(rows) - 1) * self.city_grid.verticalSpacing())
 
     def export_target(self) -> QWidget:
         return self.board
@@ -838,6 +935,8 @@ class LatestInfoPage(QWidget):
 
     def _reflow(self, width):
         wide = width >= 1180
+        city_height = self._fit_city_fields(wide)
+        alert_height = max(494, self._alert_panel.minimumSizeHint().height() if self._alert_panel else 0)
         main_width = width - 272 if wide else width
         minimums = [max(self.metric_cards[key].content_width() for key in keys) + 24
                     for _, _, keys, _ in BUSINESS_MODULES]
@@ -845,7 +944,7 @@ class LatestInfoPage(QWidget):
                           2 if main_width >= max(minimums) * 2 + 12 else 1)
         highlight_columns = 4 if wide else 2 if width >= 520 else 1
         compact_actions = width < 1000
-        signature = (wide, module_columns, highlight_columns, compact_actions, tuple(minimums))
+        signature = (wide, module_columns, highlight_columns, compact_actions, tuple(minimums), city_height, alert_height)
         if signature == self._layout_signature:
             return
         self._layout_signature = signature
@@ -895,19 +994,20 @@ class LatestInfoPage(QWidget):
         highlight_rows = (4 + highlight_columns - 1) // highlight_columns
         self.highlights_host.setFixedHeight(highlight_rows * highlight_height + (highlight_rows - 1) * tokens.SPACE_MD
                                             + self.highlight_section_title.height() + 2)
-        city_height = 65 if wide else 136
         self.city.setFixedHeight(city_height)
         main_height = city_height + 32 + self.modules_host.height() + self.highlights_host.height() + 24
+        if wide:
+            main_height = max(main_height, alert_height)
         self.main.setFixedHeight(main_height)
         if wide:
             self.alert_host.setFixedWidth(260)
-            self.alert_host.setFixedHeight(494)
+            self.alert_host.setFixedHeight(main_height)
             self.columns.addWidget(self.main, 0, 0)
             self.columns.addWidget(self.alert_host, 0, 1)
         else:
             self.alert_host.setMinimumWidth(0)
             self.alert_host.setMaximumWidth(16777215)
-            self.alert_host.setMinimumHeight(494)
+            self.alert_host.setMinimumHeight(alert_height)
             self.alert_host.setMaximumHeight(16777215)
             self.columns.addWidget(self.main, 0, 0)
             self.columns.addWidget(self.alert_host, 1, 0)
@@ -923,6 +1023,11 @@ class LatestInfoPage(QWidget):
             self.chart_grid.addWidget(chart, 0 if wide else i, i if wide else 0)
             self.chart_grid.setColumnStretch(i, (384, 400, 400)[i] if wide else (1 if i == 0 else 0))
         self.board.updateGeometry()
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, 'alert_host', None) and event.type() == QEvent.Type.LayoutRequest:
+            self._reflow(self.width())
+        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
