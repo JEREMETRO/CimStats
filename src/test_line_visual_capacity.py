@@ -22,6 +22,8 @@ def visual_window(qt_application,monkeypatch,tmp_path):
     monkeypatch.setattr(desktop_app.MainWindow,'check_install',lambda self:None)
     w=desktop_app.MainWindow()
     data=load_session(Path(__file__).resolve().parents[1]/'exports','望春市_test_运行时')
+    if not data['lines']:
+        pytest.skip('Local exported-save fixture is unavailable')
     data.update(save_path='测试数据.save',save_key='capacity-test',history=[])
     w.on_completed(data)
     w.show();w.navigate(1)

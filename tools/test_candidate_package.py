@@ -35,8 +35,12 @@ class CandidateRules(unittest.TestCase):
 
     def test_docs_are_explicit_not_evidence_recursion(self):
         self.assertIn('docs/PROJECT_NOTICE.md', selected_documents())
-        self.assertIn('docs/CIM2_统计中心指标口径.md', selected_documents())
+        self.assertIn('docs/DATA_DEFINITIONS.md', selected_documents())
         self.assertFalse(source_path_allowed('docs/ui-redesign/card-comparisons-evidence/UnityEngine.dll'))
+
+    def test_selected_documents_are_available_in_a_source_checkout(self):
+        for relative in selected_documents():
+            self.assertTrue((candidate_package.ROOT / relative).is_file(), relative)
 
     def test_snapshot_changes_are_rejected(self):
         with self.assertRaises(ValueError): compare_inventory({'src/main.py':'a'}, {'src/main.py':'b'})
@@ -99,21 +103,21 @@ class SpecContract(unittest.TestCase):
         def collect(*args, **kwargs): observed['collect']=(args,kwargs)
         namespace = {'SPECPATH':str(root),'Analysis':analysis,'PYZ':lambda pure:'pyz','EXE':exe,'COLLECT':collect}
         environment = {'CIMSTATS_LOCAL_REVIEW_BUILD':'1' if local_review else '',
-                       'CIM2_BUILD_MANAGED_ROOT':str(root/'recycle_bin/mei_cleanup_20260830/_MEI00000cb02/game_runtime/Managed'),
+                       'CIM2_BUILD_MANAGED_ROOT':str(root/'game_runtime/Managed'),
                        'CIM2_BUILD_PROBE_PATH':str(root/'data/Assembly-CSharp.probe.dll')}
         distribution = lambda name: SimpleNamespace(files=[],version='test',locate_file=lambda entry:root/'not-installed'/entry)
         with patch.dict(sys.modules,{'PyInstaller.utils.hooks':hooks,'PyInstaller.utils.win32.versioninfo':resource,'app_metadata':metadata}), patch.dict(os.environ,environment), patch.object(importlib.metadata,'distribution',distribution):
             exec(compile((root/'CIM2_SaveStats.spec').read_text(encoding='utf-8-sig'),'CIM2_SaveStats.spec','exec'),namespace)
         return observed
 
-    def test_directory_spec_keeps_native_and_data_files_in_collect(self):
+    def test_onefile_spec_keeps_native_and_data_files_in_executable(self):
         observed = self.evaluate()
         args, options = observed['exe']
-        self.assertTrue(options['exclude_binaries'])
-        self.assertEqual(options['contents_directory'],'_internal')
-        self.assertNotIn('native-dependencies',args)
-        self.assertEqual(observed['collect'][0][1],['native-dependencies'])
-        self.assertEqual(observed['collect'][1]['name'],'CimStats')
+        self.assertFalse(options.get('exclude_binaries', False))
+        self.assertEqual(args[2], ['native-dependencies'])
+        self.assertEqual(args[3], observed['analysis']['datas'])
+        self.assertEqual(options['name'], 'CimStats')
+        self.assertNotIn('collect', observed)
 
     def test_spec_includes_legal_metadata_and_all_approved_icons(self):
         observed = self.evaluate()

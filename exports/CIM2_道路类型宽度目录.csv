@@ -1,0 +1,16 @@
+﻿道路类型,道路枚举,车道A,车道B,左侧人行道_m,右侧人行道_m,站台宽度_m,公交专用道,停车道,路肩,人行街,高速路,最大车道数,尺寸单位
+road,0,1,1,4.0,4.0,0.0,False,False,False,False,False,4,固定点/1024 = 米
+oneway-road,0,2,0,4.0,4.0,0.0,False,False,False,False,False,8,固定点/1024 = 米
+avenue,0,2,2,4.0,4.0,8.0,False,False,False,False,False,4,固定点/1024 = 米
+express-way,0,2,0,2.0,2.0,0.0,False,False,True,False,True,8,固定点/1024 = 米
+pedestrian-street,0,1,1,4.0,4.0,0.0,False,False,False,True,False,1,固定点/1024 = 米
+single-tram,2,1,0,0.5,0.5,0.0,False,False,True,True,False,1,固定点/1024 = 米
+double-tram,2,1,1,0.5,0.5,0.0,False,False,True,True,False,1,固定点/1024 = 米
+depot-road,0,2,2,4.0,4.0,0.0,False,True,False,False,False,1,固定点/1024 = 米
+track,1,1,1,2.0,2.0,0.0,False,False,True,False,False,4,固定点/1024 = 米
+oneway-track,1,1,0,2.0,2.0,0.0,False,False,True,False,False,8,固定点/1024 = 米
+depot-road2,0,1,1,4.0,4.0,0.0,False,False,False,True,False,1,固定点/1024 = 米
+depot-track,1,1,1,2.0,2.0,0.0,False,False,True,False,False,1,固定点/1024 = 米
+single-trolley,3,1,0,4.0,4.0,0.0,False,False,False,False,False,1,固定点/1024 = 米
+double-trolley,3,1,1,4.0,4.0,0.0,False,False,False,False,False,1,固定点/1024 = 米
+depot-road3,0,1,1,4.0,4.0,0.0,False,False,False,False,False,1,固定点/1024 = 米

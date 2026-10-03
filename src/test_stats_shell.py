@@ -1,4 +1,5 @@
 import os
+import pytest
 import sys
 import time
 from datetime import datetime
@@ -158,6 +159,8 @@ def test_line_details_scroll_and_tabs_replace_cleanly(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     window = desktop_app.MainWindow()
     data = load_session(Path(__file__).resolve().parents[1] / 'exports', '望春市_test_运行时')
+    if not data['lines']:
+        pytest.skip('Local exported-save fixture is unavailable')
     data.update(history=[], save_path='lines.save', save_key='lines')
     window.on_completed(data)
     window.resize(1600, 900)
@@ -452,6 +455,8 @@ def test_other_pages_filter_duplicate_names_by_stable_company_id(monkeypatch, tm
     monkeypatch.setattr(desktop_app, 'QSettings', lambda *_: QSettings(str(tmp_path / 'shell.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     data = load_session(Path(__file__).resolve().parents[1] / 'exports', '望春市_test_运行时')
+    if not data['lines']:
+        pytest.skip('Local exported-save fixture is unavailable')
     original = data['companies'][0]
     first_id = str(original['公司标识'])
     second_id = 'another-id'
@@ -484,6 +489,8 @@ def test_other_pages_reflow_and_scroll_at_narrow_width(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     window = desktop_app.MainWindow()
     data = load_session(Path(__file__).resolve().parents[1] / 'exports', '望春市_test_运行时')
+    if not data['lines']:
+        pytest.skip('Local exported-save fixture is unavailable')
     data.update(history=[], save_path='narrow.save', save_key='narrow')
     window.on_completed(data)
     _wait_home(window)

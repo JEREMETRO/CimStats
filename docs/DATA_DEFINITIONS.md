@@ -1,6 +1,6 @@
 # CimStats 指标口径索引
 
-历史字段依据见[原始审计](CIM2_统计中心指标口径.md)。其中旧默认时间、路径和看板描述不是当前操作规范；不一致应登记缺陷，不改数据迎合效果图。
+各项指标采用以下口径，源码入口列于文末。
 
 ## 范围
 
@@ -41,4 +41,4 @@
 - [city_model.py](../src/city_model.py)、[test_city_model.py](../src/test_city_model.py)
 - [card_comparisons.py](../src/card_comparisons.py)、[test_card_comparisons.py](../src/test_card_comparisons.py)
 
-真实存档证据保留本地；公开测试采用可合法分发的小型合成fixture。
+需要真实存档的验收数据保存在本地，不随源码提交。
