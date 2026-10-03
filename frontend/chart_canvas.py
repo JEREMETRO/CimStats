@@ -8,7 +8,7 @@ a full-screen dialog and an exported PNG always agree.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from math import atan2, ceil, cos, degrees, floor, hypot, log10, radians, sin
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
@@ -81,7 +81,7 @@ def value_scale(magnitude: float) -> tuple[int, str]:
     return 1, ''
 
 
-def nice_ticks(low: float, high: float, max_ticks: int = 6) -> tuple[float, float, float]:
+def nice_ticks(low: float, high: float, max_ticks: int = 6, *, min_step=0) -> tuple[float, float, float]:
     """Round range covering [low, high] with at most ``max_ticks`` ticks."""
     if high < low:
         low, high = high, low
@@ -91,18 +91,24 @@ def nice_ticks(low: float, high: float, max_ticks: int = 6) -> tuple[float, floa
     max_ticks = max(2, max_ticks)
     span = high - low
     exponent = floor(log10(span / (max_ticks - 1)))
+    if min_step:
+        exponent = max(exponent, floor(log10(min_step)))
+    decimal_low, decimal_high = Decimal(str(low)), Decimal(str(high))
     for power in range(exponent, exponent + 3):
         for unit in (1, 2, 5):
-            step = unit * 10 ** power
-            lower = floor(low / step + 1e-9) * step
-            upper = ceil(high / step - 1e-9) * step
-            if round((upper - lower) / step) + 1 <= max_ticks:
-                return float(f'{lower:.12g}'), float(f'{upper:.12g}'), float(f'{step:.12g}')
-    step = 10 ** (exponent + 3)
-    return floor(low / step) * step, ceil(high / step) * step, float(step)
+            step = Decimal(unit).scaleb(power)
+            if step < Decimal(str(min_step)):
+                continue
+            lower = (decimal_low / step).to_integral_value(rounding=ROUND_FLOOR) * step
+            upper = (decimal_high / step).to_integral_value(rounding=ROUND_CEILING) * step
+            if (upper - lower) / step + 1 <= max_ticks:
+                return float(lower), float(upper), float(step)
+    step = Decimal(1).scaleb(exponent + 3)
+    return (float((decimal_low / step).to_integral_value(rounding=ROUND_FLOOR) * step),
+            float((decimal_high / step).to_integral_value(rounding=ROUND_CEILING) * step), float(step))
 
 
-def auto_axis(values, *, zero: bool, max_ticks: int = 6) -> AxisSpec:
+def auto_axis(values, *, zero: bool, max_ticks: int = 6, decimal_places=2) -> AxisSpec:
     numbers = [float(value) for value in values if value is not None]
     if not numbers:
         return AxisSpec(0, 4, 1)
@@ -116,7 +122,14 @@ def auto_axis(values, *, zero: bool, max_ticks: int = 6) -> AxisSpec:
     else:
         pad = (high - low) * .12 or abs(high) * .05 or 1
         low, high = low - pad, high + pad
-    lower, upper, step = nice_ticks(low, high, max_ticks)
+    quantum = 10 ** -decimal_places
+    while scale > 1 and nice_ticks(low, high, max_ticks)[2] < quantum:
+        # A magnitude suffix may hide a small but meaningful spread. Restore
+        # the finer unit before widening the axis to the display quantum.
+        next_scale, suffix = (10_000, '万') if scale == 100_000_000 else (1, '')
+        low, high = low * (scale / next_scale), high * (scale / next_scale)
+        scale = next_scale
+    lower, upper, step = nice_ticks(low, high, max_ticks, min_step=quantum)
     return AxisSpec(lower, upper, step, scale, suffix)
 
 
@@ -302,7 +315,7 @@ class ChartCanvas(QWidget):
             else:
                 low, high = min(values), max(values)
                 zero = low <= 0 <= high or (low > 0 and low <= high * .35) or (high < 0 and high >= low * .35)
-        return auto_axis(values, zero=zero, max_ticks=max_ticks)
+        return auto_axis(values, zero=zero, max_ticks=max_ticks, decimal_places=data.decimal_places)
 
     def _y(self, value: float) -> float:
         axis, plot = self.axis, self._plot
@@ -326,8 +339,9 @@ class ChartCanvas(QWidget):
 
     def _ticks(self):
         axis = self.axis
-        count = int(round((axis.upper - axis.lower) / axis.step))
-        return [axis.lower + index * axis.step for index in range(count + 1)]
+        lower, upper, step = (Decimal(str(value)) for value in (axis.lower, axis.upper, axis.step))
+        count = int(round((upper - lower) / step))
+        return [float(lower + index * step) for index in range(count + 1)]
 
     # ------------------------------------------------------------- painting
     def paintEvent(self, event):
@@ -715,7 +729,8 @@ class ChartCanvas(QWidget):
         value_width = max((value_metrics.horizontalAdvance(format_value(value, self.data.decimal_places)) for value in values), default=0) + 10
         plot_width = max(20., rect.width() - label_width - value_width)
         max_ticks = max(2, min(6, int(plot_width / 70) + 1))
-        self.axis = self.axis_override or auto_axis(values, zero=True, max_ticks=max_ticks)
+        self.axis = self.axis_override or auto_axis(values, zero=True, max_ticks=max_ticks,
+                                                  decimal_places=data.decimal_places)
         top = rect.top() + line_height + 6
         self._plot = QRectF(rect.left() + label_width, top, plot_width, rect.bottom() - top - line_height - 8)
         plot = self._plot
