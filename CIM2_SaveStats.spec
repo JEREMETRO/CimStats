@@ -27,7 +27,7 @@ version_resource = VSVersionInfo(
         StringStruct('CompanyName', metadata.author), StringStruct('FileVersion', metadata.version),
         StringStruct('ProductVersion', metadata.version), StringStruct('OriginalFilename', 'CimStats.exe'),
         StringStruct('InternalName', 'CimStats'), StringStruct('LegalCopyright', metadata.copyright_notice),
-        StringStruct('Comments', metadata.license_spdx + '; local review candidate'),
+        StringStruct('Comments', metadata.license_spdx),
     ])]), VarFileInfo([VarStruct('Translation', [2052, 1200])])],
 )
 hiddenimports = collect_submodules("PySide6.QtCharts") + collect_submodules("clr") + [

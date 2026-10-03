@@ -99,10 +99,22 @@ def test_company_docs_describe_fixed_metrics_and_existing_chart_interfaces():
     assert '指标选择器' in controls and '不提供' in controls
 
 
-def test_unreleased_notes_match_restored_chart_presentation():
+def test_release_notes_match_restored_chart_presentation():
     notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('## CimStats 0.1.0', 1)[0]
     assert '两端圆角' in notes and '摘要卡片' in notes
     assert '完整数值表' not in notes
+
+
+def test_formal_010_release_records_known_issues_and_download_name():
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
+    release = (ROOT / 'docs/RELEASE.md').read_text(encoding='utf-8')
+    spec = (ROOT / 'CIM2_SaveStats.spec').read_text(encoding='utf-8')
+    assert 'CimStats_x64_v0.1.0.exe' in readme
+    assert '## 0.1.0 - 2026-10-03' in notes
+    assert '悬停标签' in notes and '背景颜色' in notes and '控件显示被截断' in notes
+    assert '正式版' in release and '/releases/tag/v0.1.0' in release
+    assert "StringStruct('Comments', metadata.license_spdx)" in spec
 
 
 def test_curated_docs_are_in_source_and_bundle_manifests(monkeypatch):
