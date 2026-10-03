@@ -1,14 +1,8 @@
 # CimStats 开发说明
 
-## 环境要求
+## 环境与启动
 
-- Windows x64
-- Python 3.12
-- Cities in Motion 2（本地安装，用于解析存档）
-
-主要依赖：PySide6 6.11.2、PySide6-Fluent-Widgets 1.11.3、matplotlib、openpyxl。
-
-## 快速开始
+使用 Windows x64 和 Python 3.12。在仓库根目录执行：
 
 ```powershell
 py -3.12 -m venv .venv
@@ -16,25 +10,19 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe CIM2_SaveStats.py
 ```
 
-## 项目结构
+主窗口打开后，选择或拖入 `.save` 文件。解析结果写入 `jobs/`，不需要将生成的结果提交到仓库。
 
-| 目录 | 用途 |
+## 目录
+
+| 目录 | 内容 |
 |---|---|
-| `frontend/` | UI、共享控件与品牌资源 |
-| `src/` | 解析、统计、导出及测试 |
-| `tools/` | 开发工具与构建脚本 |
-| `docs/` | 用户和开发文档 |
-| `data/` | 运行时数据文件 |
-
-## 游戏依赖
-
-解析使用游戏托管程序集（Managed DLL）和本地探针。环境变量 `CIM2_MANAGED_ROOT` 可指定游戏安装目录的 `CIM2_Data/Managed` 路径。
-
-其他环境变量：
-- `CIM2_RUNTIME_DATA_DIR`：运行时数据目录
-- `CIM2_PAYLOAD_DIR`：输出目录
-- `CIM2_EXPORT_DIR`：导出目录
-- `CIM2_ASSEMBLY_SOURCE` / `CIM2_PROBE_OUTPUT`：探针生成路径
+| `frontend/` | 界面、共享控件和图标 |
+| `src/` | 存档解析、统计计算、导出和测试 |
+| `data/`、`game_runtime/Managed/` | 解析资源 |
+| `exports/` | 车型和道路参考目录 |
+| `tools/` | 构建和开发工具 |
+| `docs/` | 用户及开发文档 |
+| `jobs/`、`build/`、`dist/` | 本地运行与构建产物，不提交 |
 
 ## 测试
 
@@ -42,31 +30,14 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-组件测试可使用 `QT_QPA_PLATFORM=offscreen` 进行无头运行。主窗口和系统 DPI 测试需要真实桌面环境。
+组件测试默认使用离屏模式；系统 DPI 和真实窗口验收在桌面上进行。需要测试存档的用例使用本地输入，存档不提交到仓库。
 
-## 构建单文件 exe
+## 调整输出位置
 
-```powershell
-$env:CIMSTATS_LOCAL_REVIEW_BUILD = '1'
-$env:CIM2_BUILD_MANAGED_ROOT = '<游戏 Managed 目录>'
-$env:CIM2_BUILD_PROBE_PATH = '<探针路径>'
-py -3.12 -m PyInstaller --clean CIM2_SaveStats.spec
-```
+命令行解析可使用 `CIM2_PAYLOAD_DIR` 和 `CIM2_EXPORT_DIR` 指定中间结果及导出目录。`CIM2_RUNTIME_DATA_DIR` 和 `CIM2_MANAGED_ROOT` 可覆盖解析资源的位置。
 
-输出位于 `build/onefile-dist/CimStats.exe`。
+## 构建
 
-## 构建说明
+参见[构建与发布](RELEASE.md)。版本来自根目录 `VERSION`，界面元数据在 `src/app_metadata.py`。界面字体复用 `frontend/stats_typography.py`，数据处理保留原始分组和完整性标记。
 
-- 使用 PyInstaller 6.22.2
-- spec 文件为 onefile 模式，所有依赖内嵌
-- 构建需要游戏运行时 DLL（从合法安装获取）
-- 版本号在 `VERSION` 和 `src/app_metadata.py` 中统一管理
-
-## 代码规范
-
-- 强调字体使用 `frontend/stats_typography.py`
-- 应用外壳（顶栏、存档信息、空状态）在 `frontend/app_shell.py`；通用小部件在 `frontend/ui_kit.py`
-- 所有图表通过 `frontend/chart_canvas.py` 绘制：调用方只构造 `ChartData`/`Series`，布局、刻度、悬停与缩放由画布负责
-- UI 遵循 Fluent 设计规范
-- 数据处理保留原始分组和完整性标记
-- 测试覆盖核心解析和统计逻辑
+应用外壳在 `frontend/app_shell.py`，通用控件在 `frontend/ui_kit.py`。图表数据由调用方构造 `ChartData` 和 `Series`，绘制、悬停与缩放由 `frontend/chart_canvas.py` 负责。

@@ -4,7 +4,7 @@
 
 ## 报告渠道
 
-如发现安全漏洞，请通过 [GitHub Issues](../../issues) 报告，或联系维护者获取私人报告渠道。请勿在公开 issue 中包含可利用的细节、凭据或个人数据。
+如发现安全漏洞，请通过 [GitHub Issues](https://github.com/JEREMETRO/CimStats/issues) 报告，或联系维护者获取私人报告渠道。请勿在公开 issue 中包含可利用的细节、凭据或个人数据。
 
 ## 报告内容
 

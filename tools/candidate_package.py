@@ -22,7 +22,7 @@ ROOT_FILES = {'CIM2_SaveStats.py', 'parser_backend.py', 'CIM2_SaveStats.spec', '
               'SECURITY.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION', 'requirements-desktop.txt',
               'requirements-dev.txt', 'pytest.ini', '.gitignore', '.savestats-workspace'}
 DOCS = ('docs/USER_GUIDE.md', 'docs/DATA_DEFINITIONS.md', 'docs/DEVELOPMENT.md', 'docs/RELEASE.md',
-        'docs/PROJECT_NOTICE.md', 'docs/REDISTRIBUTION_AUDIT.md', 'docs/CIM2_统计中心指标口径.md')
+        'docs/PROJECT_NOTICE.md')
 SCRIPT_DATA = ('extract_runtime_data.py', 'build_line_workbook.py', 'build_company_workbook.py',
                'display_rules.py', 'save_container.py', 'app_paths.py', 'app_metadata.py', 'history_contract.py', 'parse_events.py')
 STATIC = ('frontend/static/app.css', 'frontend/static/app.js', 'frontend/static/cimstats/home-decoration.svg',

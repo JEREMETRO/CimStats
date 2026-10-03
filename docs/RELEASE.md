@@ -1,65 +1,30 @@
-# CimStats 发布流程
+# CimStats 构建与发布
 
-## 当前版本
+当前预览版为 **0.1.0**，下载见 [GitHub Releases](https://github.com/JEREMETRO/CimStats/releases)。
 
-**CimStats 0.1.0** 已发布，单文件 exe 可直接分发。
+## 构建单文件 EXE
 
-## 构建发布包
-
-### 环境准备
-
-1. Python 3.12
-2. 游戏安装目录（用于获取运行时 DLL）
-3. 项目依赖：`pip install -r requirements-dev.txt`
-
-### 构建步骤
+按[开发说明](DEVELOPMENT.md)安装依赖，在仓库根目录的 PowerShell 中执行：
 
 ```powershell
-# 设置环境变量
 $env:CIMSTATS_LOCAL_REVIEW_BUILD = '1'
-$env:CIM2_BUILD_MANAGED_ROOT = '<游戏 Managed 目录>'
-$env:CIM2_BUILD_PROBE_PATH = '<探针路径>'
-
-# 构建单文件 exe
-py -3.12 -m PyInstaller --clean CIM2_SaveStats.spec
-
-# 输出位于 build/onefile-dist/CimStats.exe
+$env:CIM2_BUILD_MANAGED_ROOT = Join-Path $PWD 'game_runtime/Managed'
+$env:CIM2_BUILD_PROBE_PATH = Join-Path $PWD 'data/Assembly-CSharp.probe.dll'
+.\.venv\Scripts\python.exe -m PyInstaller --clean --distpath dist --workpath build/pyinstaller CIM2_SaveStats.spec
 ```
 
-### 验证
+输出为 `dist/CimStats.exe`。`build/` 为中间产物，`dist/` 为构建结果，均不提交源码仓库。
 
-1. 运行 `CimStats.exe` 确认 GUI 正常启动
-2. 加载测试存档验证解析功能
-3. 检查导出功能
+## 发布前验证
 
-## 发布检查清单
+1. 执行 `python -m pytest -q`。
+2. 运行 EXE，分别加载单人和多人存档。
+3. 核对最新信息、线路查询和统计数据。
+4. 验证图表及工作簿导出。
+5. 更新 `VERSION`、应用元数据和 `CHANGELOG.md`。
 
-- [ ] 版本号已更新（`VERSION` 和 `src/app_metadata.py`）
-- [ ] CHANGELOG.md 已更新
-- [ ] 测试全部通过
-- [ ] 单文件 exe 构建成功
-- [ ] GUI 启动正常
-- [ ] 存档解析正常
-- [ ] 导出功能正常
-- [ ] 文档已更新
+## 发布版本
 
-## GitHub Release
+源码提交到 `main`。预览版本使用如 `v0.1.0-pre.1` 的标签，正式版本使用如 `v0.1.0` 的标签。已有 `Test` 预览版保留原下载地址。
 
-1. 创建 tag：`git tag v0.1.0`
-2. 推送 tag：`git push origin v0.1.0`
-3. 在 GitHub 创建 Release，上传 `CimStats.exe`
-4. 更新 Release 说明（从 CHANGELOG 复制）
-
-## 文件清单
-
-发布包包含：
-- `CimStats.exe`（单文件，包含所有依赖）
-- 源码（GitHub 自动打包）
-- 许可文件（`LICENSE`、`THIRD_PARTY_NOTICES.md`）
-
-## 版本管理
-
-- 版本号格式：`major.minor.patch`
-- 版本来源：`VERSION` 文件
-- 元数据：`src/app_metadata.py`
-- 历史版本保留，不覆盖
+在对应提交创建标签及 GitHub Release，上传 EXE，并在说明中列出版本变化和文件校验值。已发布版本保留，后续版本使用新标签。

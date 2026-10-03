@@ -54,7 +54,10 @@ def test_filter_toggle_keeps_identity_and_position_during_reverse(monkeypatch):
     assert toggle is page.confirm_filters_button is page.expand_filters_button
     original = toggle.mapTo(page.filter_card, QPoint())
     expanded = page.filter_card.height()
-    toggle.click(); QTest.qWait(70)
+    toggle.click()
+    animation = page._filter_animation
+    assert animation is not None
+    animation.setCurrentTime(70)
     assert 40 <= page.filter_card.height() < expanded
     assert toggle.mapTo(page.filter_card, QPoint()) == original
     toggle.click(); QTest.qWait(350)

@@ -13,6 +13,8 @@ def lines_window(qt_application, monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     window=desktop_app.MainWindow()
     data=load_session(Path(__file__).resolve().parents[1]/'exports','望春市_test_运行时')
+    if not data['lines']:
+        pytest.skip('Local exported-save fixture is unavailable')
     data.update(history=[], save_path='TEST DATA.save', save_key='layout-test')
     window.on_completed(data)
     window.resize(1424, 921)  # reserve native frame/title within 1440 x 960
