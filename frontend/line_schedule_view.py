@@ -607,15 +607,20 @@ class SchedulePanel(QFrame):
             aligned = available // 7 >= required
         else:
             aligned = available // 10 >= night_width
+        required = max(night_width,
+                       self.summary_labels['morning_peak'].fontMetrics().horizontalAdvance('早高峰平均间隔'),
+                       *(value.fontMetrics().horizontalAdvance(value.text()) for value in self.summary_values.values()))
+        equal_row = not aligned and available // 7 >= required
+        aligned = aligned or equal_row
         self._summary_layout.setHorizontalSpacing(0 if aligned else tokens.CONTROL_GAP)
-        columns = (7 if self.expanded else 10) if aligned else 3
+        columns = (7 if self.expanded or equal_row else 10) if aligned else 3
         for column in range(10):
             self._summary_layout.setColumnStretch(column, 1 if column < columns else 0)
         for index, host in enumerate(self._summary_tiles.values()):
             self._summary_layout.removeWidget(host)
             if aligned:
                 key = tuple(self._summary_tiles)[index]
-                column, span = (index, 1) if self.expanded else self.SUMMARY_TRACKS[key]
+                column, span = (index, 1) if self.expanded or equal_row else self.SUMMARY_TRACKS[key]
                 self._summary_layout.addWidget(host, 0, column, 1, span)
             else:
                 self._summary_layout.addWidget(host, index // columns, index % columns)

@@ -39,7 +39,30 @@ def test_line_page_has_independent_list_and_complete_compact_cards(lines_window)
     assert w.lines_page.right_scroll.verticalScrollBar().maximum()==0
     assert w.lines_page.right_scroll.horizontalScrollBar().maximum()==0
     assert w.lines_page.left.width()==436
-    assert w.lines_page.right_scroll.width()>850
+    # The shared shell can keep its sidebar expanded; verify the actual
+    # allocation still contains every card instead of assuming a hidden sidebar.
+    from PySide6.QtCore import QPoint, QRect
+    viewport = w.lines_page.right_scroll.viewport()
+    assert viewport.width() >= w.lines_page.right_host.minimumWidth()
+    assert all(viewport.rect().contains(QRect(c.mapTo(viewport, QPoint()), c.size()))
+               for c in w.fact_cards)
+
+
+@pytest.mark.parametrize('collapsed', [False, True])
+def test_real_schedule_summary_fits_both_sidebar_modes(lines_window, qt_application, collapsed):
+    from PySide6.QtCore import QPoint, QRect
+    w = lines_window
+    w.set_sidebar_collapsed(collapsed)
+    for _ in range(8): qt_application.processEvents()
+    page = w.lines_page
+    schedule = page.schedule_panel
+    assert schedule.summary_host.height() == 40
+    assert page.right_scroll.verticalScrollBar().maximum() == 0
+    assert page.right_scroll.horizontalScrollBar().maximum() == 0
+    viewport = page.right_scroll.viewport()
+    assert viewport.rect().contains(QRect(schedule.mapTo(viewport, QPoint()), schedule.size()))
+    for label in (*schedule.summary_labels.values(), *schedule.summary_values.values()):
+        assert label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
 
 
 def test_list_expands_above_details_without_reflow_and_reverses(lines_window,qt_application):
@@ -270,8 +293,13 @@ def test_main_pages_do_not_show_bottom_status_area(lines_window, qt_application)
     for page_index in (0, 1, 2, 1, 0):
         window.navigate(page_index)
         qt_application.processEvents()
-        assert not window.statusBar().isVisible()
-        assert not window.line_footer.isVisible(), f'page {page_index} restored the bottom status area'
+        from PySide6.QtWidgets import QStatusBar
+        # QMainWindow.statusBar() creates a visible bar when none exists.
+        assert not any(bar.isVisible() for bar in window.findChildren(QStatusBar))
+        page = window.pages.currentWidget()
+        from PySide6.QtCore import QPoint
+        assert page.mapTo(window.content_host, QPoint(0, page.height())).y() == window.content_host.height(), \
+            f'page {page_index} lost content height to a bottom status area'
     window.navigate(1)
     qt_application.processEvents()
     assert len(window.fact_cards) == 9

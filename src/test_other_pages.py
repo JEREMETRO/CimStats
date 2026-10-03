@@ -46,7 +46,7 @@ def window(tmp_path, monkeypatch):
     application.processEvents()
 
 
-def test_overview_filters_metrics_and_navigation(window):
+def test_overview_filters_metrics_and_navigation(window, monkeypatch, tmp_path):
     assert metric(window, 'line-count') == len(window.data['lines'])
     for index in range(window.mode_combo.count()):
         window.mode_combo.setCurrentIndex(index)
@@ -55,10 +55,25 @@ def test_overview_filters_metrics_and_navigation(window):
         rows = [row for row in window.data['lines'] if mode == '综合' or row['运输制式'] == mode]
         assert metric(window, 'line-count') == len(rows)
         assert float(metric(window, 'weekly-income')) == pytest.approx(sum(row['每周收入'] for row in rows), abs=.005)
+    from openpyxl import Workbook
+    source = tmp_path / 'navigation-exports.xlsx'
+    Workbook().save(source)
+    window.data['outputs'] = {key: source for key in ('line_workbook', 'company_workbook')}
+    exported = []
+    monkeypatch.setattr(window, 'export_file', exported.append)
     for index in (2, 1, 0):
         window.navigate(index)
         assert window.pages.currentIndex() == index
-        assert window.export_line_button.isHidden() == (index == 2)
+        assert not window.header.export_button.isHidden()
+        assert window.header.export_button.isEnabled()
+        actions = window.header.export_actions
+        assert {'line_workbook', 'company_workbook'} <= actions.keys()
+        assert ('stats-report' in actions) == (index == 2)
+        assert ('latest-xlsx' in actions) == (index == 0)
+        for key in ('line_workbook', 'company_workbook'):
+            assert actions[key].isEnabled()
+            actions[key].trigger()
+    assert exported == ['line_workbook', 'company_workbook'] * 3
 
 
 def test_navigation_click_signal_opens_its_own_page(window):
@@ -135,18 +150,32 @@ def test_line_search_sort_details_and_fields(window):
     assert window.line_table.rowCount() == len(window.data['lines'])
 
 
-def test_existing_xlsx_exports_keep_identical_bytes(window, tmp_path, monkeypatch):
+def test_existing_xlsx_exports_truncate_copy_and_preserve_source(window, tmp_path, monkeypatch):
     from openpyxl import Workbook, load_workbook
     for kind in ('line_workbook', 'company_workbook'):
         source, target = tmp_path / (kind + '.xlsx'), tmp_path / ('copy-' + kind + '.xlsx')
         book = Workbook()
-        book.active.append(['原有工作簿', 123])
+        book.active.append(['原有工作簿', '整数', '金额', '负金额', '平均运行车辆数', '公司标识'])
+        book.active.append(['保留名称', 123, 123.459, -123.459, 121.99, '76561198362520556'])
         book.save(source)
+        original = source.read_bytes()
         window.data.setdefault('outputs', {})[kind] = source
         monkeypatch.setattr(desktop.QFileDialog, 'getSaveFileName', lambda *a: (str(target), ''))
         window.export_file(kind)
-        assert target.read_bytes() == source.read_bytes()
-        assert load_workbook(target).active['B1'].value == 123
+        assert source.read_bytes() == original
+        exported = load_workbook(target)
+        cached = load_workbook(source)
+        try:
+            assert list(exported.active.values) == [
+                ('原有工作簿', '整数', '金额', '负金额', '平均运行车辆数', '公司标识'),
+                ('保留名称', 123, 123.45, -123.45, 121.9, '76561198362520556')]
+            assert list(cached.active.values)[1] == (
+                '保留名称', 123, 123.459, -123.459, 121.99, '76561198362520556')
+            assert all(exported.active[cell].data_type == 'n' for cell in ('B2', 'C2', 'D2', 'E2'))
+            assert exported.active['F2'].data_type == 's'
+        finally:
+            exported.close()
+            cached.close()
 
 
 def test_same_named_companies_filter_by_identity_in_both_existing_tabs(window):
@@ -204,15 +233,17 @@ def test_replacement_import_clears_old_tabs_and_can_cancel(window, monkeypatch, 
     assert not window.schedule_panel.day_groups
     assert window.schedule_panel.summary['count'] == 0
     assert all(card.isHidden() for card in old_cards)
-    assert not window.export_line_button.isEnabled()
-    assert not window.export_company_button.isEnabled()
+    assert not window.header.export_button.isEnabled()
+    assert not window.header.export_actions['line_workbook'].isEnabled()
+    assert not window.header.export_actions['company_workbook'].isEnabled()
     assert window.statistics_page.snapshot is None
     window.cancel_parse()
     assert window.worker.cancelled
     window.worker_finished()
     window.on_completed(replacement)
     assert window.line_table.rowCount() == len(replacement['lines'])
-    assert window.export_company_button.isEnabled()
+    assert window.header.export_button.isEnabled()
+    assert window.header.export_actions['company_workbook'].isEnabled()
 
 
 def test_close_cancels_real_parser_thread_and_backend(window, monkeypatch, tmp_path):
@@ -281,7 +312,7 @@ def test_overview_interval_excludes_preserved_non_operating_groups(window,active
         '运行日未知':[{'time':'08:00'},{'time':'09:00'}],
         '周一至周四':[{'time':'07:00'},{'time':'07:15'}] if active else []}
     window.data['lines']=[line]
-    window.refresh_company()
+    window.latest_info_controller.schedule_query()
     wait_home(window)
     assert metric(window, 'interval') == expected
     assert len(line['班次']['未启用'])==len(line['班次']['运行日未知'])==2

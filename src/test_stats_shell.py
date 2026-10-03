@@ -169,6 +169,9 @@ def test_line_details_scroll_and_tabs_replace_cleanly(monkeypatch, tmp_path):
     window.show()
     window.navigate(1)
     window.line_clicked(0, 0)
+    from test_latest_info_integration import wait_for
+    wait_for(app, lambda: not window._awaiting_dashboards
+             and not window.loading_overlay.isVisible())
     for _ in range(5):
         app.processEvents()
     previous_cards = list(window.fact_cards)
@@ -180,8 +183,9 @@ def test_line_details_scroll_and_tabs_replace_cleanly(monkeypatch, tmp_path):
     for width, height in ((1600, 900), (1024, 768), (920, 680)):
         window.resize(width, height)
         for _ in range(5): app.processEvents()
-        for button in (window.export_line_button, window.export_company_button):
+        for button in (window.header.export_button, window.header.open_button):
             assert button.visibleRegion().boundingRect().size() == button.size()
+        assert {'line_workbook', 'company_workbook'} <= window.header.export_actions.keys()
         assert all(not card.isHidden() for card in window.fact_cards)
         assert all(card.height() == 86 for card in window.fact_cards)
         assert len(window.schedule_panel.matrix.entries) == window.schedule_panel.summary['count']

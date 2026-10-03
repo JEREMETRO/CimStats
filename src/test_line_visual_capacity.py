@@ -52,8 +52,12 @@ def test_actual_whole_shell_has_capacity_without_scroll(visual_window,count,qt_a
     assert p.right_scroll.horizontalScrollBar().maximum()==0
     assert panel.matrix_scroll.verticalScrollBar().maximum()==0
     assert matrix.font().pixelSize()==14
-    assert w.legacy_header.isVisible() and not w.line_footer.isVisible()
-    assert w.legacy_header.height()==44 and w.page_title.font().pixelSize()==29
+    from app_shell import HEADER_HEIGHT
+    assert w.header.isVisible() and w.header.height() == HEADER_HEIGHT
+    assert w.header.title.text() == '线路查询' and w.header.title.font().pixelSize() == 22
+    assert w.header.export_button.isVisible()
+    assert {'line_workbook', 'company_workbook'} <= w.header.export_actions.keys()
+    assert p.mapTo(w.content_host, QPoint(0, p.height())).y() == w.content_host.height()
     assert w.line_table.font().pixelSize()==14
     assert p.height()>=818 and p.detail.height()==348 and panel.height()>=458
     assert len(w.fact_cards)==9 and all(c.isVisible() for c in w.fact_cards)
