@@ -1,4 +1,4 @@
-"""Own the icon-only helper process without importing Qt or business modules.
+"""Own the startup helper process without importing Qt or business modules.
 
 Loopback IPC also works with PyInstaller's windowed stdin/stdout=None. Threads
 handle byte messages only; all widgets stay in their process's main Qt thread.

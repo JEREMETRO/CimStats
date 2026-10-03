@@ -3,12 +3,16 @@ from PySide6.QtCore import QObject, QEvent, QTimer
 
 
 class FirstFrameGate(QObject):
-    def __init__(self, window, ready):
+    def __init__(self, window, ready, *, surface=None):
         super().__init__(window)
         self.window = window
         self.ready = ready
         self._scheduled = False
-        window.installEventFilter(self)
+        # Native Qt may omit an outer Paint when an opaque child covers it
+        # completely. The startup surface itself then owns the complete frame.
+        self._targets = [window] if surface is None else [window, surface]
+        for target in self._targets:
+            target.installEventFilter(self)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Paint and not self._scheduled:
@@ -20,5 +24,6 @@ class FirstFrameGate(QObject):
         if not self.window.isVisible():
             self._scheduled = False
             return
-        self.window.removeEventFilter(self)
+        for target in self._targets:
+            target.removeEventFilter(self)
         self.ready()

@@ -20,6 +20,8 @@ CimStats 是 Python 3.12、PySide6 与 PySide6-Fluent-Widgets 桌面应用。保
 
 - [app_shell.py](../../frontend/app_shell.py)统一导航、页面标题、文件区和子选项卡；[ui_kit.py](../../frontend/ui_kit.py)、[stats_controls.py](../../frontend/stats_controls.py)统一控件。
 - [stats_tokens.py](../../frontend/stats_tokens.py)和[stats_typography.py](../../frontend/stats_typography.py)是颜色、尺寸及字体入口，不复制局部主题。
+- [startup_surface.py](../../frontend/startup_surface.py)提供 helper 与欢迎层共用的窗口预算、背景及标志坐标，不导入 Fluent 或业务模块。[startup_welcome.py](../../frontend/startup_welcome.py)在中央窗口覆盖导航和顶栏，负责首次打开入口与标志上移动效；`app_shell.py` 的正常页面顶栏保持独立。
+- [startup_bootstrap.py](../../frontend/startup_bootstrap.py)在[首帧门控](../../frontend/startup_readiness.py)确认主窗口或覆盖客户区的欢迎表面已绘制后关闭 helper 并启动欢迎过渡；不透明子表面可能使 Qt 省略外层窗口绘制事件，门控必须覆盖这一分支。[启动传输](../../frontend/startup_transport.py)继续使用鉴权 loopback、故障回退和子进程回收。解析与图表准备覆盖欢迎层，成功准备后显示页面，失败或取消返回欢迎层。
 - 统计页固定标题／文件操作、子选项卡、筛选；数据区共用一条纵向滚动，不为各公司另设滚动条，不产生整页横向滚动。
 - 默认与同期各公司分组；多公司比较公共图。公司数量不改变模式。公司单栏四个指标图位固定，宽屏双公司对应行对齐，窄屏重排而不丢数据。
 - 内容宽度与显示预算由布局控制，不能用固定最大高度裁掉数据。摘要折叠必须释放真实绘图区高度；普通 resize 不重建整个图控件或反复查询。

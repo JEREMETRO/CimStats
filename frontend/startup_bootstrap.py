@@ -72,14 +72,20 @@ def main(launcher: Path, *, root: Path | None = None, window_factory=None,
         window = window_factory()
         record('window_construct_finished')
         window.setWindowIcon(icon)
+        window.setProperty('startupHandoffPending', True)
 
         def ready():
             record('window_first_paint')
             app.setQuitOnLastWindowClosed(True)
             owner.dismiss()
             record('splash_dismissed')
+            window.setProperty('startupHandoffPending', False)
+            begin_welcome = getattr(window, 'begin_welcome_transition', None)
+            if begin_welcome is not None:
+                begin_welcome()
+                record('welcome_transition_started')
 
-        gate = FirstFrameGate(window, ready)
+        gate = FirstFrameGate(window, ready, surface=getattr(window, 'empty_state', None))
         app.aboutToQuit.connect(owner.dismiss)
         record('window_show_requested')
         window.show()

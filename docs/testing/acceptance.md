@@ -14,6 +14,10 @@
 
 ## 图表与界面
 
+- [ ] 启动 helper 是应用窗口大小的实色表面，至少验收 960×680；与主窗口首帧背景及标志位置连续，不扩展成显示器全屏。
+- [ ] 欢迎层覆盖导航和顶栏区域；实际截图包含标志居中、平滑上移中间帧及最终打开入口。约 333ms 过渡不中断输入、不额外等待；关闭系统动画时直接显示终态。
+- [ ] 欢迎按钮与 `.save` 拖放可启动首次解析；对话框取消仍保留欢迎层。解析／图表准备时进度层覆盖窗口，取消／失败可重试，成功准备后切页，快速切页／隐藏不遗留动画或效果。
+- [ ] 欢迎提示及完整显示文字没有重复 tooltip；截断错误仍可读取完整内容。窗口 resize、125%／150% DPI 和键盘打开入口保持可用。
 - [ ] 默认、多公司、同期互斥；选两家公司不自动改变模式；同期每家公司只有自己的两个周期。
 - [ ] 公司与同期统一 `SeriesLegend` 色柱，名称、色阶、透明度与绘图一致；无“左／右、上／下”替代图例。
 - [ ] 普通、放大、PNG 的柱间距、两端圆角、字体、字号和配色一致；负值与零基线正确。
@@ -37,7 +41,7 @@
 .\.venv\Scripts\python.exe -m pytest -q tools/test_candidate_package.py tools/test_release_preflight.py
 ```
 
-重点回归：[图表恢复](../../src/test_pr1_chart_restoration.py)、[公司布局预算](../../src/test_company_layout_budget.py)、[网络模型](../../src/test_network_model.py)、[城市模型](../../src/test_city_model.py)、[最新信息集成](../../src/test_latest_info_integration.py)、[文档健康检查](../../src/test_repository_documentation.py)。私有存档缺失导致跳过必须明确报告，不能计为通过。
+重点回归：[启动欢迎](../../src/test_startup_welcome.py)、[启动传输与清理](../../src/test_startup_transport.py)、[图表恢复](../../src/test_pr1_chart_restoration.py)、[公司布局预算](../../src/test_company_layout_budget.py)、[网络模型](../../src/test_network_model.py)、[城市模型](../../src/test_city_model.py)、[最新信息集成](../../src/test_latest_info_integration.py)、[文档健康检查](../../src/test_repository_documentation.py)。私有存档缺失导致跳过必须明确报告，不能计为通过。
 
 ## 发布检查
 

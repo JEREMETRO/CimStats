@@ -1,4 +1,4 @@
-"""A responsive icon-only window; imported only in the helper process."""
+"""A responsive application-sized surface; imported only in the helper."""
 from __future__ import annotations
 
 import json
@@ -8,37 +8,31 @@ import time
 from pathlib import Path
 
 _QT_IMPORT_STARTED = time.perf_counter()
-from PySide6.QtCore import Qt, QRectF, QTimer, QObject, Signal
-from PySide6.QtGui import QPainter
-from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import Qt, QTimer, QObject, Signal
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
+from app_metadata import APP_NAME, application_version
+from startup_surface import StartupSurface, center_startup_window, initial_window_size
 _QT_IMPORT_FINISHED = time.perf_counter()
 
 
-class IconSplash(QWidget):
+class IconSplash(StartupSurface):
     first_painted = Signal()
 
     def __init__(self, symbol: Path):
-        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
+        super().__init__(symbol, None, Qt.WindowType.Window |
                          Qt.WindowType.WindowStaysOnTopHint |
                          Qt.WindowType.WindowDoesNotAcceptFocus)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setAccessibleName('启动图标')
-        self.setFixedSize(144, 144)
-        self.renderer = QSvgRenderer(str(symbol), self)
-        if not self.renderer.isValid():
-            raise ValueError('Startup icon is missing or invalid')
+        self.setAccessibleName('CimStats 启动页')
+        self.setWindowTitle(f'{APP_NAME} v{application_version()}')
+        self.setWindowIcon(QIcon(str(symbol)))
+        self.resize(initial_window_size())
         self._painted = False
-        screen = QApplication.primaryScreen()
-        if screen is not None:
-            self.move(screen.availableGeometry().center() - self.rect().center())
+        center_startup_window(self)
 
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.renderer.render(painter, QRectF(24, 24, 96, 96))
-        painter.end()
+        super().paintEvent(event)
         if not self._painted:
             self._painted = True
             QTimer.singleShot(0, self.first_painted.emit)

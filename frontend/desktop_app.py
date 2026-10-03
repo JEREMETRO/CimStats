@@ -31,7 +31,9 @@ from stats_style import initialize_theme
 from stats_tokens import FONT_FAMILY, FONT_SIZE_BODY, NAV_WIDTH_EXPANDED, PAGE_BG, TEXT_PRIMARY
 from qfluentwidgets import (FluentIcon, InfoBar, InfoBarPosition, NavigationDisplayMode, NavigationInterface,
                             NavigationItemPosition)
-from app_shell import PAGE_GUTTER, AppHeader, EmptyState
+from app_shell import PAGE_GUTTER, AppHeader
+from startup_surface import MINIMUM_WINDOW_SIZE, center_startup_window, initial_window_size
+from startup_welcome import StartupWelcome
 from app_paths import jobs_directory
 from app_metadata import APP_NAME, application_version
 from stats_identity import save_fingerprint
@@ -287,8 +289,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         initialize_theme(QApplication.instance())
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.resize(1600, 1000)
-        self.setMinimumSize(960, 680)
+        self.resize(initial_window_size())
+        self.setMinimumSize(MINIMUM_WINDOW_SIZE)
+        center_startup_window(self)
         self.setAcceptDrops(True)
         self.settings = QSettings("CIM2SaveStats", "Desktop")
         self.data: dict = {}
@@ -317,6 +320,23 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._enable_mica()
+        if not self.property('startupHandoffPending'):
+            self.begin_welcome_transition()
+
+    def begin_welcome_transition(self):
+        self.empty_state.begin_transition()
+        if self.empty_state.isVisible():
+            self.empty_state.open_button.setFocus()
+
+    def focusNextPrevChild(self, forward):
+        # Keep keyboard traversal on the active covering surface without
+        # disabling hidden page controls used by asynchronous preparation.
+        if hasattr(self, 'empty_state') and self.empty_state.isVisible():
+            target = (self.loading_overlay.cancel_button if self.loading_overlay.isVisible()
+                      else self.empty_state.open_button)
+            target.setFocus(Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+            return True
+        return super().focusNextPrevChild(forward)
 
     def build_ui(self):
         shell = QWidget()
@@ -357,11 +377,10 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget(page_host)
         page_layout.addWidget(self.pages)
         self.body.addWidget(page_host)
-        self.empty_state = EmptyState(self.body)
-        self.empty_state.open_requested.connect(self.open_dialog)
-        self.body.addWidget(self.empty_state)
         content.addWidget(self.body, 1)
         outer.addWidget(self.content_host, 1)
+        self.empty_state = StartupWelcome(shell)
+        self.empty_state.open_requested.connect(self.open_dialog)
 
         self.build_overview()
         self.build_lines()
@@ -382,7 +401,7 @@ class MainWindow(QMainWindow):
             lambda error: self._notify('导出失败', str(error), error=True))
         self.statistics_page.query_failed.connect(self._dashboard_failed)
 
-        self.loading_overlay = LoadingOverlay(self.content_host, self.cancel_parse)
+        self.loading_overlay = LoadingOverlay(shell, self.cancel_parse)
         self._progress_predictor = None
         self._parse_stage = 0
         self._parse_stage_text = ''
@@ -449,8 +468,13 @@ class MainWindow(QMainWindow):
         return self.header.title
 
     def _refresh_body(self):
-        parsing = self.worker is not None or self._awaiting_dashboards
-        self.body.setCurrentIndex(0 if (self.data or parsing) else 1)
+        ready = bool(self.data) and not self._awaiting_dashboards
+        self.body.setCurrentIndex(0)
+        self.empty_state.setVisible(not ready)
+        if not ready:
+            self.empty_state.raise_()
+            if self.loading_overlay.isVisible():
+                self.loading_overlay.raise_()
         self.stats_tabs.setEnabled(bool(self.data))
 
     # ----------------------------------------------------------- exports
