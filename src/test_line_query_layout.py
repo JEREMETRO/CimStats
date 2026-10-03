@@ -1,5 +1,6 @@
 """Regression checks for the existing line query at whole-window size."""
 import copy
+import time
 from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings, Qt
@@ -232,31 +233,48 @@ def test_fact_collapse_animation_reverses_from_current_height(lines_window, monk
     from PySide6.QtCore import QAbstractAnimation
     monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
     page = lines_window.lines_page
+
+    def sample_current(ms):
+        animation = page.detail_motion.animation
+        assert animation is not None
+        animation.pause()
+        animation.setCurrentTime(ms)
+        desktop_app.QApplication.processEvents()
+
+    def wait_completed():
+        animation = page.detail_motion.animation
+        if animation is not None:
+            animation.resume()
+        deadline = time.monotonic() + 3
+        while page.detail_motion.animation is not None and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert page.detail_motion.animation is None
+
     page.motion.finish()
     original = page.detail.height()
     right = page.right_scroll.geometry()
     page.set_schedule_expanded(True)
-    QTest.qWait(90)
+    sample_current(90)
     assert page.detail_motion.animation is not None
     middle = page.detail.height()
     assert 0 < middle < original
     assert page.schedule_panel.height() > 458
     page.set_schedule_expanded(False)
     assert abs(page.detail.maximumHeight() - middle) <= 1
-    QTest.qWait(320)
+    wait_completed()
     assert not page.schedule_expanded and page.detail.isVisible()
     assert page.detail.height() == original
     assert page.right_scroll.geometry() == right
     assert all(card.isVisible() for card in lines_window.fact_cards)
     for state in (True, False, True):
         page.set_schedule_expanded(state)
-        QTest.qWait(35)
-    QTest.qWait(350)
+        sample_current(35)
+    wait_completed()
     assert page.schedule_expanded and not page.detail.isVisible()
     assert page.schedule_panel.expanded
     assert page.schedule_panel.matrix.minimum_row_height == 24
     page.set_schedule_expanded(False)
-    QTest.qWait(35)
+    sample_current(35)
     interrupted = page.detail_motion.animation
     lines_window.navigate(0)
     assert interrupted.state() == QAbstractAnimation.State.Stopped

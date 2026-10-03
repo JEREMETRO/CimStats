@@ -1,4 +1,5 @@
 """Shared enlarged-chart surface and return behavior, including special clones."""
+import time
 import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
@@ -91,7 +92,9 @@ def test_detail_return_closes_and_preserves_all_hidden_selection(source, close_a
         QTest.keyClick(dialog, Qt.Key.Key_Escape)
     else:
         dialog.close()
-    app().processEvents()
+    deadline = time.monotonic() + 3
+    while dialog.isVisible() and time.monotonic() < deadline:
+        QTest.qWait(10)
     assert not dialog.isVisible()
     assert source.isVisible()
     assert source._hidden_groups == selected_hidden

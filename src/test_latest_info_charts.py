@@ -401,7 +401,7 @@ def test_scope_signal_capture_preserves_source_scope_and_independent_intent_thro
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
-def test_combined_structure_ring_retains_values_without_permanent_numeric_labels(page, qt_application, panel_name):
+def test_combined_structure_ring_shows_values_as_the_only_compact_exception(page, qt_application, panel_name):
     page.set_session(session())
     page.set_snapshot(snapshot())
     qt_application.processEvents()
@@ -409,8 +409,8 @@ def test_combined_structure_ring_retains_values_without_permanent_numeric_labels
     assert panel.ring.center_total.text() == ('955' if panel_name == 'passengerRanking' else '155')
     assert not hasattr(panel, 'stacked')
     assert all(row.number.text() != '—' and row.share.text().endswith('%') for row in panel.visible_mode_rows())
-    assert panel.ring.center_total.isHidden() and panel.total_label.isHidden()
-    assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_mode_rows())
+    assert panel.ring.center_total.isVisible() and panel.total_label.isHidden()
+    assert all(row.number.isVisible() and row.share.isVisible() for row in panel.visible_mode_rows())
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
@@ -629,7 +629,7 @@ def test_million_total_and_actual_other_count_fit_in_line_share(page, qt_applica
 
 
 @pytest.mark.parametrize('value', [Decimal('123456789012'), Decimal('123456789012345678901234567')])
-def test_long_finite_totals_stay_in_data_without_compact_ring_or_header_label(page, qt_application, value):
+def test_long_finite_totals_are_visible_only_in_structure_without_duplicate_total(page, qt_application, value):
     from latest_info_model import ModeCount
     from latest_info_charts import shown
     data = snapshot()
@@ -645,5 +645,9 @@ def test_long_finite_totals_stay_in_data_without_compact_ring_or_header_label(pa
             continue
         ring = panel.ring if view == 'structure' else panel.share_ring
         assert ring.total == value and ring.center_total.text() == shown(value)
-        assert ring.center_total.isHidden() and panel.total_label.isHidden()
-        assert all(row.number.isHidden() for row in panel.visible_mode_rows() + panel.visible_share_rows())
+        if view == 'structure':
+            assert ring.center_total.isVisible() != panel.total_label.isVisible()
+            assert all(row.number.isVisible() and row.share.isVisible() for row in panel.visible_mode_rows())
+        else:
+            assert ring.center_total.isHidden() and panel.total_label.isHidden()
+            assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_share_rows())

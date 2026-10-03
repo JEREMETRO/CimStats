@@ -222,7 +222,7 @@ def test_demand_export_matches_selected_snapshot_and_context(tmp_path):
     assert not row[16] and not value(network.summaries[0], 2).context
 
 
-def test_home_custom_charts_omit_numeric_labels_preserve_values_and_drillthrough(monkeypatch):
+def test_home_structure_numeric_exception_preserves_other_views_and_drillthrough(monkeypatch):
     from latest_info_page import LatestInfoPage
     from test_latest_info_page import session as home_session, snapshot
     app = application()
@@ -242,16 +242,13 @@ def test_home_custom_charts_omit_numeric_labels_preserve_values_and_drillthrough
     try:
         for panel in (page.passengers, page.departures):
             panel.show_structure()
-            assert panel.ring.center_total.isHidden()
+            assert panel.ring.center_total.isVisible()
             assert panel.total_label.isHidden()
             for row in panel.visible_mode_rows():
-                assert row.number.isHidden() and row.share.isHidden()
+                assert row.number.isVisible() and row.share.isVisible()
                 assert row.toolTip() == ''
             painted.clear()
             panel.grab()
-            assert panel.ring.center_total.text() not in painted
-            assert all(row.number.text() not in painted and row.share.text() not in painted
-                       for row in panel.visible_mode_rows())
             panel.show_ranking()
             rows = panel.visible_ranking_rows()
             assert rows and all(row.number.isHidden() for row in rows)
