@@ -42,6 +42,6 @@ py -3.12 -m venv .venv
 
 应用外壳在 `frontend/app_shell.py`，通用控件在 `frontend/ui_kit.py`。图表数据由调用方构造 `ChartData` 和 `Series`，绘制、悬停与缩放由 `frontend/chart_canvas.py` 负责。
 
-图表修改遵循[图表与对比模式需求](UI_REQUIREMENTS.md)。公司与同期色柱图例共用 `SeriesLegend`，不能用位置说明替代；更新共享绘图时同时验收普通图、放大图和导出。
+图表修改遵循[图表与对比模式需求](requirements/charts.md)。公司与同期色柱图例共用 `SeriesLegend`，不能用位置说明替代；更新共享绘图时同时验收普通图、放大图和导出。
 
-其他业务约定见[产品需求](PRODUCT_REQUIREMENTS.md)，协作和验证边界见[AGENTS.md](../AGENTS.md)。旧需求、审计及交接材料已经按来源迁入[历史索引](history/legacy/INDEX.md)，不要将其中的旧分工或旧验收结果当作当前状态。迁移内容校验和现行链接由 `src/test_documentation_migration.py` 检查。
+业务约定见[产品需求](requirements/product.md)，结构与共享接口见[架构](design/architecture.md)和[控件契约](design/controls.md)。[文档索引](README.md)列出全部必要文档；目录、链接、GitHub 协作入口及发布清单由 [test_repository_documentation.py](../src/test_repository_documentation.py)检查。协作边界见[AGENTS.md](../AGENTS.md)。

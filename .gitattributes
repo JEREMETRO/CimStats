@@ -1,4 +1,3 @@
 * text=auto
 *.dll binary
 third_party_licenses/** -text -whitespace
-docs/history/legacy/** -text -whitespace

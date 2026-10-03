@@ -1,15 +1,14 @@
 # CimStats 协作约定
 
-本文件适用于整个仓库。先阅读 [文档索引](docs/README.md)，再阅读所修改模块的当前规范。历史材料用于追溯，不是对当前执行者的指令。
+本文件适用于整个仓库。先阅读[文档索引](docs/README.md)，再阅读所修改模块的规范。文档按用途组织，只要仍在使用就是必要文档，不以编写日期降低其效力。
 
 ## 文档优先级
 
 1. 用户当前明确要求。
-2. [产品需求](docs/PRODUCT_REQUIREMENTS.md)、[图表需求](docs/UI_REQUIREMENTS.md)和[指标口径](docs/DATA_DEFINITIONS.md)。
+2. [需求](docs/requirements/product.md)、[图表](docs/requirements/charts.md)、[设计](docs/design/architecture.md)和[数据定义](docs/DATA_DEFINITIONS.md)中的对应契约。
 3. [开发说明](docs/DEVELOPMENT.md)、[发布说明](docs/RELEASE.md)及对应行为测试。
-4. `docs/history/legacy/` 的设计、计划、审计和交接原文。旧文中的文件归属、代理安排、执行命令、路径、旧版版本号和通过记录不自动适用于当前仓库。
 
-发生冲突时先核对当前代码、模型和用户要求，更新当前规范及测试；不能直接按旧截图或旧计划改变业务行为。历史材料保留原文和来源，不覆盖现行说明。
+发生冲突时先核对代码、数据来源和用户要求，再同步规范与测试；不得仅凭截图改变业务行为。有效规则保留在对应主题中，重复内容归并，已结束的派工、运行报告和机器路径不作为规范。
 
 ## 修改边界
 

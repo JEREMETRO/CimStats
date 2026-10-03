@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import zipfile
+from candidate_package import selected_documents
 
 sys.dont_write_bytecode = True
 PROJECT = Path(__file__).resolve().parents[1]
@@ -22,11 +23,11 @@ BRIDGE_NAME = 'cim2runtimeschedulebridge.dll'
 WINDOWS_FONTS = ('segoe', 'segui', 'msyh', 'microsoft yahei')
 LOCAL_PATH = re.compile(r"(?i)\b[A-Z]:[\\/](?:Users[\\/][^\\/\s\"'<>]+|Program Files(?: \(x86\))?[\\/]|SteamLibrary[\\/]|test[\\/])")
 SOURCE_SUFFIXES = {'.py', '.cs', '.js', '.css', '.html', '.ps1', '.spec', '.toml', '.ini', '.yml', '.yaml'}
-ROOT_DOCUMENTS = {'readme.md', 'changelog.md', 'contributing.md', 'security.md', 'license', 'third_party_notices.md',
+ROOT_DOCUMENTS = {'readme.md', 'changelog.md', 'contributing.md', 'security.md', 'license', 'third_party_notices.md', 'agents.md',
                   'version', 'requirements-desktop.txt', 'requirements-dev.txt', '.gitignore', '.savestats-workspace'}
-RELEASE_DOCS = {'project_notice.md', 'user_guide.md', 'data_definitions.md', 'development.md', 'release.md', 'redistribution_audit.md'}
-DOC_FILES = ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md',
-             *['docs/'+name for name in ('PROJECT_NOTICE.md', 'USER_GUIDE.md', 'DATA_DEFINITIONS.md', 'DEVELOPMENT.md', 'RELEASE.md', 'REDISTRIBUTION_AUDIT.md')]]
+RELEASE_DOCS = {name.lower() for name in selected_documents()}
+DOC_FILES = ['README.md', 'AGENTS.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md',
+             *selected_documents()]
 
 
 def local_path_findings(text: str) -> list[dict]:
@@ -93,9 +94,9 @@ def classify_file(relative: str, *, mode='source', text='', digest=None, license
             decision = 'include'; reasons.append('原许可文本与选择来源清单哈希相符；不表示整个组件包已获准发行')
         else:
             tags.append('license_needs_provenance'); reasons.append('许可文件来源/哈希缺失或变化，需复核')
-    elif (len(parts) == 1 and name in ROOT_DOCUMENTS) or (lower.startswith('docs/') and name in RELEASE_DOCS):
+    elif (len(parts) == 1 and name in ROOT_DOCUMENTS) or lower in RELEASE_DOCS:
         decision = 'include'; tags.append('release_document'); reasons.append('项目发布文档/声明候选，保留作者与第三方范围')
-    elif lower.startswith(('.github/issue_template/', 'tools/')) or (parts and parts[0] in ('src', 'frontend', 'optional') and PurePosixPath(name).suffix in SOURCE_SUFFIXES) or (len(parts) == 1 and PurePosixPath(name).suffix in SOURCE_SUFFIXES):
+    elif lower.startswith(('.github/', 'tools/')) or (parts and parts[0] in ('src', 'frontend', 'optional') and PurePosixPath(name).suffix in SOURCE_SUFFIXES) or (len(parts) == 1 and PurePosixPath(name).suffix in SOURCE_SUFFIXES):
         decision = 'include'; tags.append('project_source_candidate'); reasons.append('项目自有代码候选，仍需核对作者来源与 GPL 告知；不是运行或发布批准')
     elif lower.startswith('frontend/static/branding/'):
         tags.append('brand_asset'); reasons.append('品牌资产：设计批准与资产授权/参考来源分别核验')

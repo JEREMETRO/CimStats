@@ -24,13 +24,13 @@ py -3.12 -m venv .venv
 
 - **最新信息**：城市摘要、运营指标、亮点线路和关键变化提醒。
 - **线路查询**：筛选线路与公司，查看客流、发班、首末班车和时刻表，导出线路及公司工作簿。
-- **统计数据**：公司、网络和城市统计，支持多公司环比、单公司同比及小时、日、周、月粒度切换。
+- **统计数据**：公司、网络和城市统计，提供默认、多公司对比、同期对比，以及小时、日、周、月粒度切换。
 - **导出**：图表与工作簿导出。
 
 ## 文档
 
-- [全部文档与迁移资料](docs/README.md)
-- [产品需求](docs/PRODUCT_REQUIREMENTS.md) · [图表需求](docs/UI_REQUIREMENTS.md) · [协作约定](AGENTS.md)
+- [文档索引与目录结构](docs/README.md)
+- [产品需求](docs/requirements/product.md) · [图表需求](docs/requirements/charts.md) · [协作约定](AGENTS.md)
 - [用户指南](docs/USER_GUIDE.md)
 - [指标口径](docs/DATA_DEFINITIONS.md)
 - [开发与测试](docs/DEVELOPMENT.md)

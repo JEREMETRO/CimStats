@@ -19,10 +19,16 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {'CIM2_SaveStats.py', 'parser_backend.py', 'CIM2_SaveStats.spec', 'parser_backend.spec',
               'build_portable.ps1', 'publish_release.ps1', 'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md',
-              'SECURITY.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION', 'requirements-desktop.txt',
-              'requirements-dev.txt', 'pytest.ini', '.gitignore', '.savestats-workspace'}
+              'SECURITY.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'AGENTS.md', 'VERSION', 'requirements-desktop.txt',
+              'requirements-dev.txt', 'pytest.ini', '.gitignore', '.gitattributes', '.savestats-workspace'}
 DOCS = ('docs/USER_GUIDE.md', 'docs/DATA_DEFINITIONS.md', 'docs/DEVELOPMENT.md', 'docs/RELEASE.md',
-        'docs/PROJECT_NOTICE.md')
+        'docs/PROJECT_NOTICE.md', 'docs/README.md',
+        'docs/requirements/product.md', 'docs/requirements/charts.md', 'docs/requirements/latest-info.md',
+        'docs/design/architecture.md', 'docs/design/controls.md', 'docs/design/visual-design.md',
+        'docs/reference/history-metrics.md', 'docs/reference/line-metrics.md',
+        'docs/reference/runtime-decoding.md', 'docs/reference/field-inventory.md',
+        'docs/reference/geometry-and-vehicles.md', 'docs/reference/passenger-routing.md',
+        'docs/reference/multiplayer.md', 'docs/reference/tools.md', 'docs/testing/acceptance.md')
 SCRIPT_DATA = ('extract_runtime_data.py', 'build_line_workbook.py', 'build_company_workbook.py',
                'display_rules.py', 'save_container.py', 'app_paths.py', 'app_metadata.py', 'history_contract.py', 'parse_events.py')
 STATIC = ('frontend/static/app.css', 'frontend/static/app.js', 'frontend/static/cimstats/home-decoration.svg',
@@ -209,7 +215,7 @@ def finalize(candidate, source_manifest):
         if sha(internal/name) != snapshot['files'][name]: raise ValueError('Bundled legal/brand data differs: '+name)
     # Readable legal/user documents beside the EXE, using the same explicit
     # source list. UI About still reads its bundled _internal copies.
-    readable = ['README.md','LICENSE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','CONTRIBUTING.md','SECURITY.md',
+    readable = ['README.md','LICENSE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','CONTRIBUTING.md','SECURITY.md','AGENTS.md',
                 *DOCS,*license_records(ROOT),'third_party_licenses/PROVENANCE.json']
     for name in readable:
         destination = inside(package/name,package)

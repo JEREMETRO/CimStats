@@ -1,6 +1,6 @@
 # CimStats 指标口径索引
 
-各项指标采用以下口径，源码入口列于文末。
+各项指标采用以下口径，源码入口列于文末。详细契约见[历史缓冲区与指标](reference/history-metrics.md)、[线路指标](reference/line-metrics.md)和[字段清单](reference/field-inventory.md)。
 
 ## 范围
 
