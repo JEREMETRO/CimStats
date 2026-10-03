@@ -85,12 +85,13 @@ def _exercise(win, desktop_app, args):
             settle(25)
         settle()
 
-    def capture(name, widget=win):
-        settle()
+    def capture(name, widget=win, *, delay=300, activate=True):
+        if delay:
+            settle(delay)
         path = args.output / (name + '.png')
         assert widget.grab().save(str(path))
         composited = None
-        if app.platformName() == 'windows':
+        if app.platformName() == 'windows' and activate:
             widget.window().raise_()
             widget.window().activateWindow()
             settle(80)
@@ -102,7 +103,7 @@ def _exercise(win, desktop_app, args):
         records.append({'case':name, 'size':[widget.width(), widget.height()],
                         'screenshot':str(path), 'composited':str(composited) if composited else None})
 
-    assert abs(win.devicePixelRatioF() - args.expected_dpr) < .001
+    assert abs(win.devicePixelRatioF() - args.expected_dpr) < .001, (win.devicePixelRatioF(), args.expected_dpr)
     capture('startup-welcome')
     digest = None
     if args.save:
@@ -120,6 +121,11 @@ def _exercise(win, desktop_app, args):
     else:
         job = args.job
         data = load_session(job, args.tag)
+        manifest = json.loads((job / 'manifest.json').read_text(encoding='utf-8'))
+        data['manifest'] = manifest
+        data['save_path'] = manifest['save_path']
+        data['outputs'] = manifest['output_files']
+        data['validation_status'] = manifest['validation_status']
         win.on_completed(data)
         wait_until(lambda: not win._awaiting_dashboards)
     page = win.statistics_page
@@ -206,18 +212,50 @@ def _exercise(win, desktop_app, args):
         wait_until(lambda: not isValid(detail) or not detail.isVisible(), 5)
         assert source._hidden_groups == hidden
     win.navigate(0)
-    for index, text in enumerate(('查看完整名称', '长标签验证：真实公司的完整名称    前一完整日')):
+    for index, text in enumerate(('查看完整名称', '长标签验证：真实公司的完整名称    前一完整日' * 4, '短说明')):
         QToolTip.showText(win.mapToGlobal(QPoint(260, 180)), text, win)
         settle()
         tooltip = next((w for w in app.topLevelWidgets() if w.objectName() == 'qtooltip_label' and w.isVisible()), None)
         assert tooltip is not None
         assert tooltip.font().pixelSize() == 12 and not tooltip.font().bold()
-        capture('native-tooltip-' + str(index), tooltip)
-        QToolTip.hideText()
-        settle()
+        capture('native-tooltip-' + str(index), tooltip, delay=0, activate=False)
+    QToolTip.hideText()
+    settle()
+    # Exercise the same export functions shipped in the GUI, using this real
+    # snapshot. File picking is verified separately; no source file is edited.
+    from latest_info_exports import export_latest_info_png, export_latest_info_xlsx
+    from PySide6.QtGui import QImage
+    from openpyxl import load_workbook
+    exports = args.output / 'exports'
+    exports.mkdir()
+    export_latest_info_png(win.latest_info_page.export_target(), exports / 'home.png')
+    export_latest_info_xlsx(win.latest_info_controller.snapshot,
+                            win.latest_info_controller.alerts_snapshot, exports / 'home.xlsx')
+    assert not QImage(str(exports / 'home.png')).isNull()
+    exported = [exports / 'home.xlsx']
+    if args.save:
+        from display_rules import export_precision_workbook
+        for kind, source in data.get('outputs', {}).items():
+            if Path(source).suffix.lower() != '.xlsx':
+                continue
+            before = hashlib.sha256(Path(source).read_bytes()).hexdigest()
+            destination = exports / (kind + '.xlsx')
+            export_precision_workbook(source, destination)
+            assert hashlib.sha256(Path(source).read_bytes()).hexdigest() == before
+            exported.append(destination)
+        assert len(exported) >= 3
+    workbooks = []
+    for path in exported:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            assert workbook.worksheets and all(sheet.max_row > 0 for sheet in workbook.worksheets)
+            workbooks.append({'path':str(path), 'sheets':workbook.sheetnames})
+        finally:
+            workbook.close()
     report = {'frozen':bool(getattr(sys, 'frozen', False)), 'executable':sys.executable,
               'scale':os.environ.get('QT_SCALE_FACTOR', '1'), 'dpr':win.devicePixelRatioF(),
               'real_job':str(job), 'real_history_rows':len(data.get('history', [])),
               'current_demand':str(demand.value), 'raw_save':str(args.save) if args.save else None,
-              'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True, 'cases':records}
+              'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True,
+              'exported_workbooks':workbooks, 'cases':records}
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
