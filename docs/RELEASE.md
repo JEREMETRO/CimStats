@@ -40,4 +40,6 @@ python tools/candidate_package.py freeze --output docs/preflight/local-review.js
 
 在通过验证的对应提交创建标签及 [GitHub Release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)，预览勾选 pre-release，上传 EXE，并在说明中列出版本变化、对应提交和 SHA-256。已发布版本保留，后续版本使用新标签，不覆盖已有资产。合入 `main` 不代表已经构建或发布新的 EXE。
 
+公开发布说明优先鸣谢贡献者，链接其 GitHub 主页与 PR，重点介绍其实际贡献；维护者的合并调整仅作简要补充，不以合并过程取代版本更新。不在公开 Release 中列出“验证”章节、测试数量或内部检查记录；这些记录保留在忽略的工作目录中。仍未修复的已知问题继续单独列出。
+
 必要文档由 [candidate_package.py](../tools/candidate_package.py)的显式清单统一选择，源码快照包含 `AGENTS.md`与完整的用途文档；构建包仅纳入清单，不递归打包截图、报告或缓存。增加文档时同步清单与[文档索引](README.md)，发布预检复用同一清单。候选包核验不自动上传或创建 Release。
