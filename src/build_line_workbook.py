@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from display_rules import format_line_name
+from display_rules import format_line_name, store_text_literally
 from parse_events import ProgressReporter
 
 import csv
@@ -392,6 +392,7 @@ def main() -> None:
                 widths[cell.column] = max(widths.get(cell.column, 0), len(value))
         for column, width in widths.items():
             ws.column_dimensions[ws.cell(1, column).column_letter].width = min(max(width + 2, 10), 32)
+    store_text_literally(wb)
     wb.save(out)
     reporter.progress('line_workbook', len(lines) + 3, len(lines) + 3)
     reporter.finish('line_workbook')

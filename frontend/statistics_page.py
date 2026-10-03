@@ -1175,7 +1175,8 @@ class StatisticsPage(QWidget):
             return
         self.company_dashboard.render(
             self.snapshot, self.selected_companies(), self._names(), self._company_palette,
-            self.analysis_mode, self.satisfaction_combo.currentData(), self.metric_slots)
+            self.analysis_mode, self.satisfaction_combo.currentData(), self.metric_slots,
+            comparison_label=label(self.comparison_preset))
         self._reflow_company()
 
     def _stopcount_value(self, tile, result):
@@ -1236,69 +1237,54 @@ class StatisticsPage(QWidget):
             self.filter_layout.setContentsMargins(
                 filter_padding, filter_padding, filter_padding, filter_padding)
             self.filter_layout.setSpacing(6 if width < 1400 else CONTROL_GAP)
-        columns = 4 if width >= 1200 else 2
+        columns = 4 if width >= 1100 else 2
         period = not self.compare_field.isHidden()
-        signature = (columns, period, width >= 1000, width >= 900, is_city, width >= 1100)
+        signature = (columns, period, width >= 900, is_city)
         if signature == self._layout_signature:
             self._reflow_company()
             self._reflow_network()
             self._reflow_city()
             return
         self._layout_signature = signature
-        margin = NARROW_MARGIN if width < 900 else PAGE_MARGIN
-        self.layout().setContentsMargins(margin, 0, margin, 0)
-        if columns == 4:
-            for index, stretch in enumerate((3, 2, 1, 0)):
-                self.toolbar_grid.setColumnStretch(index, stretch)
-            for index, minimum in enumerate((350, 180, 140, 340)):
-                self.toolbar_grid.setColumnMinimumWidth(index, minimum)
-        else:
-            for index in range(4):
-                self.toolbar_grid.setColumnStretch(index, 1 if index < 2 else 0)
-                self.toolbar_grid.setColumnMinimumWidth(index, 0)
+        # The application shell owns the page gutter.
+        self.layout().setContentsMargins(0, 0, 0, 0)
         for field in self._fields[:5]:
             self.toolbar_grid.removeWidget(field)
-        self.toolbar_grid.removeWidget(self.bottom_strip)
-        self.toolbar_grid.removeWidget(self.filter_detail_host)
+        for widget in (self.bottom_strip, self.filter_detail_host, self._fields[5]):
+            self.toolbar_grid.removeWidget(widget)
         self.bottom_strip.layout().removeWidget(self.filter_detail_host)
-        self.toolbar_grid.removeWidget(self._fields[5])
         self.bottom_strip.layout().removeWidget(self._fields[5])
         self.filter_detail_host.layout().removeWidget(self._fields[5])
-        self.filter_detail_host.setVisible(not is_city)
-        self.toolbar_grid.setSpacing(6 if is_city else CONTROL_GAP)
+        self.bottom_strip.hide()
+        self.toolbar_grid.setHorizontalSpacing(12)
+        self.toolbar_grid.setVerticalSpacing(8)
         for field in self._fields[1:3]:
-            field.layout().setDirection(QBoxLayout.Direction.LeftToRight if is_city else
-                                        QBoxLayout.Direction.TopToBottom)
-            field.layout().setSpacing(6 if is_city else 4)
+            field.layout().setDirection(QBoxLayout.Direction.TopToBottom)
+            field.layout().setSpacing(4)
             heading = field.layout().itemAt(0).widget()
-            heading.setMinimumWidth(heading.sizeHint().width() if is_city else 0)
-            heading.setMaximumWidth(heading.sizeHint().width() if is_city else 16777215)
-        visible_fields = [field for field in self._fields[:5] if not field.isHidden()]
-        if is_city:
-            # A compact control row and one caption line for the actual date range.
-            for index in range(4):
-                self.toolbar_grid.setColumnMinimumWidth(index, 0)
-                self.toolbar_grid.setColumnStretch(index, 1 if index == 0 else 0)
-            self.toolbar_grid.addWidget(self._fields[1], 0, 0)
-            self.toolbar_grid.addWidget(self._fields[2], 0, 1)
-            wide = width >= 1100
-            self.toolbar_grid.addWidget(self.bottom_strip, 0 if wide else 1,
-                                        2 if wide else 0, 1, 1 if wide else 2)
-            self.toolbar_grid.addWidget(self._fields[5], 1 if wide else 2, 0, 1, 3 if wide else 2)
-        else:
-            # Primary filters keep their cells across all company/network modes.
-            for index, field in enumerate(self._fields[:4]):
-                if not field.isHidden():
-                    self.toolbar_grid.addWidget(field, index // columns, index % columns)
-            comparison_row = (4 + columns - 1) // columns
-            if columns == 4:
-                self.bottom_strip.layout().insertWidget(0, self.filter_detail_host, 1)
-                self.toolbar_grid.addWidget(self.bottom_strip, comparison_row, 0, 1, columns)
-            else:
-                self.toolbar_grid.addWidget(self.filter_detail_host, comparison_row, 0, 1, columns)
-                self.toolbar_grid.addWidget(self.bottom_strip, comparison_row + 1, 0, 1, columns)
-        if not is_city:
-            self.filter_detail_host.layout().insertWidget(0, self._fields[5], 1)
+            heading.setMinimumWidth(0)
+            heading.setMaximumWidth(16777215)
+        # One row of filters in a fixed order; hidden fields leave no gap.
+        primary = [field for field in self._fields[:4] if not field.isHidden()]
+        stretches = {self._fields[0]: 4, self._fields[1]: 3, self._fields[2]: 2, self._fields[3]: 0}
+        for index in range(4):
+            self.toolbar_grid.setColumnStretch(index, 0)
+            self.toolbar_grid.setColumnMinimumWidth(index, 0)
+        limits = {self._fields[0]: 560, self._fields[1]: 360, self._fields[2]: 200, self._fields[3]: 16777215}
+        for index in range(5):
+            self.toolbar_grid.setColumnStretch(index, 0)
+        for index, field in enumerate(primary):
+            field.setMaximumWidth(limits[field] if columns == 4 else 16777215)
+            self.toolbar_grid.addWidget(field, index // columns, index % columns)
+            self.toolbar_grid.setColumnStretch(index % columns, max(
+                self.toolbar_grid.columnStretch(index % columns), stretches[field] if columns == 4 else 1))
+        if columns == 4:
+            # Spare width collects at the right instead of inflating controls.
+            self.toolbar_grid.setColumnStretch(len(primary), 1)
+        rows = (len(primary) + columns - 1) // columns
+        self.filter_detail_host.layout().insertWidget(0, self._fields[5], 1)
+        self.toolbar_grid.addWidget(self.filter_detail_host, rows, 0, 1, max(columns, len(primary) + 1))
+        self.filter_detail_host.show()
         for board, (grid, metrics, wide_metric, tiles) in self._tile_grids.items():
             for tile in tiles.values():
                 grid.removeWidget(tile)

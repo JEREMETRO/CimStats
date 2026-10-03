@@ -92,9 +92,10 @@ def test_png_export_contains_the_fluent_chart_marks(tmp_path):
     app.processEvents()
     view = panel.chart_views[0]
     view.grab()
-    region = next(region for region, hit in view._hit_regions
-                  if hit['type'] == 'time-hit' and hit['bucket'].value == 5)
-    pixel = view.viewport().mapTo(panel, view.mapFromScene(region.center()))
+    # Centre of the second bar, halfway between its top and the zero baseline.
+    from PySide6.QtCore import QPoint
+    centre = QPoint(round(view._slot_center(1)), round((view._y(5) + view._y(0)) / 2))
+    pixel = view.mapTo(panel, centre)
     path = tmp_path / 'fluent-chart.png'
     export_png(panel, path)
     from PySide6.QtGui import QImage

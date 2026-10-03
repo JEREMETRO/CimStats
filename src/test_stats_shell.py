@@ -136,6 +136,8 @@ def test_overview_flow_tracks_sidebar_width_without_window_resize(monkeypatch, t
     allowed = set(emphasis_families(12) + emphasis_families(16) + emphasis_families(24))
     assert all(QFontInfo(child.font()).family() in allowed
                for child in window.findChildren(QWidget) if child.isVisible())
+    # Without a save the shell shows its empty state; lay the page out anyway.
+    window.body.setCurrentIndex(0)
     for collapsed in (True, False, True):
         window.set_sidebar_collapsed(collapsed)
         for _ in range(5):

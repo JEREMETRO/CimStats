@@ -137,16 +137,6 @@ class CityChartPanel(ChartPanel):
     def _category_color(self, group):
         return QColor(series_color(group))
 
-    def _legend_color(self, group):
-        return QColor(tokens.TEXT_DISABLED) if group in self._hidden_groups else super()._legend_color(group)
-
-    def _apply_category(self, group):
-        super()._apply_category(group)
-        if group in self.legend_buttons:
-            button = self.legend_buttons[group]
-            button.setIcon(self._legend_icon(group))
-            button.setToolTip(f'{button.text()} · 点击' + ('显示' if group in self._hidden_groups else '隐藏'))
-
     def _toggle_category(self, group):
         super()._toggle_category(group)
         if self.city_key == 'trip-time' and self.city_controller and self.result:
@@ -159,72 +149,40 @@ class CityChartPanel(ChartPanel):
             return QColor(series_color(group))
         return QColor(tokens.CHART_BLUE)
 
-    def _append_time_segments(self, *args):
-        before = len(self.chart_views[-1].visuals)
-        super()._append_time_segments(*args)
-        for visual in self.chart_views[-1].visuals[before:]:
-            visual['area'] = False
-            visual['line_width'] = 2.8 if visual.get('group') == '平均' else 2.0
+    def _series_options(self, company, group, previous):
+        return dict(area=False, width=2.8 if group == '平均' else 2.0)
 
-    def _pie_charts(self, grouped):
-        super()._pie_charts(grouped)
-        # No unproven trip total or normalized price is written into the pie center.
-        for view in self.chart_views:
-            for visual in view.visuals:
-                if visual['type'] == 'pie':
-                    visual['total_text'] = ''
-                    visual['unit'] = ''
-                    visual['hide_center'] = True
+    def _donut_center(self, total, unit):
+        # No unproven trip total or normalized price is written into the ring.
+        return '', ''
 
-    def _open_fullscreen(self):
-        if self.result is None:
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle(self.title_label.text())
-        dialog.setStyleSheet(f'QDialog {{ background:{tokens.PAGE_BG}; }}')
-        layout = QVBoxLayout(dialog)
-        if self.city_controller and self.city_controller.snapshot:
-            filters = self.city_controller.snapshot.filters
-            layout.addWidget(QLabel(f'{filters.start:%Y-%m-%d %H:%M} 至 {filters.end:%Y-%m-%d %H:%M} · '
-                                   f'{dict(hour="小时",day="日",week="周",month="月")[filters.grain]}'))
+    def _point_note(self, company, group, bucket, previous):
+        parts = []
+        if bucket.observed:
+            parts.append(f'实际观测 {bucket.observed:%Y-%m-%d %H:%M}')
+        if not bucket.complete:
+            parts.append('部分/缺测/未完成小时')
+        if self.city_key == 'energy-prices':
+            parts.append('原值÷100；物理单位未确认')
+        return ' · '.join(parts)
+
+    def _create_clone(self, dialog):
         clone = CityChartPanel(self.city_key, dialog)
         clone.city_controller = self.city_controller
-        clone.fullscreen_button.hide()
         clone._hidden_groups = set(self._hidden_groups)
+        clone.set_comparison_label(self._comparison_label)
         clone.set_mode(self.mode)
         clone.set_result(self.result)
         if self.city_controller:
             self.city_controller.attach_controls(clone, fullscreen=True)
-        layout.addWidget(clone)
         dialog.city_panel = clone
-        dialog.finished.connect(lambda _: self._restore_fullscreen_hidden(clone))
-        self._fullscreen_dialog = dialog
-        dialog.resize(1100, 700)
-        dialog.showMaximized()
-
-    def _restore_fullscreen_hidden(self, clone):
-        self._hidden_groups = set(clone._hidden_groups)
-        self._render()
-
-    def _tooltip(self, company, group, bucket, previous=False, color=None):
-        if bucket is None or bucket.value is None:
-            return
-        from stats_text import group_label
-        text = (f'{group_label(group)} · {bucket.start:%Y-%m-%d %H:%M} 至 {bucket.end:%Y-%m-%d %H:%M}'
-                f' · {number(bucket.value)} {self.result.metric.unit}')
-        if bucket.observed:
-            text += f' · 实际观测 {bucket.observed:%Y-%m-%d %H:%M}'
-        if not bucket.complete:
-            text += ' · 已记录部分/缺测/未完成小时'
-        if self.city_key == 'energy-prices':
-            text += ' · 原值÷100；物理单位未确认'
-        self._show_color_tooltip(text, QColor(series_color(group)))
-
-    def _total_tooltip(self, company, group, value, window):
-        if value is None:
-            return
-        self._show_color_tooltip(f'{group} · {window[0]:%Y-%m-%d %H:%M} 至 {window[1]:%Y-%m-%d %H:%M}'
-            f' · {number(value)} {self.result.metric.unit} · 同窗口原始计数/共同分母', QColor(series_color(group)))
+        if self.city_controller and self.city_controller.snapshot:
+            filters = self.city_controller.snapshot.filters
+            caption = QLabel(f'{filters.start:%Y-%m-%d %H:%M} 至 {filters.end:%Y-%m-%d %H:%M} · '
+                             f'{dict(hour="小时", day="日", week="周", month="月")[filters.grain]}', dialog)
+            caption.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};')
+            dialog.layout().addWidget(caption)
+        return clone
 
 
 class CityDashboard(QWidget):

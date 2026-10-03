@@ -272,7 +272,9 @@ def test_trend_expands_plot_width_without_changing_shared_rendering(page, qt_app
     qt_application.processEvents()
     assert page.trend.width() >= 368
     assert abs(page.passengers.width() - page.departures.width()) <= 1
-    assert page.trend.chart_views[0].chart().plotArea().width() >= 270
+    canvas = page.trend.chart_views[0]
+    canvas.grab()
+    assert canvas.plot_rect().width() >= 270
 
 
 def test_wrapped_line_identity_keeps_all_highlight_primary_and_auxiliary_anchors(page, qt_application):
@@ -477,8 +479,6 @@ def test_trend_only_exposes_shared_line_renderer(page):
 
 @pytest.mark.parametrize('company_ids', [('company-a', 'company-b'), ('company-a',)])
 def test_company_trend_has_one_true_fluent_line_per_selected_company(page, qt_application, company_ids):
-    from PySide6.QtCharts import QAreaSeries, QLineSeries
-    from stats_charts import ChartPanel
     data = snapshot()
     base = data.trend.series[('company-a', 'bus')]
     buckets = [replace(bucket, value=Decimal(i), observed=True) for i, bucket in enumerate(base)]
@@ -491,12 +491,12 @@ def test_company_trend_has_one_true_fluent_line_per_selected_company(page, qt_ap
     qt_application.processEvents()
     assert page.trend.result is result
     assert len(page.trend.chart_views) == 1
-    series = page.trend.chart_views[0].chart().series()
-    assert sum(isinstance(line, QLineSeries) for line in series) == len(company_ids)
-    assert not any(isinstance(line, QAreaSeries) for line in series)
-    assert all(visual['area'] for view in page.trend.chart_views for visual in view.visuals if visual['type'] == 'line')
-    assert type(page.trend)._append_time_segments is ChartPanel._append_time_segments
-    assert {target['company'] for target in page.trend._hover_targets} == set(company_ids)
+    data = page.trend.chart_views[0].data
+    assert data.kind == 'line'
+    assert len(data.series) == len(company_ids)
+    if len(company_ids) > 1:
+        assert [item.key for item in data.series] == list(company_ids)
+    assert all(not item.dashed and not item.faded for item in data.series)
 
 
 def test_untrusted_metadata_filename_never_becomes_city_and_snapshot_trace_is_available(page):
@@ -827,17 +827,12 @@ def test_aggregate_trend_uses_friendly_company_name_without_changing_identity(pa
 
 def test_today_trend_hour_labels_fit_three_card_width(page, qt_application):
     import re
-    from PySide6.QtCharts import QCategoryAxis
-    from PySide6.QtCore import Qt
     page.set_session(session())
     page.set_snapshot(snapshot())
     qt_application.processEvents()
-    axes = [axis for view in child(page, 'todayTrend').chart_views
-            for axis in view.chart().axes(Qt.Orientation.Horizontal)
-            if isinstance(axis, QCategoryAxis)]
-    assert axes
-    assert all(re.fullmatch(r'\d{2}:\d{2}', text)
-               for axis in axes for text in axis.categoriesLabels())
+    labels = [text for view in child(page, 'todayTrend').chart_views for text in view.data.labels]
+    assert labels
+    assert all(re.fullmatch(r'\d{2}:\d{2}', text) for text in labels)
 
 
 def test_actions_emit_once_and_export_target_is_actual_content(page):

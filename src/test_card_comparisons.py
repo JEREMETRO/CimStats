@@ -95,20 +95,6 @@ def test_company_ui_and_export_share_peer_summary(tmp_path):
     widget.close()
 
 
-def test_cleared_chart_ignores_deferred_axis_layout():
-    from PySide6.QtWidgets import QApplication
-    from PySide6.QtCharts import QCategoryAxis
-    from stats_charts import ChartPanel
-    QApplication.instance() or QApplication([])
-    panel = ChartPanel('test')
-    axis = QCategoryAxis()
-    axis.append('原标签', 0)
-    panel.clear()
-    panel._adapt_time_label_axis(axis, [D(2024, 1, 1), D(2024, 1, 2)], 500)
-    assert axis.categoriesLabels() == ['原标签']
-    panel.close()
-
-
 def test_comparison_label_bolds_only_numbers_and_units():
     from PySide6.QtGui import QTextDocument
     from PySide6.QtWidgets import QApplication

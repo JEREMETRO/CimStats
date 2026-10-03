@@ -29,11 +29,10 @@ if not SAVE.exists():
 TAG = "运行时" if SAVE.stem == "望春市6" else f"{SAVE.stem}_运行时"
 OUT = lambda stem: EXPORT / f"{stem}_{TAG}.csv"
 _configured_managed = os.environ.get("CIM2_MANAGED_ROOT", "")
+# Source checkouts without a bundled runtime set CIM2_MANAGED_ROOT; the desktop
+# app always supplies it explicitly.  (An empty variable must not become
+# Path("") == Path("."), which silently searched the working directory.)
 MANAGED = Path(_configured_managed) if _configured_managed else PROJECT / "game_runtime" / "Managed"
-# Keep command-line compatibility for source checkouts that have no bundled
-# runtime yet.  The desktop app always supplies CIM2_MANAGED_ROOT explicitly.
-if not (MANAGED / "Assembly-CSharp.dll").exists() and not getattr(sys, "frozen", False):
-    MANAGED = Path(os.environ.get("CIM2_MANAGED_ROOT", "")) or MANAGED
 PROBE = DATA / "Assembly-CSharp.probe.dll"
 PAYLOAD = PAYLOAD_DIR / f"{SAVE.stem}.payload.bin"
 SOURCE_ASSEMBLY = MANAGED / "Assembly-CSharp.dll"
@@ -693,11 +692,14 @@ def main():
                 unknown_depots[owner_index] += count
         depot = field(depot, "m_nextDepot")
         depot_index += 1
-    for i, row in enumerate(company_info_rows):
-        known = mode_totals[i]
+    for row in company_info_rows:
+        # Totals are keyed by player index; players without a company have no
+        # row, so the row position is not a player index.
+        player_index = int(row["公司序号"])
+        known = mode_totals[player_index]
         fallback_mode = max(known, key=known.get) if known else "公交"
-        if unknown_depots[i]:
-            known[fallback_mode] = known.get(fallback_mode, 0) + unknown_depots[i]
+        if unknown_depots[player_index]:
+            known[fallback_mode] = known.get(fallback_mode, 0) + unknown_depots[player_index]
         for mode in ("公交", "单轨列车", "地铁", "无轨电车", "有轨电车", "水上巴士"):
             row[f"车辆总数_{mode}"] = known.get(mode, 0)
 
@@ -944,7 +946,7 @@ def main():
         "stop_row_count": len(stop_rows), "history_metric_count": len(metric_dict),
         "history_group_count": len(history_summary),
         "history_rows": len(all_history), "history_valid_last_index": max(
-            int(r["历史序号"]) for r in all_history
+            (int(r["历史序号"]) for r in all_history), default=None
         ),
         "complete_object_graph": True,
     }

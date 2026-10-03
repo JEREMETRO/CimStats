@@ -33,6 +33,19 @@ def format_line_name(number_value, raw_name):
     return f"{number_text}路·{name}"
 
 
+def store_text_literally(workbook):
+    """Keep save-supplied text such as a line named "=Express" out of formulas.
+
+    openpyxl turns every string starting with "=" into a formula; these
+    workbooks never contain real formulas, so store all such cells as text.
+    """
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
+
+
 def format_garage(company, mode, value):
     """Keep serialized depot names; only bare positive indices need a label."""
     raw = str(value or '').strip()

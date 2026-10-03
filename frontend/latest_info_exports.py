@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from display_rules import store_text_literally
 from statistics_model import METRICS
 from stats_text import group_label
 
@@ -166,6 +167,7 @@ def export_latest_info_xlsx(snapshot: LatestInfoSnapshot, alerts: DashboardResul
         for column in sheet.columns:
             sheet.column_dimensions[column[0].column_letter].width = min(
                 48, max(16, max(len(str(cell.value or '')) for cell in column) + 3))
+    store_text_literally(workbook)
     workbook.save(Path(path))
 
 
