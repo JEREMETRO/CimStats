@@ -70,6 +70,8 @@ class NetworkChartPanel(ChartPanel):
             widget.show()
 
     def set_descriptor(self, descriptor, snapshot):
+        if descriptor is not self.descriptor:
+            self._cancel_detail()
         prior = self.descriptor
         self.descriptor = descriptor
         self.snapshot = snapshot
@@ -91,6 +93,7 @@ class NetworkChartPanel(ChartPanel):
             self.surface_motion.reveal()
 
     def clear(self):
+        self._cancel_detail()
         self.descriptor = None
         self.snapshot = None
         self.result = None

@@ -32,10 +32,10 @@ def fullscreen(mode='trend-bar'):
     widget = panel('客流', modes=True, default_mode=mode)
     widget.set_result(result({('a', 'bus'): [bucket(1, 10)],
                              ('a', 'tram'): [bucket(1, 15)]}), {'a': '甲公司'})
+    widget.resize(1440, 960)
+    widget.show()
     clone = widget._open_fullscreen()
     dialog = widget._fullscreen_dialog
-    dialog.showNormal()
-    dialog.resize(1440, 960)
     QTest.qWait(50)
     return widget, clone, dialog
 

@@ -1,15 +1,186 @@
-"""Read-only company and period summaries for enlarged charts."""
+"""In-window chart expansion and read-only company/period summaries."""
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt, Signal
 from PySide6.QtGui import QFontMetricsF
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
+                               QMainWindow, QVBoxLayout, QWidget)
+from shiboken6 import isValid
 
 from statistics_model import summarize_buckets
 from stats_text import group_label
 from stats_typography import apply_emphasis_font, emphasis_css
 import stats_tokens as tokens
+import stats_motion
+
+
+class InlineChartDetail(QFrame):
+    """White child surface: expand from the source card, then return in place."""
+    finished = Signal()
+
+    def __init__(self, source):
+        window = source.window()
+        host = window.centralWidget() if isinstance(window, QMainWindow) else window
+        super().__init__(host, Qt.WindowType.Widget)
+        self.source = source
+        self.panel = None
+        self.animation = None
+        self._elevation_layer = None
+        self._returning = False
+        self._returned = True
+        self.adopt_on_return = True
+        self.setObjectName('inlineChartDetail')
+        self.setProperty('chartDetailSurface', True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setStyleSheet(f'QFrame#inlineChartDetail {{ background:{tokens.CARD_BG};border:0; }}')
+        layout = QVBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        layout.setContentsMargins(tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG)
+        host.installEventFilter(self)
+        source.installEventFilter(self)
+        source.destroyed.connect(self._source_destroyed)
+        self.hide()
+
+    def set_panel(self, panel):
+        self.panel = panel
+        # Early frames are smaller than a readable detail layout. Clip the
+        # natural panel instead of forcing fixed summary rows over the canvas.
+        panel.setMinimumHeight(max(panel.minimumHeight(), panel.minimumSizeHint().height()))
+        self.layout().addWidget(panel)
+
+    def _source_rect(self):
+        host = self.parentWidget()
+        if not isValid(self.source):
+            return self.geometry()
+        rect = QRect(self.source.mapTo(host, QPoint()), self.source.size()).intersected(host.rect())
+        return rect if not rect.isEmpty() else host.rect()
+
+    def expand(self):
+        for sibling in self.parentWidget().findChildren(InlineChartDetail,
+                options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if sibling is not self and sibling.isVisible():
+                sibling.cancel()
+        self._returning = False
+        self._returned = False
+        self.adopt_on_return = True
+        self.setGeometry(self._source_rect())
+        self.show()
+        # This surface already owns the entry transition; settle the card's
+        # shared Show reveal so geometry motion does not also fade its content.
+        self.panel.surface_motion.finish()
+        # The shared shadow carrier is above the central widget. Covered page
+        # shadows must not paint over this detail while hover fades settle.
+        layer = getattr(self.window(), '_fluent_elevation_layer', None)
+        if layer is not None and isValid(layer) and layer.isVisible():
+            self._elevation_layer = layer
+            layer.hide()
+        self.raise_()
+        self.panel.fullscreen_button.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._transition(self.parentWidget().rect(), expanding=True)
+
+    def _stop_animation(self):
+        if self.animation is not None:
+            self.animation.stop()
+            self.animation.deleteLater()
+            self.animation = None
+
+    def _transition(self, end, *, expanding):
+        self._stop_animation()
+        if not stats_motion.animations_enabled() or self.geometry() == end:
+            self.setGeometry(end)
+            self._transition_finished()
+            return
+        animation = QPropertyAnimation(self, b'geometry', self)
+        animation.setDuration(220 if expanding else 167)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic if expanding else QEasingCurve.Type.InCubic)
+        animation.setStartValue(self.geometry())
+        animation.setEndValue(end)
+        animation.finished.connect(self._transition_finished)
+        self.animation = animation
+        animation.start()
+
+    def _transition_finished(self):
+        self._stop_animation()
+        if self._returning:
+            self._complete_return()
+        else:
+            self.setGeometry(self.parentWidget().rect())
+
+    def _complete_return(self):
+        if self._returned:
+            return
+        self._returned = True
+        self._stop_animation()
+        self.hide()
+        layer = self._elevation_layer
+        self._elevation_layer = None
+        if layer is not None and isValid(layer):
+            layer.show()
+            layer.refresh()
+        self.finished.emit()
+        if self.adopt_on_return and isValid(self.source) and self.source.isVisible():
+            self.source.fullscreen_button.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def cancel(self):
+        """Source/host replacement is cancellation, not stale selection adoption."""
+        self.adopt_on_return = False
+        self._complete_return()
+
+    def _source_destroyed(self):
+        self.cancel()
+        self.deleteLater()
+
+    def closeEvent(self, event):
+        if self._returned:
+            event.accept()
+        else:
+            event.ignore()
+            if not self._returning:
+                self._returning = True
+                self._transition(self._source_rect(), expanding=False)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def focusNextPrevChild(self, forward):
+        # The covered page remains alive for state/scroll preservation, but its
+        # controls must not enter the active detail's keyboard traversal.
+        candidates = []
+        widget = self.nextInFocusChain()
+        while widget is not self:
+            if (self.isAncestorOf(widget) and widget.isVisible() and widget.isEnabled()
+                    and widget.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                candidates.append(widget)
+            widget = widget.nextInFocusChain()
+        if not candidates:
+            self.setFocus()
+            return True
+        current = self.focusWidget()
+        index = candidates.index(current) if current in candidates else (-1 if forward else 0)
+        candidates[(index + (1 if forward else -1)) % len(candidates)].setFocus(
+            Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+        return True
+
+    def hideEvent(self, event):
+        if not self._returned:
+            self.cancel()
+        super().hideEvent(event)
+
+    def eventFilter(self, watched, event):
+        if watched is self.parentWidget() and event.type() == QEvent.Type.Resize and not self._returned:
+            end = self._source_rect() if self._returning else watched.rect()
+            if self.animation is not None:
+                self.animation.setEndValue(end)
+            else:
+                self.setGeometry(end)
+        elif watched is self.source and event.type() == QEvent.Type.Hide:
+            self.cancel()
+        return super().eventFilter(watched, event)
 
 
 def exact_number(value):

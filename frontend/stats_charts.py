@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout,
 from qfluentwidgets import FluentIcon, TransparentPushButton, TransparentToolButton
 
 from chart_canvas import AxisSpec, ChartCanvas, ChartData, Series, format_value
-from chart_details import DetailSummary
+from chart_details import DetailSummary, InlineChartDetail
+from shiboken6 import isValid
 from stats_controls import FluentSegmentedControl
 from stats_text import group_label, label
 from stats_typography import apply_emphasis_font, emphasis_css
@@ -115,7 +116,7 @@ class ChartPanel(QFrame):
         super().__init__(parent)
         _ensure_chinese_font()
         self.setObjectName('chartPanel')
-        self._detailed = isinstance(parent, QDialog)
+        self._detailed = isinstance(parent, QDialog) or bool(parent and parent.property('chartDetailSurface'))
         if not self._detailed:
             attach_card_elevation(self, radius=tokens.RADIUS_CARD)
         self.surface_motion = SurfaceMotion(self)
@@ -177,7 +178,7 @@ class ChartPanel(QFrame):
             self.fullscreen_button.setIconSize(QSize(16, 16))
             self.fullscreen_button.setFixedHeight(32)
             self.fullscreen_button.setAccessibleName('缩小图表，返回原图')
-            self.fullscreen_button.clicked.connect(parent.accept)
+            self.fullscreen_button.clicked.connect(parent.close)
         else:
             self.fullscreen_button = TransparentToolButton(self)
             self.fullscreen_button.setIcon(FluentIcon.FULL_SCREEN)
@@ -280,6 +281,8 @@ class ChartPanel(QFrame):
 
     # --------------------------------------------------------- data in
     def set_result(self, result, companies: dict[str, str] | None = None):
+        if result is not self.result:
+            self._cancel_detail()
         self.result = result
         self.companies = companies or {}
         self._render()
@@ -300,6 +303,7 @@ class ChartPanel(QFrame):
         self._render()
 
     def clear(self):
+        self._cancel_detail()
         self.result = None
         self._axis_override = None
         self._render()
@@ -711,19 +715,24 @@ class ChartPanel(QFrame):
     def _open_fullscreen(self):
         if self.result is None:
             return
-        dialog = QDialog(self)
-        dialog.setObjectName('chartDetailDialog')
-        dialog.setWindowTitle(self.title_label.text())
-        dialog.setStyleSheet(f'QDialog#chartDetailDialog {{ background: {tokens.CARD_BG}; }}')
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG, tokens.SPACE_LG)
-        clone = self._create_clone(dialog)
-        layout.addWidget(clone)
-        dialog.finished.connect(lambda _=None, c=clone: self._adopt_hidden(c))
-        dialog.resize(1100, 700)
-        self._fullscreen_dialog = dialog
-        dialog.showMaximized()
+        previous = self._fullscreen_dialog
+        if previous is not None and isValid(previous):
+            if previous.isVisible():
+                return previous.panel
+            previous.deleteLater()
+        surface = InlineChartDetail(self)
+        clone = self._create_clone(surface)
+        surface.set_panel(clone)
+        surface.finished.connect(lambda: self._adopt_hidden(clone)
+                                 if surface.adopt_on_return and isValid(self) else None)
+        self._fullscreen_dialog = surface
+        surface.expand()
         return clone
+
+    def _cancel_detail(self):
+        surface = self._fullscreen_dialog
+        if surface is not None and isValid(surface) and surface.isVisible():
+            surface.cancel()
 
     def _adopt_hidden(self, clone):
         if set(clone._hidden_groups) != self._hidden_groups:

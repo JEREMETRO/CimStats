@@ -41,9 +41,12 @@ def source(request):
 def test_detail_renders_white_under_chart_summary_and_frame(source, maximized):
     clone = source._open_fullscreen()
     dialog = source._fullscreen_dialog
+    window = source.window()
     if not maximized:
-        dialog.showNormal()
-        dialog.resize(960, 680)
+        window.showNormal()
+        window.resize(960, 680)
+    else:
+        window.showMaximized()
     QTest.qWait(30)
     image = dialog.grab().toImage()
     samples = [QPoint(3, 3), clone.mapTo(dialog, QPoint(3, clone.height() // 2))]
@@ -56,7 +59,7 @@ def test_detail_renders_white_under_chart_summary_and_frame(source, maximized):
         assert color.getRgb() == (255, 255, 255, 255)
 
 
-@pytest.mark.parametrize('close_action', ['shrink', 'keyboard', 'escape', 'system'])
+@pytest.mark.parametrize('close_action', ['shrink', 'keyboard', 'escape', 'programmatic'])
 def test_detail_return_closes_and_preserves_all_hidden_selection(source, close_action):
     original_mode = source.mode
     original_result = source.result
@@ -120,6 +123,7 @@ def test_network_shrink_remains_enabled_when_detail_becomes_unavailable():
     app()
     widget = NetworkChartPanel()
     widget.set_descriptor(descriptor(make_result()), snapshot('company'))
+    widget.show()
     clone = widget._open_fullscreen()
     try:
         clone.set_descriptor(descriptor(clone.result, reason='暂无历史记录'), clone.snapshot)
