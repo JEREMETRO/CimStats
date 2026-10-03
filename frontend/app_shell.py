@@ -1,7 +1,7 @@
 """Window chrome shared by every page: header, save context and empty state."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import Action, FluentIcon, IconWidget, PrimaryPushButton, PushButton, RoundMenu
@@ -53,7 +53,7 @@ class SaveChip(QFrame):
         self.setStyleSheet(f'QFrame#saveChip {{ background: {tokens.CARD_BG}; border: 1px solid {tokens.BORDER}; '
                            f'border-radius: 8px; }}')
         self.setFixedHeight(44)
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(140)
         self.setMaximumWidth(380)
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 4, 12, 4)
@@ -70,6 +70,9 @@ class SaveChip(QFrame):
         column.addWidget(self.name)
         column.addWidget(self.detail)
         row.addLayout(column, 1)
+
+    def sizeHint(self):
+        return QSize(260, 44)
 
     def set_context(self, name: str, detail: str = ''):
         self.name.setText(name)
@@ -123,6 +126,7 @@ class AppHeader(QWidget):
         self.export_button.setIcon(FluentIcon.SAVE)
         self.export_button.setFixedHeight(36)
         self.export_menu = RoundMenu(parent=self.export_button)
+        self.export_menu.view.itemActivated.connect(self.export_menu.view.itemClicked.emit)
         self.export_actions: dict[str, Action] = {}
         self.export_button.clicked.connect(self._show_export_menu)
         row.addWidget(self.export_button)
@@ -160,7 +164,7 @@ class AppHeader(QWidget):
             return
         margins = self._layout.contentsMargins()
         required = (self.icon_base.width() + self.title.sizeHint().width() +
-                    self.save_chip.minimumWidth() + self.export_button.sizeHint().width() +
+                    self.save_chip.sizeHint().width() + self.export_button.sizeHint().width() +
                     max(self.open_button.minimumWidth(), self.open_button.sizeHint().width()) +
                     self.page_slot_host.sizeHint().width() - self.page_slot.contentsMargins().left() +
                     12 + self._row.spacing() * 6 +
@@ -180,19 +184,30 @@ class AppHeader(QWidget):
 
     def set_exports(self, items):
         """``items``: iterable of (key, text, icon, enabled). Separators: key None."""
+        old_actions = tuple(self.export_actions.values())
         self.export_menu.clear()
+        # RoundMenu.clear() removes actions but leaves anonymous separator rows.
+        self.export_menu.view.clear()
+        for action in old_actions:
+            action.deleteLater()
         self.export_actions = {}
         any_enabled = False
+        separator_pending = False
         for key, text, icon, enabled in items:
             if key is None:
-                self.export_menu.addSeparator()
+                separator_pending = bool(self.export_actions)
                 continue
+            if separator_pending:
+                self.export_menu.addSeparator()
+                separator_pending = False
             action = Action(icon, text, self.export_menu) if icon else Action(text, self.export_menu)
             action.setEnabled(bool(enabled))
             action.triggered.connect(lambda checked=False, k=key: self.export_requested.emit(k))
             self.export_menu.addAction(action)
             self.export_actions[key] = action
             any_enabled = any_enabled or bool(enabled)
+        self.export_menu.view.adjustSize()
+        self.export_menu.adjustSize()
         self.export_button.setEnabled(any_enabled)
 
     def _show_export_menu(self):

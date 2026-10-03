@@ -13,6 +13,24 @@ from pathlib import Path
 from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QGuiApplication
 import stats_tokens as tokens
 
+MEDIUM_NUMERIC_WEIGHT = QFont.Weight.DemiBold
+LARGE_NUMERIC_WEIGHT = QFont.Weight.Bold
+
+
+def numeric_font(size: int, *, large: bool = False) -> QFont:
+    """Home numeric hierarchy; labels and units keep the ordinary font."""
+    result = emphasis_font(size, LARGE_NUMERIC_WEIGHT if large else MEDIUM_NUMERIC_WEIGHT)
+    if not large and QGuiApplication.instance():
+        # Windows exposes Variable Display's semibold face as a separate family;
+        # asking the Regular/Bold family for 600 otherwise resolves to 700.
+        tier = 'Display' if size >= 20 else 'Text' if size >= 14 else 'Small'
+        candidates = ('Segoe UI Variable ' + tier + ' Semibold', 'Segoe UI Semibold')
+        available = QFontDatabase.families()
+        family = next((name for name in candidates if name in available), None)
+        if family:
+            result.setFamilies([family, *result.families()])
+    return result
+
 
 def _load_system_font(filename):
     if os.name != 'nt':

@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QEvent, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import QAction, QColor, QFontMetrics, QPalette
+from PySide6.QtGui import QAction, QColor, QPalette
 from shiboken6 import isValid
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
     QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
@@ -244,22 +244,27 @@ class CompanyTag(QFrame):
         self.setStyleSheet(f'QFrame#companyFilterTag {{ background: {ACCENT_SOFT}; border: 0; '
                            'border-radius: 5px; }')
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 2, 2, 2)
+        row.setContentsMargins(6, 0, 2, 0)
         row.setSpacing(2)
-        self.name_label = QLabel(self)
-        self.name_label.setText(QFontMetrics(self.name_label.font()).elidedText(
-            name, Qt.TextElideMode.ElideRight, 105))
-        self.name_label.setToolTip(name)
-        self.name_label.setAccessibleName(name)
-        self.name_label.setStyleSheet(f'color: {ACCENT}; font-size: 12px;')
-        row.addWidget(self.name_label)
+        from app_shell import ElidedText
+        self.name_label = ElidedText(name, self, size=12, color=ACCENT)
+        self.name_label.setMaximumWidth(105)
+        row.addWidget(self.name_label, 1)
         self.close_button = TransparentToolButton(self)
-        self.close_button.setText('×')
+        self.close_button.setIcon(FluentIcon.CLOSE)
+        self.close_button.setIconSize(QSize(12, 12))
         self.close_button.setToolTip(f'移除{name}')
         self.close_button.setAccessibleName(f'移除{name}')
-        self.close_button.setFixedSize(20, 20)
+        self.close_button.setFixedSize(32, 32)
         self.close_button.clicked.connect(remove)
         row.addWidget(self.close_button)
+        self.setFixedHeight(32)
+        self.setMaximumWidth(147)
+
+    def sizeHint(self):
+        # An ignored label can shrink but must not make its tag prefer no text.
+        width = self.name_label.fontMetrics().horizontalAdvance(self.name_label.text())
+        return QSize(min(105, width) + 42, 32)
 
 
 class StatisticsPage(QWidget):
@@ -387,9 +392,10 @@ class StatisticsPage(QWidget):
                                             f'border: 1px solid {BORDER}; border-radius: 6px; }}')
         self.company_selector.setFixedHeight(CONTROL_HEIGHT)
         selector_row = QHBoxLayout(self.company_selector)
-        selector_row.setContentsMargins(6, 2, 4, 2)
+        selector_row.setContentsMargins(6, 1, 4, 1)
         selector_row.setSpacing(4)
         self.company_tag_host = QWidget(self.company_selector)
+        self.company_tag_host.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.company_tag_layout = QHBoxLayout(self.company_tag_host)
         self.company_tag_layout.setContentsMargins(0, 0, 0, 0)
         self.company_tag_layout.setSpacing(4)
@@ -978,6 +984,7 @@ class StatisticsPage(QWidget):
             self.company_tags[company_id] = tag
         if len(checked) > 2:
             more = QLabel(f'+{len(checked) - 2}', self.company_tag_host)
+            more.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
             more.setToolTip('、'.join(action.text() for action in checked[2:]))
             self.company_tag_layout.addWidget(more)
         self.company_tag_layout.addStretch()

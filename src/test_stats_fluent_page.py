@@ -80,7 +80,8 @@ def test_analysis_mode_is_direct_three_button_segment():
 def test_company_tags_can_remove_one_selection_without_hiding_others():
     page = _loaded_page()
     assert set(page.company_tags) == {'a', 'b'}
-    assert all(tag.name_label.toolTip() for tag in page.company_tags.values())
+    assert all(tag.name_label.accessibleName() == tag.name_label.text()
+               for tag in page.company_tags.values())
     page.company_tags['a'].close_button.click()
     assert page.selected_companies() == ('b',)
     assert set(page.company_tags) == {'b'}

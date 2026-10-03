@@ -144,7 +144,9 @@ def test_business_modules_cover_each_metric_once_and_distinguish_numeric_roles(p
             metric = child(page, f'metric-{key}')
             assert metric.parent() is module and metric.isVisible()
             value = metric.value
-            assert value.font().bold() == (key in CORE_METRIC_KEYS)
+            assert int(value.font().weight()) == (700 if key in CORE_METRIC_KEYS else 600)
+            assert int(metric.unit.font().weight()) == 400
+            assert int(metric.title.font().weight()) == 400
             assert value.font().pixelSize() == (28 if group == 'network' else 24 if key in CORE_METRIC_KEYS else 20)
             found.append(key)
     assert len(found) == len(set(found)) == 13 and set(found) == set(METRIC_KEYS)

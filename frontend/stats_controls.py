@@ -5,13 +5,62 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QVariantAnimation, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
-from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout
-from qfluentwidgets import ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
+from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QPushButton
+from qfluentwidgets import ComboBox, ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
 
 import stats_tokens as tokens
 import stats_motion as motion_policy
 
 _FONT_ID = -1
+
+
+class ElidingComboBox(ComboBox):
+    """Keep Fluent selection semantics without resizing on a long selection."""
+
+    def __init__(self, parent=None):
+        self._full_text = ''
+        super().__init__(parent)
+        self.clicked.connect(self._toggleComboMenu)
+
+    def mouseReleaseEvent(self, event):
+        # Use the same clicked path for mouse and keyboard without toggling twice.
+        QPushButton.mouseReleaseEvent(self, event)
+
+    def _createComboMenu(self):
+        menu = super()._createComboMenu()
+        menu.view.itemActivated.connect(menu.view.itemClicked.emit)
+        return menu
+
+    def setText(self, text):
+        self._full_text = str(text)
+        self.setAccessibleDescription(self._full_text)
+        self._elide_text()
+
+    def _elide_text(self):
+        # Fluent's text padding and arrow occupy 40 logical pixels.
+        shown = self.fontMetrics().elidedText(getattr(self, '_full_text', ''),
+                                             Qt.TextElideMode.ElideRight, max(0, self.width() - 40))
+        # ComboBoxBase.setText calls adjustSize(), which fights its parent layout.
+        QPushButton.setText(self, shown)
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        hint.setWidth(hint.width() + metrics.horizontalAdvance(getattr(self, '_full_text', '')) -
+                      metrics.horizontalAdvance(self.text()))
+        return hint
+
+    def minimumSizeHint(self):
+        return QSize(76, super().minimumSizeHint().height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide_text()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._elide_text()
 
 
 def _ensure_chinese_font():

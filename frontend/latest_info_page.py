@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
                               QSizePolicy, QVBoxLayout, QWidget)
-from qfluentwidgets import (ComboBox, DropDownPushButton, FluentIcon, IconWidget,
+from qfluentwidgets import (DropDownPushButton, FluentIcon, IconWidget,
                            PrimaryPushButton, PushButton, RoundMenu)
 from display_rules import display_mode
 from latest_info_model import InfoValue, LatestInfoSnapshot
@@ -18,7 +18,8 @@ from latest_info_charts import (DepartureStructure, PassengerRanking, font,
                                 label, numeric, short_line_name, shown)
 from statistics_model import parse_time
 from stats_charts import ChartPanel
-from stats_controls import StatisticsScrollArea
+from stats_controls import ElidingComboBox, StatisticsScrollArea
+from stats_typography import numeric_font
 from stats_elevation import attach_card_elevation
 from stats_motion import SurfaceMotion
 import stats_tokens as tokens
@@ -194,6 +195,7 @@ class MetricCard(QFrame):
         values.setSpacing(4)
         size = 28 if key in ('line-count', 'fleet') else 24 if key in CORE else 20
         self.value = label('—', f'metric-{key}-value', size, key in CORE, self)
+        self.value.setFont(numeric_font(size, large=key in CORE))
         self.value.setFixedHeight(self.value.fontMetrics().height())
         self.unit = label(unit, f'metric-{key}-unit', parent=self)
         self.unit.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};background:transparent;')
@@ -617,11 +619,11 @@ class LatestInfoPage(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
         row.addWidget(label('运营概况', 'coreSectionTitle', 14, True), 1)
-        self.company_combo = ComboBox(self.scope_host)
+        self.company_combo = ElidingComboBox(self.scope_host)
         self.company_combo.setAccessibleName('最新信息公司范围')
         self.company_combo.setMinimumWidth(0)
         self.company_combo.setMaximumWidth(240)
-        self.mode_combo = ComboBox(self.scope_host)
+        self.mode_combo = ElidingComboBox(self.scope_host)
         self.mode_combo.setAccessibleName('最新信息制式范围')
         self.mode_combo.setMinimumWidth(0)
         self.mode_combo.setMaximumWidth(140)
