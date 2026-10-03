@@ -165,6 +165,8 @@ class HistoryStore:
                 raise QueryCancelled()
             try:
                 stamp = raw['模拟时间']
+                if not isinstance(stamp, (str, datetime)):
+                    stamp = str(stamp)
                 time = times.get(stamp)
                 if time is None:
                     time = times[stamp] = parse_time(stamp)

@@ -307,6 +307,25 @@ def _exercise(win, desktop_app, args):
         wait_until(lambda: not isValid(detail) or not detail.isVisible(), 5)
         assert source._hidden_groups == hidden
     win.navigate(0)
+    home_structure = {}
+    for name, panel in (('passengers', win.latest_info_page.passengers),
+                        ('departures', win.latest_info_page.departures)):
+        panel.show_structure()
+        win.latest_info_page.scroll.ensureWidgetVisible(panel)
+        settle()
+        rows = panel.visible_mode_rows()
+        assert rows and all(row.number.isVisible() and row.share.isVisible() for row in rows)
+        assert panel.ring.center_total.isVisible() or panel.total_label.isVisible()
+        home_structure[name] = [{'count':row.number.text(), 'share':row.share.text()} for row in rows]
+        capture('home-structure-' + name, panel)
+        panel.show_ranking()
+        settle()
+        assert all(row.number.isHidden() for row in panel.visible_ranking_rows())
+        panel.show_line_share()
+        settle()
+        assert panel.share_ring.center_total.isHidden()
+        assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_share_rows())
+        panel.show_structure()
     for index, text in enumerate(('查看完整名称', '长标签验证：真实公司的完整名称    前一完整日' * 4, '短说明')):
         QToolTip.showText(win.mapToGlobal(QPoint(260, 180)), text, win)
         settle()
@@ -357,7 +376,9 @@ def _exercise(win, desktop_app, args):
     dialogs = [('about', AboutDialog(win)),
                ('range', RangePicker(now - timedelta(days=1), now, parent=win)),
                ('message', _MessageSurface('验证窗口', '窗口行为检查', win)),
-               ('file-picker', FluentFileDialog(win, '打开存档', str(job), '存档 (*.save)'))]
+               ('export-file-picker', FluentFileDialog(win, '保存 XLSX', str(job), 'Excel 工作簿 (*.xlsx)'))]
+    dialogs[-1][1].setAcceptMode(FluentFileDialog.AcceptMode.AcceptSave)
+    dialogs[-1][1].setFileMode(FluentFileDialog.FileMode.AnyFile)
     for name, dialog in dialogs:
         dialog.show()
         settle()
@@ -384,4 +405,5 @@ def _exercise(win, desktop_app, args):
               'current_demand':str(demand.value), 'raw_save':str(args.save) if args.save else None,
               'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True,
               'comparison_bars':bar_evidence, 'exported_workbooks':workbooks, 'cases':records}
+    report['home_structure'] = home_structure
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

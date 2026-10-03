@@ -174,3 +174,26 @@ def test_actual_parse_progress_does_not_poll_process_tree(monkeypatch):
                             _parse_started=0, _parse_stage=10, _parse_stage_text='读取',
                             loading_overlay=SimpleNamespace(update_progress=lambda *a, **k: None))
     desktop_app.MainWindow._update_estimated_progress(owner)
+
+
+def test_parser_delivers_large_session_without_qvariant_deep_copy(qt_application, tmp_path):
+    """The immutable completed session must cross threads as one Python object."""
+    from desktop_app import ParseWorker
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    import time
+    payload = {'history': [{'模拟时间': '2024-01-01 00:00:00', '值': str(i)} for i in range(5000)]}
+    class ReadyParser(ParseWorker):
+        def run(self):
+            self.completed.emit(payload)
+    parser = ReadyParser(tmp_path / 'sample.save', tmp_path)
+    received = []
+    parser.completed.connect(received.append, Qt.ConnectionType.QueuedConnection)
+    parser.start()
+    deadline = time.monotonic() + 5
+    while not received and time.monotonic() < deadline:
+        QTest.qWait(10)
+    parser.wait(5000)
+    assert len(received) == 1
+    assert received[0] is payload
+    assert received[0]['history'] is payload['history']

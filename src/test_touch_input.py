@@ -89,7 +89,9 @@ def test_touch_chart_inspects_same_slot_and_tap_activates_once(touch):
     chart.set_data(ChartData('line', ['Mon', 'Tue'], [Series('a', 'A', QColor('blue'), [12, 34])], unit='人'))
     chart.show()
     app.processEvents()
-    point = chart.plot_rect().center().toPoint()
+    # The plot midpoint is the boundary between these two slots. Fractional
+    # font metrics can round it into the first slot; inspect the second center.
+    point = QPoint(round(chart._slot_center(1)), round(chart.plot_rect().center().y()))
     seen = []
     chart.slot_clicked.connect(seen.append)
     events = sequence(chart, device)

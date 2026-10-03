@@ -1,6 +1,7 @@
 """0.1.2 chart owner regressions: the two home distributions and hover edges."""
 from dataclasses import replace
 from decimal import Decimal
+from math import ceil
 import pytest
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
@@ -61,7 +62,8 @@ def test_distribution_missing_count_stays_missing_and_zero_stays_visible(page, q
     assert panel.ring.sectors() == []
 
 
-def test_tooltip_paints_only_light_border_without_black_shadow(qt_application):
+@pytest.mark.parametrize('offset', [0, .35, .75])
+def test_tooltip_paints_only_light_border_without_black_shadow(qt_application, offset):
     from chart_canvas import ChartCanvas
     canvas = ChartCanvas()
     rows = [(QColor('#1677FF'), '蓝领', '135,820 人次', '')]
@@ -71,11 +73,12 @@ def test_tooltip_paints_only_light_border_without_black_shadow(qt_application):
     image.fill(Qt.GlobalColor.transparent)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    box = QRectF(10, 10, width, height)
+    box = QRectF(10, 10 + offset, width, height)
     canvas._draw_tooltip(painter, box, layout)
     painter.end()
-    # No dark strip outside the shared thin light border.
-    assert image.pixelColor(int(box.center().x()), int(box.bottom()) + 1).alpha() == 0
+    # A centered 1px antialiased pen can cover the first fractional boundary
+    # pixel. Beyond that fringe, the former 2px black shadow must be absent.
+    assert image.pixelColor(int(box.center().x()), ceil(box.bottom()) + 1).alpha() == 0
     canvas.deleteLater()
 
 

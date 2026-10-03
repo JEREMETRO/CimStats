@@ -162,7 +162,10 @@ def item(value) -> QTableWidgetItem:
 class ParseWorker(QThread):
     progress = Signal(int, str)
     log = Signal(str)
-    completed = Signal(dict)
+    # A dict signal converts the entire session to QVariantMap and back while
+    # holding Python execution, duplicating large histories. The worker stops
+    # mutating data after emit; pass that session as a queued Python object.
+    completed = Signal(object)
     failed = Signal(str)
 
     def __init__(self, save_path: Path, managed: Path, parent=None):

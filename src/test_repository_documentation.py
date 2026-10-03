@@ -92,7 +92,7 @@ def test_home_structure_numbers_are_the_only_compact_chart_exception():
 
 def test_native_save_import_is_an_explicit_window_chrome_exception():
     for relative in ('docs/requirements/product.md', 'docs/design/architecture.md',
-                     'docs/testing/acceptance.md'):
+                     'docs/design/controls.md', 'docs/testing/acceptance.md'):
         content = (ROOT / relative).read_text(encoding='utf-8')
         assert '仅导入存档' in content and 'Windows 原生打开文件对话框' in content
         assert '例外' in content

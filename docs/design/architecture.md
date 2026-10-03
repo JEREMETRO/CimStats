@@ -23,7 +23,7 @@ CimStats 是 Python 3.12、PySide6 与 PySide6-Fluent-Widgets 桌面应用。保
 - [app_shell.py](../../frontend/app_shell.py)统一导航、页面标题、文件区和子选项卡；[ui_kit.py](../../frontend/ui_kit.py)、[stats_controls.py](../../frontend/stats_controls.py)统一控件。
 - [stats_tokens.py](../../frontend/stats_tokens.py)和[stats_typography.py](../../frontend/stats_typography.py)是颜色、尺寸及字体入口，不复制局部主题。
 - [startup_surface.py](../../frontend/startup_surface.py)提供主窗口初始 Logo 遮罩与欢迎层共用的窗口预算、背景及标志坐标，不导入 Fluent 或业务模块。[startup_welcome.py](../../frontend/startup_welcome.py)在中央窗口覆盖导航和页面顶栏，负责首次打开入口与标志上移动效；`app_shell.py` 的正常页面顶栏保持独立。
-- [startup_bootstrap.py](../../frontend/startup_bootstrap.py)先创建轻量主窗口，在[首帧门控](../../frontend/startup_readiness.py)确认 Logo 遮罩完成绘制后才调用 `initialize_content()` 加载业务模块和构建界面，再在欢迎层首帧绘制后启动过渡。同一原生窗口从 Logo 持续到欢迎与业务页面；正常启动不运行独立 helper。不透明子表面可能使 Qt 省略外层窗口绘制事件，门控必须覆盖这一分支。[启动传输](../../frontend/startup_transport.py)仅保留兼容诊断入口的鉴权与回收。解析与图表准备覆盖欢迎层，成功准备后显示页面，失败或取消返回欢迎层。
+- [startup_bootstrap.py](../../frontend/startup_bootstrap.py)先创建轻量主窗口，在[首帧门控](../../frontend/startup_readiness.py)确认 Logo 遮罩完成绘制后才调用 `initialize_content_async()`。后台准备依赖与类定义，主题和全部控件仍在主线程按事件回合构建；Logo 遮罩保持覆盖至所有页面就绪，再在欢迎层首帧绘制后启动过渡。构建期间仅窗口系统按钮可操作，业务输入和拖放在就绪后启用。同一原生窗口从 Logo 持续到欢迎与业务页面；正常启动不运行独立 helper。不透明子表面可能使 Qt 省略外层窗口绘制事件，门控必须覆盖这一分支。[启动传输](../../frontend/startup_transport.py)仅保留兼容诊断入口的鉴权与回收。解析与图表准备覆盖欢迎层，成功准备后显示页面，失败或取消返回欢迎层；取消后已经排队的完成结果不得重新载入。
 - [window_chrome.py](../../frontend/window_chrome.py)复用现有无边框 Windows 窗口层提供共享自绘标题栏、系统移动／缩放与应用文件选择入口。仅导入存档使用 Windows 原生打开文件对话框，其系统外观是应用自有窗口标题栏规则的例外；其他应用自有窗口继续共享自绘标题栏。主窗口标题只有应用名称并显示应用图标；独立二级窗口隔离默认图标继承。已有 Fluent 遮罩弹层与菜单、工具提示保持原有形态。
 - 统计页固定标题／文件操作、子选项卡、筛选；数据区共用一条纵向滚动，不为各公司另设滚动条，不产生整页横向滚动。
 - 默认与同期各公司分组；多公司比较公共图。公司数量不改变模式。公司单栏四个指标图位固定，宽屏双公司对应行对齐，窄屏重排而不丢数据。
