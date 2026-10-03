@@ -425,15 +425,6 @@
     },
     {
       "source": "main",
-      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
-      "origin": "working-copy",
-      "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
-      "sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
-      "disposition": "retained",
-      "text_sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad"
-    },
-    {
-      "source": "main",
       "path": "archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/README.md",
       "origin": "working-copy",
       "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-8917c3d359eb4a2f9fb7d4d9fa321105/dist/README.md",
@@ -587,15 +578,6 @@
     },
     {
       "source": "main",
-      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-8917c3d359eb4a2f9fb7d4d9fa321105/.pytest_cache/README.md",
-      "origin": "working-copy",
-      "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
-      "sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
-      "disposition": "deduplicated",
-      "text_sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad"
-    },
-    {
-      "source": "main",
       "path": "archive/maintenance-20261003/preserved/jobs/publish-test-8917c3d359eb4a2f9fb7d4d9fa321105/README.md",
       "origin": "working-copy",
       "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-8917c3d359eb4a2f9fb7d4d9fa321105/dist/README.md",
@@ -668,15 +650,6 @@
     },
     {
       "source": "main",
-      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-539868aee87f4133af161447f301e593/.pytest_cache/README.md",
-      "origin": "working-copy",
-      "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
-      "sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
-      "disposition": "deduplicated",
-      "text_sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad"
-    },
-    {
-      "source": "main",
       "path": "archive/maintenance-20261003/preserved/jobs/publish-test-539868aee87f4133af161447f301e593/README.md",
       "origin": "working-copy",
       "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-8917c3d359eb4a2f9fb7d4d9fa321105/dist/README.md",
@@ -719,15 +692,6 @@
       "sha256": "5bd17a4a66c4126008a147278511f1fb55774b443fa32bf571a0ffd5a8efc073",
       "disposition": "deduplicated",
       "text_sha256": "e80b71cd14d3cbd65f4173abcbfcf01a545dbca32a72d575108b553a648cc96f"
-    },
-    {
-      "source": "main",
-      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-31788c46407c4942b3013113b5aa4d70/.pytest_cache/README.md",
-      "origin": "working-copy",
-      "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
-      "sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
-      "disposition": "deduplicated",
-      "text_sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad"
     },
     {
       "source": "main",
@@ -2582,15 +2546,6 @@
       "sha256": "67496044d0f5b7b85870b7345a50615db7f6c31fb67157c4069528ab17c14b44",
       "disposition": "retained",
       "text_sha256": "d0be3d4a46dd0465e2b409fd5cc2a5f6b176dc132d5f796108355c9c0a3992df"
-    },
-    {
-      "source": "main",
-      "path": "archive/maintenance-20261003/preserved/docs/ui-redesign/city-evidence/runtime/baseline-candidate/.pytest_cache/README.md",
-      "origin": "working-copy",
-      "destination": "docs/history/legacy/main/archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
-      "sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
-      "disposition": "deduplicated",
-      "text_sha256": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad"
     },
     {
       "source": "main",
@@ -6200,6 +6155,31 @@
       "source": "latest-info",
       "path": "docs/ui-redesign/latest-info-rev2-evidence/native-spring-dpr1.0-postaux-final/share-summary.txt",
       "reason": "Generated test, timing, manifest or process output; not authored documentation"
+    },
+    {
+      "source": "main",
+      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-06e32c936e4f4882bb14cc50b0c0bc8f/.pytest_cache/README.md",
+      "reason": "Generated tool cache; not project documentation"
+    },
+    {
+      "source": "main",
+      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-8917c3d359eb4a2f9fb7d4d9fa321105/.pytest_cache/README.md",
+      "reason": "Generated tool cache; not project documentation"
+    },
+    {
+      "source": "main",
+      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-539868aee87f4133af161447f301e593/.pytest_cache/README.md",
+      "reason": "Generated tool cache; not project documentation"
+    },
+    {
+      "source": "main",
+      "path": "archive/maintenance-20261003/preserved/jobs/publish-test-31788c46407c4942b3013113b5aa4d70/.pytest_cache/README.md",
+      "reason": "Generated tool cache; not project documentation"
+    },
+    {
+      "source": "main",
+      "path": "archive/maintenance-20261003/preserved/docs/ui-redesign/city-evidence/runtime/baseline-candidate/.pytest_cache/README.md",
+      "reason": "Generated tool cache; not project documentation"
     }
   ]
 }

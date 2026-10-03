@@ -15,6 +15,7 @@ def test_migration_manifest_preserves_every_source_document_content():
     assert set(manifest['sources']) == {'main', 'ui', 'data', 'charts', 'latest-info'}
     assert manifest['records']
     for record in manifest['records']:
+        assert not {'.pytest_cache', '__pycache__', 'node_modules', '.venv'} & set(Path(record['path']).parts)
         target = (ROOT / record['destination']).resolve()
         assert target.is_relative_to(ROOT)
         assert target.is_file(), record
