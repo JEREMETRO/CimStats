@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QDateTime, QEvent, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QAction, QColor, QFontMetrics, QPalette
 from shiboken6 import isValid
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
@@ -64,10 +64,11 @@ class DashboardTask(QThread):
     failed = Signal(int, str)
 
     def __init__(self, token, store, filters, thresholds, parent=None,
-                 network_options=None, companies=None):
+                 network_options=None, companies=None, lines=None):
         super().__init__(parent)
         self.token, self.store, self.filters, self.thresholds = token, store, filters, thresholds
         self.network_options, self.companies = network_options, companies or {}
+        self.lines = lines
 
     def run(self):
         try:
@@ -75,7 +76,7 @@ class DashboardTask(QThread):
                                        self.isInterruptionRequested)
             if self.network_options is not None:
                 network = build_network_snapshot(snapshot, self.network_options,
-                                                 self.companies, self.isInterruptionRequested)
+                                                 self.companies, self.isInterruptionRequested, lines=self.lines)
                 payload = (snapshot, network, build_city_snapshot(self.store, self.filters, self.isInterruptionRequested))
             else:
                 payload = snapshot
@@ -90,14 +91,15 @@ class NetworkModelTask(QThread):
     ready = Signal(int, object, object)
     failed = Signal(int, str)
 
-    def __init__(self, token, source, options, companies, parent=None):
+    def __init__(self, token, source, options, companies, parent=None, *, lines=None):
         super().__init__(parent)
         self.token, self.source, self.options, self.companies = token, source, options, companies
+        self.lines = lines
 
     def run(self):
         try:
             network = build_network_snapshot(self.source, self.options, self.companies,
-                                             self.isInterruptionRequested)
+                                             self.isInterruptionRequested, lines=self.lines)
             if not self.isInterruptionRequested():
                 self.ready.emit(self.token, self.source, network)
         except Exception as exc:
@@ -270,6 +272,7 @@ class StatisticsPage(QWidget):
         self.setObjectName('statsPage')
         self.settings, self.snapshot, self.store = settings, None, None
         self.companies, self.simulation_time, self.session_key, self._short_ids = [], None, '', {}
+        self._network_lines = None
         self.analysis_mode = 'default'
         self.range_preset = 'previous_full_week'
         self.comparison_preset = 'previous'
@@ -326,10 +329,12 @@ class StatisticsPage(QWidget):
             item.setIconSize(QSize(18, 18))
             item.setMinimumHeight(40)
             item.setFixedWidth(148)
+            item.setProperty('keyboardFocus', False)
+            item.installEventFilter(self)
             item.setStyleSheet('QPushButton { background: transparent; border: 0; padding: 7px 12px 7px 34px; '
                                'color: #65758B; } QPushButton:hover { background: #E8F2FC; color: #0067C0; } '
                                'QPushButton[isSelected="true"] { color: #0067C0; font-weight: 600; } '
-                               'QPushButton:focus { border: 2px solid #0067C0; border-radius: 6px; }')
+                               'QPushButton[keyboardFocus="true"] { border: 2px solid #0067C0; border-radius: 6px; }')
         self.tab_bar.currentItemChanged.connect(self._tab_changed)
         self.tab_bar.setCurrentItem('company')
         outer.addWidget(self.tab_bar)
@@ -790,6 +795,9 @@ class StatisticsPage(QWidget):
             self._reflow_city()
 
     def _mode_changed(self, *_):
+        if self.analysis_mode_control.currentKey() == 'companies' and not self._can_compare_companies():
+            self.analysis_mode_control.setCurrentKey('default')
+            return
         self.analysis_mode = self.analysis_mode_control.currentKey()
         self.compare_field.setVisible(self.analysis_mode == 'period')
         self._update_compact_filter_summary()
@@ -798,9 +806,8 @@ class StatisticsPage(QWidget):
 
     def _network_mode_changed(self, *_):
         mode = self.network_mode_control.currentKey()
-        if mode == 'companies' and len(self.selected_companies()) < 2:
+        if mode == 'companies' and not self._can_compare_companies():
             self.network_mode_control.setCurrentKey('overall')
-            self.network_dashboard.show_notice('至少选择两家公司才能进行多公司对比')
             return
         self.network_dashboard.show_notice('')
         self.network_options = replace(self.network_options, mode=mode)
@@ -832,7 +839,8 @@ class StatisticsPage(QWidget):
         for worker in self.network_workers:
             worker.requestInterruption()
         worker = NetworkModelTask(self.network_model_token, self.snapshot,
-                                  self._effective_network_options(), self._names(), self)
+                                  self._effective_network_options(), self._names(), self,
+                                  lines=self._network_lines)
         worker.ready.connect(self._receive_network_model)
         worker.failed.connect(self._failed_network_model)
         worker.finished.connect(lambda w=worker: self._network_worker_finished(w))
@@ -939,6 +947,20 @@ class StatisticsPage(QWidget):
     def selected_companies(self):
         return tuple(str(a.data()) for a in self.company_menu.actions() if a.isChecked())
 
+    def _can_compare_companies(self):
+        return len(self.companies) >= 2
+
+    def eventFilter(self, watched, event):
+        if hasattr(self, 'tab_bar') and watched in self.tab_bar.items.values() and event.type() in (
+                QEvent.Type.FocusIn, QEvent.Type.FocusOut, QEvent.Type.MouseButtonPress):
+            keyboard = (event.type() == QEvent.Type.FocusIn and event.reason() in (
+                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                Qt.FocusReason.ShortcutFocusReason))
+            watched.setProperty('keyboardFocus', keyboard)
+            watched.style().unpolish(watched)
+            watched.style().polish(watched)
+        return super().eventFilter(watched, event)
+
     def _refresh_company_tags(self, *_):
         while self.company_tag_layout.count():
             item = self.company_tag_layout.takeAt(0)
@@ -960,10 +982,8 @@ class StatisticsPage(QWidget):
             self.company_tag_layout.addWidget(more)
         self.company_tag_layout.addStretch()
         if hasattr(self, 'network_mode_control'):
-            enough = len(checked) >= 2
-            if not enough and self.network_mode_control.currentKey() == 'companies':
-                self.network_mode_control.setCurrentKey('overall')
-                self.network_dashboard.show_notice('至少选择两家公司才能进行多公司对比')
+            enough = self._can_compare_companies()
+            self.analysis_mode_control.setItemEnabled('companies', enough)
             self.network_mode_control.setItemEnabled('companies', enough)
         self._update_compact_filter_summary()
 
@@ -979,6 +999,7 @@ class StatisticsPage(QWidget):
         self.network_snapshot = None
         self.city_snapshot = None
         self.companies, self.session_key, self._short_ids = [], '', {}
+        self._network_lines = None
         self._company_palette = {}
         self._range_window = None
         self.network_dashboard.set_company_palette({})
@@ -1023,8 +1044,17 @@ class StatisticsPage(QWidget):
         self.snapshot_changed.emit(None)
 
     def set_session(self, data):
+        # Loading clears the old archive, but valid multi-company preferences survive replacement.
+        analysis_mode, network_mode = self.analysis_mode, self.network_options.mode
         self.clear_session()
-        self.companies = list(data.get('companies', []))
+        valid = {}
+        for company in data.get('companies', []):
+            identity = company.get('公司标识')
+            if identity is not None and str(identity).strip():
+                valid.setdefault(str(identity), dict(company, 公司标识=str(identity)))
+        self.companies = list(valid.values())
+        self._network_lines = (tuple(dict(line) for line in data['lines'])
+                               if 'lines' in data else None)
         self._short_ids = {str(c['公司标识']): str(index + 1)
                            for index, c in enumerate(sorted(self.companies,
                                                              key=lambda item: str(item['公司标识'])))}
@@ -1046,6 +1076,9 @@ class StatisticsPage(QWidget):
             action.toggled.connect(self.schedule_query)
             self.company_menu.addAction(action)
         self._refresh_company_tags()
+        if self._can_compare_companies():
+            self.analysis_mode_control.setCurrentKey(analysis_mode)
+            self.network_mode_control.setCurrentKey(network_mode)
         self._refresh_range_summary()
         self.schedule_query()
 
@@ -1078,7 +1111,7 @@ class StatisticsPage(QWidget):
         filters = FilterState(companies=self.selected_companies(), start=start, end=end,
             grain=self.grain_combo.currentData(), comparison=comparison)
         worker = DashboardTask(self.token, self.store, filters, self.thresholds, self,
-                               self._effective_network_options(), self._names())
+                               self._effective_network_options(), self._names(), self._network_lines)
         worker.ready.connect(self._receive)
         worker.failed.connect(self._failed)
         worker.finished.connect(lambda w=worker: self._worker_finished(w))

@@ -15,6 +15,8 @@ CimStats 是 Python 3.12、PySide6 与 PySide6-Fluent-Widgets 桌面应用。保
 - [statistics_page.py](../../frontend/statistics_page.py)协调筛选、模式与快照；[company_dashboard.py](../../frontend/company_dashboard.py)、[network_dashboard.py](../../frontend/network_dashboard.py)、[city_dashboard.py](../../frontend/city_dashboard.py)负责呈现，不重算另一套分母。
 - [chart_canvas.py](../../frontend/chart_canvas.py)是共享绘图入口；[stats_charts.py](../../frontend/stats_charts.py)、[network_charts.py](../../frontend/network_charts.py)、[chart_details.py](../../frontend/chart_details.py)提供图卡、身份图例与放大详情。不得把已替换的 QtCharts 或外部 Pro 控件写成依赖。
 - 导出读取展示所用查询快照；分类显隐、悬停和放大不改变业务值。过期异步任务不得覆盖最新快照。
+- 静态 PNG 渲染完整快照时暂时禁用透明效果，避免永久／过渡透明宿主使图形缺失或淡化；完成或失败后恢复原启用状态，不修改界面动效策略。
+- 统计页面将存档当前规范化线路的副本随网络模型任务传递；模型仅对所选公司的理论最大需求求和，并在快照中记录当前值上下文。需求摘要与历史平均车辆图分开取值，当前需求不构造历史比较，导出直接读取该快照。
 
 ## 共享界面与布局
 
@@ -24,6 +26,7 @@ CimStats 是 Python 3.12、PySide6 与 PySide6-Fluent-Widgets 桌面应用。保
 - [startup_bootstrap.py](../../frontend/startup_bootstrap.py)在[首帧门控](../../frontend/startup_readiness.py)确认主窗口或覆盖客户区的欢迎表面已绘制后关闭 helper 并启动欢迎过渡；不透明子表面可能使 Qt 省略外层窗口绘制事件，门控必须覆盖这一分支。[启动传输](../../frontend/startup_transport.py)继续使用鉴权 loopback、故障回退和子进程回收。解析与图表准备覆盖欢迎层，成功准备后显示页面，失败或取消返回欢迎层。
 - 统计页固定标题／文件操作、子选项卡、筛选；数据区共用一条纵向滚动，不为各公司另设滚动条，不产生整页横向滚动。
 - 默认与同期各公司分组；多公司比较公共图。公司数量不改变模式。公司单栏四个指标图位固定，宽屏双公司对应行对齐，窄屏重排而不丢数据。
+- 分析模式能力依据存档有效公司身份判断，单公司替换时清理失效的多公司模式；勾选数量只决定查询范围。共享画布在每种绘制路径按紧凑／放大身份控制数字数据标签，不能由单系列或足够空间绕过小图禁标签规则。
 - 内容宽度与显示预算由布局控制，不能用固定最大高度裁掉数据。摘要折叠必须释放真实绘图区高度；普通 resize 不重建整个图控件或反复查询。
 
 ## 文件与输出

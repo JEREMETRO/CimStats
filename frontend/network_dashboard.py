@@ -85,7 +85,7 @@ class NetworkValueTile(QFrame):
         self.option_control = None
         self.metric_title = None
         if position == 2:
-            self.metric_title = QLabel('运行车辆', self)
+            self.metric_title = QLabel(value.title if options.vehicle == 'maximum' else '运行车辆', self)
             self.metric_title.setStyleSheet(
                 f'color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}px;')
             heading.addWidget(self.metric_title)
@@ -127,6 +127,11 @@ class NetworkValueTile(QFrame):
         box.addLayout(number_row)
         self.comparison_label = ComparisonLabel(value.comparison, self, tooltip_target=self.number)
         box.addWidget(self.comparison_label)
+        if value.context:
+            context = QLabel(value.context, self)
+            context.setWordWrap(True)
+            context.setStyleSheet(f'color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}px;')
+            box.addWidget(context)
         if value.value is None and value.reason:
             reason = QLabel(value.reason, self)
             reason.setWordWrap(True)
@@ -443,7 +448,7 @@ class NetworkDashboard(QWidget):
                 summary_columns = (6 if columns == 1 and section_width >= 1100 else
                                    3 if section_width >= 550 else 2)
                 self.summary_cards[index].reflow(summary_columns)
-                if summary_columns == 6:
+                if summary_columns == 6 and self.snapshot.options.vehicle != 'maximum':
                     vehicle_title = self.summary_cards[index].tiles[2].metric_title
                     vehicle_title.setText('车辆' if section_width < 1300 else '运行车辆')
                     vehicle_title.setToolTip('运行车辆')
@@ -470,7 +475,7 @@ class NetworkDashboard(QWidget):
                     wide_columns = len(card.tiles)
                     wide_minimum = 1100 if wide_columns == 6 else 1120
                     card.reflow(wide_columns if width >= wide_minimum else 3 if width >= 760 else 2)
-                    if wide_columns == 6:
+                    if wide_columns == 6 and self.snapshot.options.vehicle != 'maximum':
                         vehicle_title = card.tiles[2].metric_title
                         vehicle_title.setText('车辆' if wide_minimum <= width < 1300
                                               else '运行车辆')

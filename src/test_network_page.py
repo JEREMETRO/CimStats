@@ -67,7 +67,7 @@ def test_network_route_uses_real_chart_panels(tmp_path):
     page.close()
 
 
-def test_network_companies_mode_falls_back_when_selection_drops_to_one(tmp_path, monkeypatch):
+def test_network_companies_mode_survives_selection_dropping_to_one(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr('network_dashboard.NetworkDashboard._make_chart_panel',
                         lambda self, parent: FakePanel(parent))
@@ -80,11 +80,11 @@ def test_network_companies_mode_falls_back_when_selection_drops_to_one(tmp_path,
     _wait(app, lambda: page.network_snapshot is not None and
           page.network_snapshot.options.mode == 'companies')
     page.company_menu.actions()[1].setChecked(False)
-    assert page.network_mode_control.currentKey() == 'overall'
-    assert '至少选择两家公司' in page.network_dashboard.notice.text()
+    assert page.network_mode_control.currentKey() == 'companies'
     _wait(app, lambda: page.network_snapshot is not None and
-          page.network_snapshot.options.mode == 'overall')
-    assert len(page.network_dashboard.chart_panels) == 8
+          page.network_snapshot.options.mode == 'companies' and
+          page.network_snapshot.filters.companies == ('a',))
+    assert len(page.network_dashboard.chart_panels) == 9
     page.close()
 
 
@@ -104,7 +104,8 @@ def test_summary_basis_change_rebuilds_model_without_requerying_history(tmp_path
     assert page.snapshot is source
     assert len(page.network_dashboard.chart_panels) == 7
     assert page.network_snapshot.summaries[0].values[2].value is None
-    assert page.network_snapshot.summaries[0].values[2].reason == '暂无最大值数据'
+    assert page.network_snapshot.summaries[0].values[2].reason == '车辆需求数据不完整'
+    assert next(c for c in page.network_snapshot.charts if c.key == 'vehicles-running').result is not None
     page.close()
 
 

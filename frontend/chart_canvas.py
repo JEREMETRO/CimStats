@@ -409,7 +409,7 @@ class ChartCanvas(QWidget):
         else:
             labels = self._paint_lines(painter, highlight)
         painter.restore()
-        if self.show_values or (data.kind == 'bar' and len(self.visible_series()) == 1 and last - first <= 12):
+        if self.detailed and self.show_values:
             self._paint_value_labels(painter, labels)
         if self._hover is not None:
             self._paint_slot_tooltip(painter, self._hover)
@@ -769,7 +769,7 @@ class ChartCanvas(QWidget):
                                                box.center().y()), 3., 3.)
                 else:
                     painter.fillPath(_bar_path(box), _bar_brush(color, box, horizontal=True))
-                if bands == 1 or self.show_values or bar >= 11:
+                if self.detailed and self.show_values:
                     painter.setFont(value_font)
                     painter.setPen(QColor(tokens.TEXT_SECONDARY))
                     text = format_value(value)
@@ -836,7 +836,7 @@ class ChartCanvas(QWidget):
             painter.setPen(QPen(QColor(tokens.CARD_BG), 1.5))
             painter.setBrush(part['color'])
             painter.drawPath(path)
-        if data.center_text:
+        if self.detailed and data.center_text:
             font = QFont(self._strong)
             font.setPixelSize(max(12, min(22, int(inner * .42))))
             painter.setFont(font)
@@ -864,21 +864,22 @@ class ChartCanvas(QWidget):
             painter.drawRoundedRect(QRectF(x, y + line / 2 - 4, 8, 8), 2, 2)
             percent = f"{part['percent']:.1f}%"
             value_text = f"{format_value(round(part['value'], 2))}"
-            right_width = metrics.horizontalAdvance(percent) + 8
-            value_space = metrics.horizontalAdvance(value_text) + 12
+            right_width = metrics.horizontalAdvance(percent) + 8 if self.detailed else 0
+            value_space = metrics.horizontalAdvance(value_text) + 12 if self.detailed else 0
             painter.setPen(QColor(tokens.TEXT_DISABLED if hidden else tokens.TEXT_PRIMARY))
             painter.drawText(QRectF(x + 14, y, column_width - 14 - right_width - value_space, line),
                              Qt.AlignmentFlag.AlignVCenter,
                              metrics.elidedText(part['name'], Qt.TextElideMode.ElideRight,
                                                 column_width - 14 - right_width - value_space))
-            painter.setPen(QColor(tokens.TEXT_SECONDARY))
-            painter.drawText(QRectF(x, y, column_width - right_width - 4, line),
-                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, value_text)
-            painter.setFont(self._strong)
-            painter.setPen(QColor(tokens.TEXT_DISABLED if hidden else tokens.TEXT_PRIMARY))
-            painter.drawText(QRectF(x, y, column_width - 4, line),
-                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, percent)
-            painter.setFont(self._font)
+            if self.detailed:
+                painter.setPen(QColor(tokens.TEXT_SECONDARY))
+                painter.drawText(QRectF(x, y, column_width - right_width - 4, line),
+                                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, value_text)
+                painter.setFont(self._strong)
+                painter.setPen(QColor(tokens.TEXT_DISABLED if hidden else tokens.TEXT_PRIMARY))
+                painter.drawText(QRectF(x, y, column_width - 4, line),
+                                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, percent)
+                painter.setFont(self._font)
             part['legend'] = QRectF(x, y, column_width, line)
         hovered = next((part for part in self._slices if part['key'] == self._hover_slice), None)
         if hovered is not None:

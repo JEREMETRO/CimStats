@@ -349,7 +349,7 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
             "单程时间": round(duration, 2) if duration else "",
             "地图里程": round(map_km, 6), "折算里程": round(converted_km, 6),
             "核定速度": round(map_km / duration * 60, 2) if duration else "", "站点数": integer(raw.get("站点数")),
-            "理论最大车辆需求数": integer(raw.get("最大配车数")), "累计客流": integer(raw.get("客流_累计")),
+            "理论最大车辆需求数": optional_integer(raw.get("最大配车数")), "累计客流": integer(raw.get("客流_累计")),
             "今日客流": integer(raw.get("客流_今日")), "当前配车数": integer(raw.get("配车数")),
             "每周收入": round(integer(raw.get("收入_累计")) / LINE_MONEY_SCALE, 2),
             "每周支出": round(integer(raw.get("支出_累计")) / LINE_MONEY_SCALE, 2),

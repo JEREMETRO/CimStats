@@ -401,7 +401,7 @@ def test_scope_signal_capture_preserves_source_scope_and_independent_intent_thro
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
-def test_combined_structure_ring_carries_total_with_complete_absolute_and_percent_list(page, qt_application, panel_name):
+def test_combined_structure_ring_retains_values_without_permanent_numeric_labels(page, qt_application, panel_name):
     page.set_session(session())
     page.set_snapshot(snapshot())
     qt_application.processEvents()
@@ -409,6 +409,8 @@ def test_combined_structure_ring_carries_total_with_complete_absolute_and_percen
     assert panel.ring.center_total.text() == ('955' if panel_name == 'passengerRanking' else '155')
     assert not hasattr(panel, 'stacked')
     assert all(row.number.text() != '—' and row.share.text().endswith('%') for row in panel.visible_mode_rows())
+    assert panel.ring.center_total.isHidden() and panel.total_label.isHidden()
+    assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_mode_rows())
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
@@ -422,7 +424,7 @@ def test_ranking_has_ten_real_tracks_visible_mode_identity_exact_value_and_key(p
     assert len(rows) == 10 and all(inside(panel, row) for row in rows)
     assert all(row.track.width() >= 80 for row in rows)
     assert all(row.line.mode in row.name.text() for row in rows)
-    assert all(row.number.contentsRect().width() >= row.number.fontMetrics().horizontalAdvance(row.number.text()) for row in rows)
+    assert all(row.number.isHidden() and row.number.text() in row.track.toolTip() for row in rows)
     emitted = []
     page.line_requested.connect(emitted.append)
     rows[0].action.click()
@@ -582,7 +584,7 @@ def test_other_line_count_is_real_and_zero_remainder_has_no_sector():
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
-def test_six_digit_total_remains_visible_in_line_share_ring(page, qt_application, panel_name):
+def test_six_digit_total_stays_in_data_without_line_share_ring_label(page, qt_application, panel_name):
     from latest_info_model import ModeCount
     data = snapshot()
     lines = tuple(replace(line, passengers=82572 if i == 0 else 82568,
@@ -597,10 +599,10 @@ def test_six_digit_total_remains_visible_in_line_share_ring(page, qt_application
     panel = child(page, panel_name)
     panel.share_button.click()
     qt_application.processEvents()
-    assert panel.share_ring.center_total.isVisible()
+    assert panel.share_ring.center_total.isHidden()
     value = panel.share_ring.center_total
     assert value.text() == ('825,684' if panel_name == 'passengerRanking' else '155,000')
-    assert value.contentsRect().width() >= value.fontMetrics().horizontalAdvance(value.text())
+    assert panel.total_label.isHidden()
 
 
 def test_million_total_and_actual_other_count_fit_in_line_share(page, qt_application):
@@ -615,20 +617,18 @@ def test_million_total_and_actual_other_count_fit_in_line_share(page, qt_applica
     page.passengers.share_button.click()
     qt_application.processEvents()
     panel = page.passengers
-    assert panel.share_ring.center_total.isVisible()
+    assert panel.share_ring.center_total.isHidden()
     assert panel.share_ring.center_total.text() == '1,376,429'
-    assert inside(panel.share_ring, panel.share_ring.center_total)
     other = panel.visible_share_rows()[-1]
     assert other.entry.name == '其他线路（63条）' and other.entry.value == 954736
-    assert inside(panel, other) and inside(other, other.number)
+    assert inside(panel, other) and other.number.isHidden() and other.share.isHidden()
     assert other.name.text() == other.entry.name and other.name.isVisible()
     assert other.name.contentsRect().width() >= other.name.fontMetrics().horizontalAdvance('其他线路')
-    assert other.number.contentsRect().width() >= other.number.fontMetrics().horizontalAdvance(other.number.text())
+    assert other.number.text() in other.toolTip()
 
 
 @pytest.mark.parametrize('value', [Decimal('123456789012'), Decimal('123456789012345678901234567')])
-def test_long_finite_totals_have_a_complete_visible_ring_or_card_fallback(page, qt_application, value):
-    from PySide6.QtCore import QRect, Qt
+def test_long_finite_totals_stay_in_data_without_compact_ring_or_header_label(page, qt_application, value):
     from latest_info_model import ModeCount
     from latest_info_charts import shown
     data = snapshot()
@@ -643,12 +643,6 @@ def test_long_finite_totals_have_a_complete_visible_ring_or_card_fallback(page, 
         if view == 'ranking':
             continue
         ring = panel.ring if view == 'structure' else panel.share_ring
-        assert (ring.center_total.isVisible() and ring.center_total.text() == shown(value)) or (
-            panel.total_label.isVisible() and panel.total_label.text() == f'{shown(value)} 人次')
-        visible = ring.center_total if ring.center_total.isVisible() else panel.total_label
-        assert inside(panel, visible)
-        assert visible.font().pixelSize() >= 18
-        text_bounds = visible.fontMetrics().boundingRect(QRect(0, 0, visible.contentsRect().width(), 10000),
-                                                         Qt.TextFlag.TextWordWrap, visible.text())
-        assert text_bounds.width() <= visible.contentsRect().width()
-        assert text_bounds.height() <= visible.contentsRect().height()
+        assert ring.total == value and ring.center_total.text() == shown(value)
+        assert ring.center_total.isHidden() and panel.total_label.isHidden()
+        assert all(row.number.isHidden() for row in panel.visible_mode_rows() + panel.visible_share_rows())

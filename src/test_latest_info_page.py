@@ -553,7 +553,7 @@ def test_top10_and_all_modes_are_visible(page, qt_application):
     assert '21.9%' in label_texts(child(modes, 'mode-row-0'))
 
 
-def test_ranking_values_and_mode_percentages_fit_their_visible_rows(page, qt_application):
+def test_ranking_values_and_mode_percentages_are_hover_values_without_labels(page, qt_application):
     from PySide6.QtWidgets import QLabel
     data = snapshot()
     page.set_session(session())
@@ -563,18 +563,16 @@ def test_ranking_values_and_mode_percentages_fit_their_visible_rows(page, qt_app
     for i, line in enumerate(data.passenger_top10):
         row = child(page, f'ranking-row-{i}')
         value = row.number
-        assert inside(row, value), (i, value.geometry(), row.size())
-        assert value.contentsRect().width() >= value.fontMetrics().horizontalAdvance(value.text())
+        assert value.isHidden() and value.text() in row.track.toolTip()
     for i, entry in enumerate(data.departure_modes):
         row = child(page, f'mode-row-{i}')
         for value in row.findChildren(QLabel):
             if value.text() in (f'{entry.value} 班', f'{Decimal(entry.value) / 155 * 100:.1f}%'):
-                assert inside(row, value), (entry.mode, value.text(), value.geometry(), row.size())
-                assert value.contentsRect().width() >= value.fontMetrics().horizontalAdvance(value.text())
+                assert value.isHidden() and value.text() in row.toolTip()
     assert all(row.height() >= row.name.fontMetrics().height() for row in page.passengers.visible_ranking_rows())
 
 
-def test_large_departure_total_stays_clear_of_donut_without_smaller_font(page, qt_application):
+def test_large_departure_total_is_preserved_without_compact_donut_label(page, qt_application):
     data = snapshot()
     large = replace(data,
                     departure_modes=tuple(replace(item, value=item.value * 1000) for item in data.departure_modes),
@@ -584,9 +582,9 @@ def test_large_departure_total_stays_clear_of_donut_without_smaller_font(page, q
     page.set_snapshot(large)
     qt_application.processEvents()
     total = page.departures.ring.center_total
-    assert total.isVisible() and total.text() == '155,000' and total.font().pixelSize() == 21
+    assert total.isHidden() and total.text() == '155,000'
     assert page.departures.ring.center_caption.text() == '班'
-    assert total.contentsRect().width() >= total.fontMetrics().horizontalAdvance(total.text())
+    assert page.departures.total_label.isHidden()
 
 
 def test_departure_donut_is_left_of_complete_six_mode_list(page, qt_application):

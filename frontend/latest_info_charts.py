@@ -362,6 +362,8 @@ class RankingRow(QFrame):
         row.addWidget(self.track, 1)
         row.addWidget(self.number)
         row.addWidget(self.action)
+        self.number.hide()
+        self.track.setToolTip(self.number.toolTip())
         self.setAccessibleName(f'第{position + 1}名 {line.mode} {display_name} {shown(value)} {unit}')
 
 
@@ -400,17 +402,9 @@ class ModeRing(QWidget):
     def _position_center(self):
         center, radius = self.geometry_for_hit()
         width = int(radius * self.inner_ratio * 2)
-        metrics = self.center_total.fontMetrics()
-        wrapped = metrics.horizontalAdvance(self.center_total.text()) > width
-        text_bounds = metrics.boundingRect(QRect(0, 0, width, 10000), Qt.TextFlag.TextWordWrap, self.center_total.text())
-        height = text_bounds.height() if wrapped else 28
-        fits = text_bounds.width() <= width and height + 18 <= width
-        self.center_total.setWordWrap(wrapped)
-        top = int(center.y() - (height + 18) / 2) if wrapped else int(center.y() - 21)
-        self.center_total.setGeometry(int(center.x() - width / 2), top, width, height)
-        self.center_caption.setGeometry(int(center.x() - width / 2), top + height, width, 18)
-        self.center_note.setGeometry(int(center.x() - width / 2), top + height + 18, width, 16)
-        self.center_total.setVisible(fits)
+        self.center_caption.setGeometry(int(center.x() - width / 2), int(center.y() - 9), width, 18)
+        self.center_note.setGeometry(int(center.x() - width / 2), int(center.y() + 9), width, 16)
+        self.center_total.hide()
         self.center_total.setAccessibleName(self.center_total.text())
 
     def resizeEvent(self, event):
@@ -525,6 +519,9 @@ class ModeRow(QFrame):
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.share.setFixedWidth(percent_width or self.share.fontMetrics().horizontalAdvance(percent) + 2)
         row.addWidget(self.share)
+        self.number.hide()
+        self.share.hide()
+        self.setToolTip(' · '.join((self.number.toolTip(), self.share.toolTip())))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -578,6 +575,9 @@ class ShareRow(QFrame):
         self.share.setFixedWidth(self.share.fontMetrics().horizontalAdvance(self.share.text()) + 2)
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.share)
+        self.number.hide()
+        self.share.hide()
+        self.setToolTip(' · '.join((self.number.toolTip(), self.share.toolTip())))
         self.setAccessibleName(f'{entry.mode} {entry.name} {shown(entry.value)} {unit} {self.share.text()}')
 
     def mousePressEvent(self, event):
@@ -785,17 +785,12 @@ class StructureAnalysis(CategoryCard):
         self.view_selector.setCurrentKey(view)
         self.view_selector.blockSignals(False)
         ring = self.ring if structure else self.share_ring
-        fallback = view != 'ranking' and ring.center_total.isHidden()
         self.total_label.setText(f'{shown(ring.total)} {self.unit}')
-        width = max(1, self.width() - 16)
-        height = max(26, self.total_label.fontMetrics().boundingRect(QRect(0, 0, width, 10000),
-                         Qt.TextFlag.TextWordWrap, self.total_label.text()).height())
-        self.total_label.setFixedHeight(height)
-        self.total_label.setVisible(fallback)
+        self.total_label.hide()
         content_height = max(232, *(widget.minimumSizeHint().height() for widget in
                                    (self.structure, self.ranking, self.line_share)))
         base_height = self._base_height - 232 + content_height
-        self.setFixedHeight(base_height + height + 4 if fallback else base_height)
+        self.setFixedHeight(base_height)
         self.return_button.setVisible(not structure)
         self.status.hide()
 

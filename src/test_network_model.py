@@ -80,15 +80,17 @@ def test_network_modes_have_fixed_summary_and_chart_contracts():
         assert descriptor.result.comparison_window == PREVIOUS
 
 
-def test_company_mode_falls_back_with_one_selected_and_empty_selection_stays_empty():
+def test_company_mode_uses_archive_capability_and_empty_selection_stays_empty():
     from network_model import NetworkOptions, build_network_snapshot
 
     rows = [history('transport-by-type', company, 0, amount)
             for company, amount in [('a', 10), ('b', 30)]]
     one = build_network_snapshot(dashboard(rows, ('a',)), NetworkOptions(mode='companies'), NAMES)
-    assert one.options.mode == 'overall'
-    assert len(one.summaries) == 1 and len(one.charts) == 8
+    assert one.options.mode == 'companies'
+    assert len(one.summaries) == 1 and len(one.charts) == 9
     assert value(one.summaries[0], 4).value == Decimal(10)
+    single = build_network_snapshot(dashboard(rows, ('a',)), NetworkOptions(mode='companies'), {'a': NAMES['a']})
+    assert single.options.mode == 'overall'
     empty = build_network_snapshot(dashboard(rows, ()), NetworkOptions(), NAMES)
     assert empty.companies == {}
     assert all(item.value is None for item in empty.summaries[0].values)
@@ -392,7 +394,7 @@ def test_vehicle_bar_uses_last_observed_hour_not_interval_average():
     assert descriptor.bar_result.series[('a', 'bus')][0].observed == D(2024, 1, 2, 1)
 
 
-def test_maximum_vehicle_is_unavailable_not_peak_of_hourly_averages():
+def test_missing_current_vehicle_demand_does_not_disable_average_history():
     from network_model import NetworkOptions, build_network_snapshot
 
     rows = [history('vehicles-running', 'a', 0, 2 * 1024),
@@ -400,8 +402,9 @@ def test_maximum_vehicle_is_unavailable_not_peak_of_hourly_averages():
     network = build_network_snapshot(dashboard(rows, ('a',)), NetworkOptions(vehicle='maximum'), NAMES)
     maximum = value(network.summaries[0], 2)
     assert maximum.value is None and maximum.reason
-    assert chart(network, 'vehicles-running').result is None
-    assert chart(network, 'vehicles-running').reason
+    assert chart(network, 'vehicles-running').result is not None
+    assert not chart(network, 'vehicles-running').reason
+    assert [b.value for b in chart(network, 'vehicles-running').result.series[('a', '总计')]] == [2, 9]
 
 
 def test_summary_switches_keep_six_positions_and_separate_flow_metrics():

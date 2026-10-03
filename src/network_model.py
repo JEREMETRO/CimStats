@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from dashboard_model import DashboardResult, FilterState
@@ -17,7 +17,8 @@ BASE_KEYS = ('linecount', 'stopcount', 'coverage', 'vehicles-running',
 SELECTED_KEY = '__selected__'
 NO_HISTORY = '暂无数据'
 NO_COMPANY = '未选择公司'
-NO_MAXIMUM = '暂无最大值数据'
+NO_DEMAND = '车辆需求数据不完整'
+DEMAND_CONTEXT = '存档当前线路需求，非历史峰值'
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class NetworkValue:
     complete: bool = False
     reason: str = ''
     comparison: CardComparison = CardComparison()
+    context: str = ''
 
 
 @dataclass(frozen=True)
@@ -333,8 +335,28 @@ def _numeric_value(metric_id: str, title: str, result: Result) -> NetworkValue:
                         reason=reason if amount is None else ('数据不完整' if not complete else ''))
 
 
+def _vehicle_demand(ids: tuple[str, ...], lines) -> NetworkValue:
+    total = Decimal(0)
+    reason = NO_COMPANY if not ids else NO_DEMAND if lines is None else ''
+    if not reason:
+        for line in lines:
+            if str(line.get('公司标识')) not in ids:
+                continue
+            try:
+                amount = Decimal(str(line.get('理论最大车辆需求数')))
+                if not amount.is_finite() or amount < 0 or amount != amount.to_integral_value():
+                    raise ValueError('invalid demand')
+            except (InvalidOperation, ValueError, TypeError):
+                reason = NO_DEMAND
+                break
+            total += amount
+    return NetworkValue('vehicles-running', '最大车辆需求数', '辆',
+                        None if reason else total, complete=not reason,
+                        reason=reason, comparison=CardComparison(text=''), context=DEMAND_CONTEXT)
+
+
 def _summary(snapshot: DashboardResult, ids: tuple[str, ...],
-             companies: dict[str, str], options: NetworkOptions, cancelled) -> NetworkSummary:
+             companies: dict[str, str], options: NetworkOptions, cancelled, lines=None) -> NetworkSummary:
     _check_cancelled(cancelled)
     def total(metric_id: str) -> Result:
         source = snapshot.results[metric_id]
@@ -342,17 +364,16 @@ def _summary(snapshot: DashboardResult, ids: tuple[str, ...],
             source = _last_day_result(source)
         return _aggregate_result(source, ids, False, cancelled)
 
-    lines = total('linecount')
+    line_count = total('linecount')
     facility = total(options.facility)
     vehicles = total('vehicles-running')
     coverage = total('coverage')
     passengers = total(options.passenger)
     coefficient = total('transfer-coefficient')
     values = [
-        _numeric_value('linecount', lines.metric.label, lines),
+        _numeric_value('linecount', line_count.metric.label, line_count),
         _numeric_value(options.facility, facility.metric.label, facility),
-        (NetworkValue('vehicles-running', '最大运行车辆数', vehicles.metric.unit,
-                      None, reason=NO_MAXIMUM) if options.vehicle == 'maximum'
+        (_vehicle_demand(ids, lines) if options.vehicle == 'maximum'
          else _numeric_value('vehicles-running', vehicles.metric.label, vehicles)),
         (NetworkValue('coverage', coverage.metric.label, coverage.metric.unit,
                       None, reason=NO_HISTORY)
@@ -380,8 +401,6 @@ def _chart_result(snapshot: DashboardResult, key: str, ids: tuple[str, ...],
                   options: NetworkOptions, cancelled) -> tuple[Result | None, str]:
     if not ids:
         return None, NO_COMPANY
-    if key == 'vehicles-running' and options.vehicle == 'maximum':
-        return None, NO_MAXIMUM
     source = (snapshot.results['transport-by-type'] if key == 'company-passengers'
               else snapshot.results[key] if key in ('linecount', 'vehicles-running',
                                                    'coverage', 'transfer-coefficient')
@@ -421,7 +440,7 @@ def _chart_result(snapshot: DashboardResult, key: str, ids: tuple[str, ...],
 
 
 def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
-                           companies: dict[str, str], cancelled=None) -> NetworkSnapshot:
+                           companies: dict[str, str], cancelled=None, *, lines=None) -> NetworkSnapshot:
     """Build network summaries and chart descriptors from the same dashboard query."""
     _check_cancelled(cancelled)
     if options.mode not in ('overall', 'companies', 'period'):
@@ -433,12 +452,12 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
     if options.passenger not in ('transport-by-type', 'trip-types'):
         raise ValueError(options.passenger)
     ids = tuple(dict.fromkeys(snapshot.filters.companies))
-    if options.mode == 'companies' and len(ids) < 2:
+    if options.mode == 'companies' and len(companies) < 2:
         options = replace(options, mode='overall')
     hide_joint_coverage = options.mode == 'overall' and len(ids) > 1
     names = {company: companies.get(company, company) for company in ids}
     summary_ids = (tuple([company]) for company in ids) if options.mode != 'overall' else (ids,)
-    summaries = tuple(_summary(snapshot, selected, names, options, cancelled)
+    summaries = tuple(_summary(snapshot, selected, names, options, cancelled, lines)
                       for selected in summary_ids)
     if options.mode == 'companies':
         enriched = []
@@ -447,8 +466,10 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
             for value in summary.values:
                 amounts = {item.company_id: next(v.value for v in item.values if v.metric_id == value.metric_id)
                            for item in summaries}
+                window = (None if options.vehicle == 'maximum' and value.metric_id == 'vehicles-running'
+                          else (snapshot.filters.start, snapshot.filters.end))
                 comparison = peer_comparisons(amounts, names, value.unit,
-                    (snapshot.filters.start, snapshot.filters.end))[summary.company_id]
+                    window)[summary.company_id]
                 values.append(replace(value, comparison=comparison))
             enriched.append(replace(summary, values=tuple(values)))
         summaries = tuple(enriched)
@@ -469,6 +490,9 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                 before = _summary(baseline_snapshot, selected, names, options, cancelled)
                 values = []
                 for value, previous in zip(summary.values, before.values):
+                    if options.vehicle == 'maximum' and value.metric_id == 'vehicles-running':
+                        values.append(value)
+                        continue
                     comparison = change(value.value, previous.value, value.unit,
                         '较同比区间' if period else baseline_label(snapshot.filters.start, snapshot.filters.end),
                         current_window=(snapshot.filters.start, snapshot.filters.end),
@@ -494,7 +518,6 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                           result is not None else None)
             title = ('分公司客流' if key == 'company-passengers' else
                      '分区出行量' if key == 'trip-types' else
-                     '最大运行车辆数' if key == 'vehicles-running' and options.vehicle == 'maximum' else
                      snapshot.results[key].metric.label)
             charts.append(NetworkChart(key, title,
                                        selected[0] if options.mode == 'period' else None,

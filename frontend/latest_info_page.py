@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path, PureWindowsPath
 import sys
 
-from PySide6.QtCore import Qt, QRect, QRectF, Signal
+from PySide6.QtCore import QEvent, Qt, QRect, QRectF, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
@@ -226,13 +226,13 @@ class HighlightCard(QFrame):
     def __init__(self, index):
         super().__init__()
         self.setObjectName(f'highlight-{index}')
+        self.setProperty('keyboardFocus', False)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         color = EXTREME_ROLE_COLORS[index % 2]
         self.setStyleSheet(f'QFrame#highlight-{index} {{background:{tokens.CARD_BG};border:1px solid '
                           f'{tokens.BORDER};border-radius:{tokens.RADIUS_KPI}px;}} '
-                          f'QFrame#highlight-{index}:hover {{border-color:{color};}} '
-                          f'QFrame#highlight-{index}:focus {{border-color:{tokens.FOCUS_RING};}}')
+                          f'QFrame#highlight-{index}[keyboardFocus="true"] {{border-color:{tokens.FOCUS_RING};}}')
         self.marker = QFrame(self)
         self.marker.setObjectName(f'highlight-marker-{index}')
         self.marker.setProperty('extremeColor', color)
@@ -306,6 +306,16 @@ class HighlightCard(QFrame):
         self.prepare_header(224)
         self.set_line(None)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def event(self, event):
+        if event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut, QEvent.Type.MouseButtonPress):
+            keyboard = (event.type() == QEvent.Type.FocusIn and event.reason() in (
+                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
+                Qt.FocusReason.ShortcutFocusReason))
+            self.setProperty('keyboardFocus', keyboard)
+            self.style().unpolish(self)
+            self.style().polish(self)
+        return super().event(event)
 
     def set_line(self, line):
         self._line_key = line.key if line else None

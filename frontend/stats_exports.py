@@ -6,7 +6,8 @@ from pathlib import Path
 from openpyxl import Workbook
 from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QPixmap, QRegion
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
+from shiboken6 import isValid
 
 from display_rules import store_text_literally
 from statistics_model import BOARDS, summarize_buckets
@@ -75,7 +76,7 @@ def export_xlsx(snapshot, path, companies, network_snapshot=None, *, company_mod
         network = workbook.create_sheet('网络摘要')
         network.append(['分析模式', '范围开始', '范围结束', '对比开始', '对比结束',
                         '公司标识', '公司', '指标', '值', '单位',
-                        '完整', '不可用原因', '分类', '分类值', '比较摘要', '比较详情'])
+                        '完整', '不可用原因', '分类', '分类值', '比较摘要', '比较详情', '数据时点'])
         filters = network_snapshot.filters
         comparison = filters.comparison or (None, None)
         for summary in network_snapshot.summaries:
@@ -90,9 +91,9 @@ def export_xlsx(snapshot, path, companies, network_snapshot=None, *, company_mod
                         value.complete, value.reason]
                 if value.details:
                     for category, amount in value.details:
-                        network.append(base + [category, _number(amount), value.comparison.text, value.comparison.tooltip])
+                        network.append(base + [category, _number(amount), value.comparison.text, value.comparison.tooltip, value.context])
                 else:
-                    network.append(base + [None, None, value.comparison.text, value.comparison.tooltip])
+                    network.append(base + [None, None, value.comparison.text, value.comparison.tooltip, value.context])
         network.freeze_panes = 'A2'
         network.auto_filter.ref = network.dimensions
     if company_mode is not None:
@@ -160,11 +161,17 @@ def export_city_xlsx(snapshot, path, state):
 def export_png(board_host: QWidget, path):
     """Render the entire board container, including content outside its viewport."""
     old_size = board_host.size()
+    # Static exports contain the full snapshot, including surfaces currently fading.
+    effects = [widget.graphicsEffect() for widget in (board_host, *board_host.findChildren(QWidget))
+               if isinstance(widget.graphicsEffect(), QGraphicsOpacityEffect)]
+    states = [(effect, effect.isEnabled()) for effect in effects]
     layout = board_host.layout()
     if layout is not None:
         layout.activate()
     target = old_size.expandedTo(board_host.sizeHint()).expandedTo(board_host.minimumSizeHint())
     try:
+        for effect, _ in states:
+            effect.setEnabled(False)
         board_host.resize(target)
         if layout is not None:
             layout.activate()
@@ -175,4 +182,7 @@ def export_png(board_host: QWidget, path):
         if not image.save(str(path), 'PNG'):
             raise OSError(path)
     finally:
+        for effect, enabled in states:
+            if isValid(effect):
+                effect.setEnabled(enabled)
         board_host.resize(old_size)
