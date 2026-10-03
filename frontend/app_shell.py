@@ -87,8 +87,13 @@ class AppHeader(QWidget):
         super().__init__(parent)
         self.setObjectName('appHeader')
         self.setFixedHeight(HEADER_HEIGHT)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(PAGE_GUTTER, 12, PAGE_GUTTER, 8)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(PAGE_GUTTER, 12, PAGE_GUTTER, 8)
+        self._layout.setSpacing(6)
+        row = QHBoxLayout()
+        self._row = row
+        self._layout.addLayout(row)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(12)
         self.icon_base = QFrame(self)
         self.icon_base.setObjectName('pageIconBase')
@@ -106,9 +111,11 @@ class AppHeader(QWidget):
         self.title.setStyleSheet(emphasis_css(22) + f'color: {tokens.TEXT_PRIMARY}; background: transparent;')
         apply_emphasis_font(self.title, 22)
         row.addWidget(self.title)
-        self.page_slot = QHBoxLayout()
+        self.page_slot_host = QWidget(self)
+        self.page_slot_host.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self.page_slot = QHBoxLayout(self.page_slot_host)
         self.page_slot.setContentsMargins(12, 0, 0, 0)
-        row.addLayout(self.page_slot)
+        row.addWidget(self.page_slot_host)
         row.addStretch(1)
         self.save_chip = SaveChip(self)
         row.addWidget(self.save_chip, 0)
@@ -126,6 +133,7 @@ class AppHeader(QWidget):
         self.open_button.clicked.connect(self.open_requested.emit)
         row.addWidget(self.open_button)
         self._page_widget = None
+        self._stacked_tabs = False
         self.about_to_show_exports = None
 
     def set_page(self, title: str, icon: FluentIcon, widget: QWidget | None = None):
@@ -136,10 +144,39 @@ class AppHeader(QWidget):
             self._page_widget.hide()
         self._page_widget = widget
         if widget is not None:
-            if widget.parentWidget() is not self:
-                widget.setParent(self)
+            if widget.parentWidget() is not self.page_slot_host:
+                widget.setParent(self.page_slot_host)
             self.page_slot.addWidget(widget)
             widget.show()
+        self.page_slot_host.setVisible(widget is not None)
+        self._reflow()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self):
+        if not hasattr(self, '_page_widget'):
+            return
+        margins = self._layout.contentsMargins()
+        required = (self.icon_base.width() + self.title.sizeHint().width() +
+                    self.save_chip.minimumWidth() + self.export_button.sizeHint().width() +
+                    max(self.open_button.minimumWidth(), self.open_button.sizeHint().width()) +
+                    self.page_slot_host.sizeHint().width() - self.page_slot.contentsMargins().left() +
+                    12 + self._row.spacing() * 6 +
+                    margins.left() + margins.right())
+        stacked = self._page_widget is not None and required > self.width()
+        if stacked != self._stacked_tabs:
+            self._row.removeWidget(self.page_slot_host)
+            self._layout.removeWidget(self.page_slot_host)
+            if stacked:
+                self.page_slot.setContentsMargins(0, 0, 0, 0)
+                self._layout.addWidget(self.page_slot_host, 0, Qt.AlignmentFlag.AlignLeft)
+            else:
+                self.page_slot.setContentsMargins(12, 0, 0, 0)
+                self._row.insertWidget(2, self.page_slot_host)
+            self._stacked_tabs = stacked
+        self.setFixedHeight(HEADER_HEIGHT + 42 if stacked else HEADER_HEIGHT)
 
     def set_exports(self, items):
         """``items``: iterable of (key, text, icon, enabled). Separators: key None."""

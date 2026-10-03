@@ -17,6 +17,13 @@ import stats_tokens as tokens
 import stats_motion as motion_policy
 
 MODE_NAMES = {'line': '趋势', 'trend-bar': '趋势', 'bar': '分布', 'pie': '比例'}
+_COMPACT_CATEGORY_NAMES = {
+    'bus': '公交', 'tram': '有轨', 'trolley': '无轨', 'metro': '地铁', 'waterbus': '水上', 'misc': '其他',
+    'BlueCollar': '蓝领', 'WhiteCollar': '白领', 'BusinessPeople': '商务',
+    'Pensioner': '退休', 'Student': '学生', 'Tourist': '游客',
+    'single-line': '单线', 'one-zone': '一区', 'two-zones': '二区',
+    'three-zones': '三区', 'four-zones': '四区',
+}
 
 
 def network_display_group(mode, company, previous, companies, metric):
@@ -41,6 +48,7 @@ class NetworkChartPanel(ChartPanel):
         self.snapshot = None
         self._hidden_categories: set = set()
         self._legend_keys: list = []
+        self.company_legend_entries = []
         self._external_mode_control = None
         super().__init__('', parent=parent)
         self._hidden_groups = self._hidden_categories
@@ -100,6 +108,18 @@ class NetworkChartPanel(ChartPanel):
         self._hidden_categories.clear()
         self._render()
 
+    def set_compact_height(self, height):
+        changed = self._compact_height != height
+        super().set_compact_height(height)
+        if changed:
+            self._render()
+
+    def clear_compact_height(self):
+        changed = self._compact_height is not None
+        super().clear_compact_height()
+        if changed:
+            self._render()
+
     # ------------------------------------------------------------- render
     def _render(self):
         if not hasattr(self, 'chart_layout') or not hasattr(self, '_hidden_categories'):
@@ -109,6 +129,8 @@ class NetworkChartPanel(ChartPanel):
         self._combined_totals = False
         self.legend_host.clear()
         self.legend_buttons = {}
+        self.company_legend_entries = []
+        self.series_legend_entries = []
         self.legend_host.hide()
         self.period_label.hide()
         descriptor = self.descriptor
@@ -118,6 +140,8 @@ class NetworkChartPanel(ChartPanel):
             self.result = getattr(descriptor, 'bar_result', None)
         else:
             self.result = descriptor.result
+        if self._detailed:
+            self.detail_summary.refresh()
         reason = '暂无可用数据' if descriptor is None else (descriptor.reason or
                                                          ('' if self.result is not None else '暂无可用数据'))
         sources = self._sources() if not reason else []
@@ -134,7 +158,12 @@ class NetworkChartPanel(ChartPanel):
         specs = builder(sources)
         self._place_specs(specs)
         self._build_network_legend()
-        self._fill_values_table(specs)
+        self._build_company_legend(sources)
+        self._build_comparison_legend()
+        for entry in self.series_legend_entries:
+            if entry['key'] in ('current', 'comparison') and entry['key'] in self._legend_keys:
+                self._configure_legend_toggle(entry['key'], entry['widget'])
+        self.legend_host.setVisible(bool(self.legend_buttons or self.series_legend_entries or self._group_legend))
 
     # ------------------------------------------------------------ sources
     def _sources(self):
@@ -177,6 +206,23 @@ class NetworkChartPanel(ChartPanel):
         return (self._category_color(category) if len(categories) > 1 else
                 QColor(tokens.DATA_COMPANY_COLORS[0]) if company == '__selected__' else
                 self._company_color(company))
+
+    def _bar_color(self, company, category, categories):
+        color = self._color(company, category, categories)
+        owners = sorted(self._company_palette or self.companies or self.result.query.companies)
+        if len(categories) <= 1 or company not in owners:
+            return color
+        index = owners.index(company)
+        fraction, place, remainder = 0., .5, index
+        while remainder:
+            fraction += (remainder % 2) * place
+            remainder //= 2
+            place /= 2
+        factor = .76 * fraction * (1 if index % 2 else -1)
+        target = 1. if factor >= 0 else 0.
+        channels = [value + (target - value) * abs(factor)
+                    for value in (color.redF(), color.greenF(), color.blueF())]
+        return QColor.fromRgbF(*channels, color.alphaF())
 
     def _group_name(self, group):
         if isinstance(group, tuple):
@@ -229,6 +275,11 @@ class NetworkChartPanel(ChartPanel):
             return self._company_color(company) if company else QColor(tokens.DATA_COMPANY_COLORS[0])
         if key in self.companies:
             return self._company_color(key)
+        categories = self._category_ids(self._sources())
+        if len(categories) > 1 and key in categories and self.mode in ('bar', 'trend-bar'):
+            owners = list(dict.fromkeys(part[1] for part in self._sources()))
+            if len(owners) == 1:
+                return self._bar_color(owners[0], key, categories)
         return self._category_color(key)
 
     def _key_name(self, key):
@@ -271,7 +322,8 @@ class NetworkChartPanel(ChartPanel):
             name = group_label(category) if len(categories) > 1 else self._group_name(group)
             if len(categories) > 1 and len(groups) > 1:
                 name = f'{self._group_name(group)} · {group_label(category)}'
-            series.append(Series(key=key, name=name, color=self._color(company, category, categories),
+            color = self._bar_color(company, category, categories) if stacked else self._color(company, category, categories)
+            series.append(Series(key=key, name=name, color=color,
                                  values=values, notes=notes, stack=str(group), faded=previous,
                                  dashed=(not stacked) and (previous or (len(categories) > 1 and groups.index(group) > 0))))
         self._legend_keys = categories if len(categories) > 1 else (
@@ -291,23 +343,23 @@ class NetworkChartPanel(ChartPanel):
     def _horizontal_bars(self, sources):
         categories = self._category_ids(sources)
         groups = self._group_ids(sources)
-        visible = [category for category in categories if category not in self._hidden_categories] or categories
+        visible = [category for category in categories if category not in self._hidden_categories]
         endpoints = {(group, category): self._endpoint_bucket(buckets, previous)
                      for group, _, category, buckets, previous in sources}
         series = []
         for group in groups:
             previous = group[1] if isinstance(group, tuple) else group == 'comparison'
             company = next((part[1] for part in sources if part[0] == group), group)
-            colors = ([self._category_color(category) for category in visible] if len(groups) == 1 else
-                      [self._legend_key_color(group)] * len(visible))
+            colors = [self._bar_color(company, category, categories) for category in visible]
             buckets = [endpoints.get((group, category)) for category in visible]
-            series.append(Series(key=str(group), name=self._group_name(group), color=colors[0], colors=colors,
+            series.append(Series(key=str(group), name=self._group_name(group),
+                                 color=colors[0] if colors else self._legend_key_color(group), colors=colors,
                                  values=[bucket.value if bucket is not None else None for bucket in buckets],
                                  notes=[self._status_note(bucket, previous) if bucket is not None else ''
                                         for bucket in buckets],
                                  faded=previous and len(groups) > 1 and self.snapshot.options.mode == 'period'))
-        self._legend_keys = categories if len(groups) == 1 else []
-        self._group_legend = groups if len(groups) > 1 else []
+        self._legend_keys = categories if len(categories) > 1 or len(groups) == 1 else []
+        self._group_legend = groups if len(categories) <= 1 and len(groups) > 1 else []
         return [('', ChartData(kind='hbar', labels=[group_label(category) for category in visible],
                                series=series, unit=self.result.metric.unit))]
 
@@ -339,28 +391,55 @@ class NetworkChartPanel(ChartPanel):
             specs.append((caption, ChartData(
                 kind='donut', labels=labels, unit=self.result.metric.unit,
                 series=[Series(key='share', name=caption or self.title_label.text(), color=QColor(tokens.ACCENT),
-                               keys=keys, values=values, colors=colors)],
+                               keys=keys, values=values, colors=colors,
+                               faded=any(part[4] for part in selected))],
                 center_text=_number(total) if values else '', center_caption=self.result.metric.unit)))
         self._legend_keys = []
         return specs
 
     def _build_network_legend(self):
-        self._group_legend = getattr(self, '_group_legend', []) if self.mode == 'bar' else []
+        self._group_legend = (getattr(self, '_group_legend', [])
+                              if self.mode == 'bar' and self.snapshot.options.mode != 'period' else [])
         keys = list(dict.fromkeys(self._legend_keys))
         if len(keys) > 1:
             for key in keys:
-                chip = LegendChip(self._key_name(key), self._legend_key_color(key), self.legend_host)
-                chip.setChecked(key not in self._hidden_categories)
-                chip.clicked.connect(lambda checked=False, k=key: self._toggle_category(k))
-                self.legend_host.flow.addWidget(chip)
-                self.legend_buttons[key] = chip
+                if self.snapshot.options.mode == 'period' and key in ('current', 'comparison'):
+                    continue
+                name = self._key_name(key)
+                compact = self._compact_height is not None and len(keys) >= 4 and key in _COMPACT_CATEGORY_NAMES
+                if key in self.companies or isinstance(key, tuple):
+                    chip = self._add_series_legend(key, name, [self._legend_key_color(key)])['widget']
+                else:
+                    chip = LegendChip(_COMPACT_CATEGORY_NAMES[key] if compact else name,
+                                      self._legend_key_color(key), self.legend_host, compact=compact)
+                    self.legend_host.flow.addWidget(chip)
+                chip.setToolTip(name)
+                chip.setAccessibleName(name)
+                self._configure_legend_toggle(key, chip)
         for group in self._group_legend:
-            chip = LegendChip(self._group_name(group), self._legend_key_color(group), self.legend_host)
-            chip.setEnabled(False)
-            self.legend_host.flow.addWidget(chip)
+            self._add_series_legend(group, self._group_name(group), [self._legend_key_color(group)])
         if self.legend_buttons or self._group_legend:
             self.legend_host.show()
             self.legend_host.updateGeometry()
+
+    def _build_company_legend(self, sources):
+        self.company_legend_entries = []
+        categories = self._category_ids(sources)
+        owners = list(dict.fromkeys(part[1] for part in sources))
+        if (self.snapshot.options.mode == 'period' or self.mode not in ('bar', 'trend-bar')
+                or len(categories) <= 1 or len(owners) <= 1):
+            return
+        for company in owners:
+            colors = {category: self._bar_color(company, category, categories) for category in categories}
+            entry = self._add_series_legend(company, self._display_company(company), list(colors.values()))
+            self.company_legend_entries.append(dict(company=company, colors=colors, widget=entry['widget']))
+        self.legend_host.show()
+        self.legend_host.updateGeometry()
+
+    def _comparison_name(self):
+        if self.snapshot is None:
+            return super()._comparison_name()
+        return self.snapshot.options.comparison_label
 
     def _toggle_category(self, group):
         if group in self._hidden_categories:

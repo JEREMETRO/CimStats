@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath
 from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QLayout, QSizePolicy,
                                QVBoxLayout, QWidget)
 
@@ -86,25 +86,29 @@ class FlowLayout(QLayout):
 class LegendChip(QAbstractButton):
     """Checkable colour key; unchecked hides the series without recomputing."""
 
-    def __init__(self, text: str, color: QColor, parent=None):
+    def __init__(self, text: str, color: QColor, parent=None, *, compact=False):
         super().__init__(parent)
+        self._compact = compact
         self.setText(text)
         self._color = QColor(color)
         self.setCheckable(True)
         self.setChecked(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         font = QFont(tokens.FONT_FAMILY)
-        font.setPixelSize(tokens.FONT_SIZE_CAPTION)
+        font.setPixelSize(11 if compact else tokens.FONT_SIZE_CAPTION)
         self.setFont(font)
         self.setAccessibleName(text)
         self.setToolTip(f'{text} · 点击显示/隐藏')
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.ensurePolished()
 
     def set_color(self, color: QColor):
         self._color = QColor(color)
         self.update()
 
     def sizeHint(self):
+        if self._compact:
+            return QSize(43, 18)
         metrics = QFontMetrics(self.font())
         return QSize(min(220, metrics.horizontalAdvance(self.text()) + 26), 22)
 
@@ -118,6 +122,7 @@ class LegendChip(QAbstractButton):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setFont(self.font())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         if self.underMouse() or self.hasFocus():
@@ -129,9 +134,61 @@ class LegendChip(QAbstractButton):
             dot = QColor(tokens.TEXT_DISABLED)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(dot)
-        painter.drawRoundedRect(QRectF(7, rect.center().y() - 4, 8, 8), 2, 2)
+        if self._compact:
+            painter.drawEllipse(QRectF(1, rect.center().y() - 3.5, 7, 7))
+        else:
+            painter.drawRoundedRect(QRectF(7, rect.center().y() - 4, 8, 8), 2, 2)
         painter.setPen(QColor(tokens.TEXT_SECONDARY if self.isChecked() else tokens.TEXT_DISABLED))
-        text_rect = QRectF(20, 0, rect.width() - 24, rect.height())
+        text_rect = (QRectF(11, 0, rect.width() - 12, rect.height()) if self._compact else
+                     QRectF(20, 0, rect.width() - 24, rect.height()))
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                                       int(text_rect.width())))
+
+
+class SeriesLegend(LegendChip):
+    """Shared color-column key for company and period identities."""
+
+    def __init__(self, text, colors, parent=None, *, compact=False):
+        self.colors = tuple(QColor(color) for color in colors)
+        super().__init__(text, self.colors[0], parent)
+        self._compact = compact
+        self.setCheckable(False)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip(text)
+
+    def sizeHint(self):
+        return QSize(min(140 if self._compact else 252, self.fontMetrics().horizontalAdvance(self.text()) + 32),
+                     18 if self._compact else 22)
+
+    def set_compact(self, enabled):
+        if self._compact != bool(enabled):
+            self._compact = bool(enabled)
+            self.updateGeometry()
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+        if self.isCheckable() and (self.underMouse() or self.hasFocus()):
+            painter.setPen(QColor(tokens.FOCUS_RING) if self.hasFocus() else Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens.SEGMENT_QUIET_BG))
+            painter.drawRoundedRect(rect, 6, 6)
+        top = rect.center().y() - 8
+        outline = QPainterPath()
+        outline.addRoundedRect(QRectF(4, top, 12, 16), 6, 6)
+        painter.save()
+        painter.setClipPath(outline)
+        active = not self.isCheckable() or self.isChecked()
+        for index, color in enumerate(reversed(self.colors)):
+            painter.fillRect(QRectF(4, top + index * 16 / len(self.colors), 12, 16 / len(self.colors)),
+                             color if active else QColor(tokens.TEXT_DISABLED))
+        painter.restore()
+        painter.setPen(QColor(tokens.TEXT_SECONDARY if active else tokens.TEXT_DISABLED))
+        text_rect = QRectF(23, 0, rect.width() - 29, rect.height())
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                          self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
                                                        int(text_rect.width())))

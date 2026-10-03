@@ -1,0 +1,54 @@
+文件：D:\test\望春市6.save
+游戏：Cities in Motion 2 v1.6.3
+
+编码/解码
+1. 存档外层从偏移 0x29000 开始是 raw DEFLATE；解压后约 53,239,808 字节。
+2. 解压流由 Assembly-CSharp.dll 的 DataSerializer 读取，不是 BinaryFormatter，也不是 City Bus Manager 格式。
+3. 线路对象类型为 LineData；车辆关联对象为 LineData+Vehicle；时刻表对象为 LineData+TimeTable。
+
+已由 Assembly-CSharp.dll 元数据和 Serialize/Deserialize 方法确认的 LineData 字段（按序）：
+m_type                线路交通工具类型（VehicleTypeObject）
+m_number              线路编号（Int32）
+m_name                线路名称（String）
+m_nextLine            下一线路对象引用
+m_stops               线路站点数组（LineData+Stop[]）
+m_vehicles            线路车辆数组（LineData+Vehicle[]）
+m_complete            线路是否完成（Bool）
+m_active              线路是否启用（Bool）
+m_position            线路位置（FixedVector3D）
+m_timeTables          时刻表数组（LineData+TimeTable[]）
+m_lastDeparture       最近发车时间（Int64，游戏时间刻度）
+m_nextDeparture       下一发车时间（Int64，游戏时间刻度）
+m_departureOffset     发车偏移（Int64，游戏时间刻度）
+m_nextSizeClass       下一车辆尺寸等级（Int32）
+m_nextTrainConfiguration 下一列车编组（UInt32）
+m_depot               配属车库（DepotData 引用）
+m_currentIncome       当前收入（Int64）
+m_income              累计收入（Int64）
+m_expenses            累计支出（Int64）
+m_maintenanceRequirement 维护需求（Int32）
+m_electricityConsumption 电力消耗（Int32）
+m_fuelConsumption     燃料消耗（Int32）
+m_driverRequirement   司机需求（Int32）
+m_cheaters            逃票相关计数（Int32）
+m_currentCheaters     当前逃票计数（Int32）
+m_mapPoints           线路地图点集合
+m_mapPointsUpdated    地图点是否更新（Bool）
+m_messageSent         是否已发送提示（Bool）
+m_transportedToday    当日运输人数（Int32）
+m_totalTransported    累计运输人数（Int32）
+m_lineEditTime        线路编辑时间（Int64）
+m_vehiclesNeededTop   高峰所需车辆（Int32）
+m_vehiclesNeededAvg   平均所需车辆（Int32）
+m_estimatedDuration   估计运行时长（Int64）
+m_lineLength          线路长度（Int32）
+
+配车/发班导出状态
+已通过隔离程序集探针模拟必要的 Unity 对象构造并完成对象图实例化。LineData.m_vehicles、m_timeTables 及其发班行记录均已从存档实际对象导出，未按字节模式推断数量。
+
+多人公司归属
+多人存档的 root.m_players 保存玩家和 CompanyData。每条线路通过 LineData.m_depot.m_owner 关联到 CompanyData；公司序号、玩家 ID 和公司名称已附加到线路、配车、时刻表、发班记录及站点客流表，并另行导出公司信息和公司车型数据。
+
+可直接用于后续游戏内/注入式读取的字段映射：
+- 配车：LineData.m_vehicles；每个元素的 LineData+Vehicle.m_vehicle 指向 Vehicle；Vehicle.m_line 指向线路。
+- 发班：LineData.m_timeTables；TimeTable.m_startTime、m_endTime、m_interval、m_activeDays、m_rows；TimeTableRow.m_departure。

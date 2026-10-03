@@ -278,7 +278,7 @@ class CompanyDashboard(QWidget):
 
     def render(self, snapshot, company_ids: tuple[str, ...], names: dict[str, str],
                palette: dict[str, str], mode: str, satisfaction: str,
-               slots: tuple[str, ...]):
+               slots: tuple[str, ...], comparison_label: str = '对比'):
         self.clear()
         self._mode, self._slots = mode, slots
         self.notice.setText('请选择公司' if not company_ids else
@@ -309,6 +309,7 @@ class CompanyDashboard(QWidget):
                     panel.set_compact_layout(True)
                     panel.set_company_palette(palette)
                     panel.set_category_palette(DATA_CATEGORY_COLORS)
+                    panel.set_comparison_label(comparison_label)
                     result = snapshot.results.get(key)
                     if result is not None:
                         panel.set_result(company_result(result, (company_id,), include_comparison=mode == 'period'), names)

@@ -138,7 +138,8 @@ def test_comparison_series_are_dashed_faded_and_share_the_key():
     assert [item.faded for item in series] == [False, True]
     assert series[1].dashed and series[0].key == series[1].key
     assert '2024-01-02' in series[1].notes[1]
-    assert widget.period_label.isVisibleTo(widget)
+    assert widget.period_label.isHidden()
+    assert [entry['key'] for entry in widget.series_legend_entries] == ['current', 'comparison']
 
 
 def test_mode_selection_persists_and_labels_can_be_overridden(tmp_path):
@@ -196,7 +197,8 @@ def test_fullscreen_clone_keeps_mode_hidden_groups_and_returns_changes():
     widget.legend_buttons['bus'].click()
     clone = widget._open_fullscreen()
     assert clone.mode == 'line' and clone._hidden_groups == {'bus'}
-    assert clone.chart_views[0].detailed and clone.values_table.rowCount() >= 1
+    assert clone.chart_views[0].detailed
+    assert clone.detail_summary.cards[0]['values'] == [('bus', Decimal(2)), ('tram', Decimal(1))]
     clone.legend_buttons['tram'].click()
     widget._fullscreen_dialog.close()
     assert widget._hidden_groups == {'bus', 'tram'}

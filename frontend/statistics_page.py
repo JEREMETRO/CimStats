@@ -1175,7 +1175,8 @@ class StatisticsPage(QWidget):
             return
         self.company_dashboard.render(
             self.snapshot, self.selected_companies(), self._names(), self._company_palette,
-            self.analysis_mode, self.satisfaction_combo.currentData(), self.metric_slots)
+            self.analysis_mode, self.satisfaction_combo.currentData(), self.metric_slots,
+            comparison_label=label(self.comparison_preset))
         self._reflow_company()
 
     def _stopcount_value(self, tile, result):

@@ -29,6 +29,8 @@ py -3.12 -m venv .venv
 
 ## 文档
 
+- [全部文档与迁移资料](docs/README.md)
+- [产品需求](docs/PRODUCT_REQUIREMENTS.md) · [图表需求](docs/UI_REQUIREMENTS.md) · [协作约定](AGENTS.md)
 - [用户指南](docs/USER_GUIDE.md)
 - [指标口径](docs/DATA_DEFINITIONS.md)
 - [开发与测试](docs/DEVELOPMENT.md)

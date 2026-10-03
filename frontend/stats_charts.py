@@ -9,14 +9,16 @@ from __future__ import annotations
 from decimal import Decimal
 from hashlib import sha256
 from math import ceil, floor
+from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-                               QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout,
+                               QLabel, QVBoxLayout, QWidget)
 from qfluentwidgets import FluentIcon, TransparentToolButton
 
 from chart_canvas import AxisSpec, ChartCanvas, ChartData, Series, format_value
+from chart_details import DetailSummary
 from stats_controls import FluentSegmentedControl
 from stats_text import group_label, label
 from stats_typography import apply_emphasis_font, emphasis_css
@@ -24,7 +26,7 @@ import stats_tokens as tokens
 from stats_elevation import attach_card_elevation
 from stats_motion import SurfaceMotion
 from statistics_model import period_bounds, summarize_buckets
-from ui_kit import FlowHost, LegendChip
+from ui_kit import FlowHost, LegendChip, SeriesLegend
 
 __all__ = ['AxisSpec', 'ChartPanel', 'nice_axis', 'company_color']
 
@@ -32,6 +34,15 @@ MODE_NAMES = {'line': '趋势', 'area': '趋势', 'trend-bar': '趋势', 'bar': 
               'summary': '总量'}
 TOTAL_GROUPS = ('总计', '__total__', '')
 WEEKDAYS = '一二三四五六日'
+_FONT_ID = -1
+
+
+def _ensure_chinese_font():
+    global _FONT_ID
+    if _FONT_ID < 0:
+        font_path = Path('C:/Windows/Fonts/msyh.ttc')
+        if font_path.is_file():
+            _FONT_ID = QFontDatabase.addApplicationFont(str(font_path))
 
 
 def nice_axis(values) -> AxisSpec:
@@ -102,18 +113,23 @@ class ChartPanel(QFrame):
                  settings=None, settings_key: str = '', parent=None,
                  allowed_modes: tuple[str, ...] | None = None):
         super().__init__(parent)
+        _ensure_chinese_font()
         self.setObjectName('chartPanel')
-        attach_card_elevation(self, radius=tokens.RADIUS_CARD)
+        self._detailed = isinstance(parent, QDialog)
+        if not self._detailed:
+            attach_card_elevation(self, radius=tokens.RADIUS_CARD)
         self.surface_motion = SurfaceMotion(self)
         self.setStyleSheet(
+            'QFrame#chartPanel { background: transparent; border: 0; }' if self._detailed else
             f'QFrame#chartPanel {{ background: {tokens.CARD_BG}; '
             f'border: 1px solid {tokens.BORDER}; border-radius: {tokens.RADIUS_CARD}px; }}')
         self.result = None
         self.companies: dict = {}
+        self._comparison_label = label('comparison-value')
         self._company_palette: dict[str, QColor] = {}
         self._category_palette: tuple[str, ...] | None = None
-        self._detailed = isinstance(parent, QDialog)
         self._fullscreen_dialog = None
+        self.series_legend_entries = []
         self._axis_override: AxisSpec | None = None
         self.axis_spec: AxisSpec | None = None
         self._hidden_groups: set = set()
@@ -164,6 +180,8 @@ class ChartPanel(QFrame):
         self.fullscreen_button.clicked.connect(self._open_fullscreen)
         header.addWidget(self.fullscreen_button)
         self._layout.addLayout(header)
+        self.detail_summary = DetailSummary(self)
+        self._layout.addWidget(self.detail_summary)
         self.legend_host = FlowHost(self, spacing=2)
         self._layout.addWidget(self.legend_host)
         self.period_label = QLabel(self)
@@ -188,17 +206,6 @@ class ChartPanel(QFrame):
             self._replace_mode_selector(self._allowed_modes if self._restricted_modes else
                                         ((*self.MODES, self.mode) if self.mode in ('area', 'trend-bar')
                                          else self.MODES))
-        self.values_table = None
-        if self._detailed:
-            self.values_table = QTableWidget(self)
-            self.values_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            self.values_table.verticalHeader().hide()
-            self.values_table.setMaximumHeight(240)
-            self.values_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            self._layout.addWidget(self.values_table)
-            hint = QLabel('滚轮缩放 · 拖动平移 · 双击还原', self)
-            hint.setStyleSheet(f'color: {tokens.TEXT_SECONDARY}; font-size: 12px; border: 0;')
-            header.insertWidget(1, hint)
         self.setMinimumHeight(220)
         self._render()
 
@@ -244,7 +251,9 @@ class ChartPanel(QFrame):
             raise ValueError('chart mode labels')
         self._mode_labels = dict(labels)
         if self._has_modes:
-            self._replace_mode_selector(self._allowed_modes if self._restricted_modes else self.MODES)
+            modes = (self._allowed_modes if self._restricted_modes else
+                     ((*self.MODES, self.mode) if self.mode in ('area', 'trend-bar') else self.MODES))
+            self._replace_mode_selector(modes)
 
     def set_mode(self, mode: str):
         if mode not in self.ALL_MODES or (self._restricted_modes and mode not in self._allowed_modes):
@@ -266,6 +275,12 @@ class ChartPanel(QFrame):
         self.result = result
         self.companies = companies or {}
         self._render()
+
+    def set_comparison_label(self, text: str):
+        text = text.strip() or label('comparison-value')
+        if text != self._comparison_label:
+            self._comparison_label = text
+            self._render()
 
     def set_axis_range(self, lower, upper, step):
         self.set_axis_spec(AxisSpec(int(lower), int(upper), int(step)))
@@ -306,12 +321,20 @@ class ChartPanel(QFrame):
             raise ValueError('compact chart height must be at least 180')
         self._compact_height = height
         self.set_compact_layout(True)
+        for entry in self.series_legend_entries:
+            entry['widget'].set_compact(True)
+        for canvas in self.chart_views:
+            canvas.setMinimumHeight(0)
         self.setFixedHeight(height)
 
     def clear_compact_height(self) -> None:
         if self._compact_height is None:
             return
         self._compact_height = None
+        for entry in self.series_legend_entries:
+            entry['widget'].set_compact(False)
+        for canvas in self.chart_views:
+            canvas.setMinimumHeight(140 if len(self.chart_views) > 1 else 170)
         self.setMinimumHeight(220)
         self.setMaximumHeight(16777215)
 
@@ -350,7 +373,7 @@ class ChartPanel(QFrame):
             return ''
         parts = []
         if previous:
-            parts.append(f'{label("comparison-value")} {bucket.start:%Y-%m-%d %H:%M}')
+            parts.append(f'{self._comparison_name()} {bucket.start:%Y-%m-%d %H:%M}')
         if getattr(bucket, 'complete', True) is False:
             parts.append('数据不完整')
         return ' · '.join(parts)
@@ -432,7 +455,7 @@ class ChartPanel(QFrame):
                                               f'{base} · {label("current")}' if comparison else base))
             if comparison:
                 series.append(self._bucket_series(owner, group, comparison, True, key, color, len(dates),
-                                                  f'{base} · {label("comparison-value")}'))
+                                                  f'{base} · {self._comparison_name()}'))
         if kind == 'bar':
             for item in series:
                 item.dashed = False
@@ -441,17 +464,18 @@ class ChartPanel(QFrame):
                          unit=self.result.metric.unit)
 
     def _total_data(self, company, categories):
-        names = [group for group in categories if group not in self._hidden_groups] or list(categories)
+        names = [group for group in categories if group not in self._hidden_groups]
         current = {group: summarize_buckets(buckets, self.result.metric) for group, buckets in categories.items()}
         multiple = len(categories) > 1
         colors = [self._category_color(group) if multiple else self._company_color(company) for group in names]
+        color = colors[0] if colors else self._company_color(company)
         series = [Series(key='current', name=label('current') if self.result.comparison else self._company_name(company),
-                         color=colors[0], colors=colors,
+                         color=color, colors=colors,
                          values=[current[group] for group in names])]
         if self.result.comparison:
             previous = {group: summarize_buckets(self.result.comparison.get((company, group), []), self.result.metric)
                         for group in names}
-            series.append(Series(key='comparison', name=label('comparison-value'), color=colors[0], colors=colors,
+            series.append(Series(key='comparison', name=self._comparison_name(), color=color, colors=colors,
                                  values=[previous[group] for group in names], faded=True))
         return ChartData(kind='hbar', labels=[group_label(group) for group in names], series=series,
                          unit=self.result.metric.unit)
@@ -503,6 +527,8 @@ class ChartPanel(QFrame):
             return
         self._clear_views()
         groups = self._groups()
+        if self._detailed:
+            self.detail_summary.refresh()
         self._combined_totals = (self.mode in ('line', 'area', 'trend-bar') and len(groups) > 1
                                  and all(len(entries) == 1 for entries in groups.values())
                                  and len({next(iter(entries)) for entries in groups.values()}) == 1
@@ -519,10 +545,7 @@ class ChartPanel(QFrame):
         self.summary_label.setVisible(not show_chart)
         self.chart_host.setVisible(show_chart)
         self.fullscreen_button.setEnabled(show_chart)
-        self.period_label.setVisible(show_chart and bool(self.result.comparison) and
-                                     self.mode in ('line', 'area', 'trend-bar'))
-        if self.period_label.isVisible():
-            self.period_label.setText(f'实线 {label("current")}  ·  虚线/浅色 {label("comparison-value")}')
+        self.period_label.hide()
         if not has_data:
             self.summary_label.setText(label('missing') if self.result is None else '暂无可用数据')
             self._build_legend({})
@@ -537,7 +560,6 @@ class ChartPanel(QFrame):
         specs = self._chart_specs()
         self._place_specs(specs)
         self._build_legend(groups)
-        self._fill_values_table(specs)
 
     def _place_specs(self, specs):
         columns = 1 if len(specs) == 1 else 2 if self.mode in ('pie', 'bar') or self._detailed else 1
@@ -555,7 +577,8 @@ class ChartPanel(QFrame):
             canvas.set_hidden(self._hidden_groups)
             canvas.set_axis(self._axis_override if data.kind in ('line', 'bar', 'hbar') else None)
             canvas.set_data(data)
-            canvas.setMinimumHeight(140 if len(specs) > 1 and not self._detailed else 170)
+            canvas.setMinimumHeight(0 if self._compact_height is not None else
+                                    140 if len(specs) > 1 and not self._detailed else 170)
             canvas.hover_changed.connect(lambda index, source=canvas: self._canvas_hover(source, index))
             canvas.slice_clicked.connect(self._toggle_category)
             box.addWidget(canvas, 1)
@@ -566,26 +589,65 @@ class ChartPanel(QFrame):
     def _build_legend(self, groups):
         self.legend_host.clear()
         self.legend_buttons = {}
-        if self.mode in ('summary', 'pie') or self.result is None or not groups:
+        self.series_legend_entries = []
+        if self.mode == 'summary' or self.result is None or not groups:
             self.legend_host.hide()
             return
         keys = (list(groups) if self._combined_totals else
                 list(dict.fromkeys(group for entries in groups.values() for group in entries)))
-        if self.mode == 'bar' or (len(keys) == 1 and keys[0] not in self._hidden_groups):
-            self.legend_host.hide()
-            return
-        for key in keys:
-            chip = LegendChip(self._legend_text(key), self._legend_color(key), self.legend_host)
+        show_categories = self.mode not in ('bar', 'pie') and (len(keys) > 1 or keys[0] in self._hidden_groups)
+        for key in keys if show_categories else []:
+            if self._combined_totals:
+                entry = self._add_series_legend(key, self._legend_text(key), [self._legend_color(key)])
+                chip = entry['widget']
+            else:
+                chip = LegendChip(self._legend_text(key), self._legend_color(key), self.legend_host)
+                self.legend_host.flow.addWidget(chip)
             tooltip = self._legend_tooltip(key)
             if tooltip:
                 chip.setToolTip(tooltip)
                 chip.setAccessibleName(tooltip)
-            chip.setChecked(key not in self._hidden_groups)
-            chip.clicked.connect(lambda checked=False, k=key: self._toggle_category(k))
-            self.legend_host.flow.addWidget(chip)
-            self.legend_buttons[key] = chip
-        self.legend_host.show()
+            self._configure_legend_toggle(key, chip)
+        self._build_comparison_legend()
+        self.legend_host.setVisible(bool(self.legend_buttons or self.series_legend_entries))
         self.legend_host.updateGeometry()
+
+    def _comparison_name(self):
+        return self._comparison_label
+
+    def _configure_legend_toggle(self, key, chip):
+        chip.setCheckable(True)
+        chip.setChecked(key not in self._hidden_groups)
+        chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        chip.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        chip.clicked.connect(lambda checked=False, k=key: self._toggle_category(k))
+        self.legend_buttons[key] = chip
+
+    def _add_series_legend(self, key, name, colors):
+        if not colors:
+            return
+        widget = SeriesLegend(name, colors, self.legend_host, compact=self._compact_height is not None)
+        self.legend_host.flow.addWidget(widget)
+        entry = dict(key=key, name=name, colors=tuple(QColor(color) for color in colors), widget=widget)
+        self.series_legend_entries.append(entry)
+        return entry
+
+    def _build_comparison_legend(self):
+        if self.result is None or not self.result.comparison:
+            return
+        palettes = {False: {}, True: {}}
+        for canvas in self.chart_views:
+            for item in canvas.data.series:
+                for color in item.colors or (item.color,):
+                    color = QColor(color)
+                    if item.faded:
+                        color.setAlphaF(color.alphaF() * tokens.CHART_COMPARISON_OPACITY)
+                    palettes[item.faded][color.rgba()] = color
+        if not palettes[True]:
+            return
+        for previous, name in ((False, label('current')), (True, self._comparison_name())):
+            self._add_series_legend('comparison' if previous else 'current', name,
+                                    list(palettes[previous].values()))
 
     def _toggle_category(self, group):
         if group in self._hidden_groups:
@@ -603,34 +665,6 @@ class ChartPanel(QFrame):
             return
         for canvas in self.chart_views:
             canvas.set_hidden(self._hidden_groups)
-
-    def _fill_values_table(self, specs):
-        table = self.values_table
-        if table is None:
-            return
-        rows = []
-        for caption, data in specs:
-            if data.kind == 'donut':
-                for name, value in zip(data.labels, data.series[0].values):
-                    rows.append((caption, name, data.series[0].name, value))
-                continue
-            for item in data.series:
-                for index, value in enumerate(item.values):
-                    if value is not None:
-                        title = data.titles[index] if data.titles else data.labels[index]
-                        rows.append((caption, title, item.name, value))
-        table.clear()
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(['图表', '时间/类别', '系列', f'数值 {self.result.metric.unit}'.strip()])
-        table.setRowCount(len(rows))
-        for row, values in enumerate(rows):
-            for column, value in enumerate(values):
-                text = format_value(value) if column == 3 else str(value or '')
-                item = QTableWidgetItem(text)
-                if column == 3:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                table.setItem(row, column, item)
-        table.setColumnHidden(0, not any(caption for caption, *_ in rows))
 
     # ------------------------------------------------------------- hover
     def _canvas_hover(self, source, index):
@@ -658,6 +692,7 @@ class ChartPanel(QFrame):
                            modes=self.mode_selector is not None,
                            allowed_modes=self._allowed_modes if self._restricted_modes else None)
         clone._hidden_groups = set(self._hidden_groups)
+        clone.set_comparison_label(self._comparison_label)
         clone.set_mode_labels(self._mode_labels)
         clone.set_company_palette({key: color.name() for key, color in self._company_palette.items()})
         clone.set_category_palette(self._category_palette)

@@ -85,6 +85,7 @@ class TodayTrendPanel(ChartPanel):
     def _create_clone(self, dialog):
         clone = TodayTrendPanel(self.title_label.text(), default_mode='line', allowed_modes=('line',), parent=dialog)
         clone._hidden_groups = set(self._hidden_groups)
+        clone.set_comparison_label(self._comparison_label)
         clone.set_company_palette({key: value.name() for key, value in self._company_palette.items()})
         clone.set_category_palette(self._category_palette)
         clone.set_result(self.result, self._raw_company_names)

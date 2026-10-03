@@ -170,6 +170,7 @@ class CityChartPanel(ChartPanel):
         clone = CityChartPanel(self.city_key, dialog)
         clone.city_controller = self.city_controller
         clone._hidden_groups = set(self._hidden_groups)
+        clone.set_comparison_label(self._comparison_label)
         clone.set_mode(self.mode)
         clone.set_result(self.result)
         if self.city_controller:

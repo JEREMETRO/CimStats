@@ -144,7 +144,7 @@ def test_navigation_renames_only_home_and_keeps_other_pages(window):
     assert window.header.title.text() == '线路查询' and window.stats_tabs.isHidden()
     window.navigate(2)
     assert window.pages.currentWidget() is window.statistics_page
-    assert window.header.title.text() == '统计数据' and window.stats_tabs.parentWidget() is window.header
+    assert window.header.title.text() == '统计数据' and window.header.isAncestorOf(window.stats_tabs)
 
 
 def test_reminders_have_one_home_entry_and_keep_shared_thresholds(window):
@@ -434,7 +434,7 @@ def test_component_missing_simulation_clock_keeps_calculable_home(component, qt_
 
 def test_component_disabled_alerts_stop_active_query_and_reenable_requeries(component, qt_application, monkeypatch):
     _page, controller = ready_component(component, qt_application)
-    from latest_info_alerts import build_latest_alerts
+    from src.latest_info_alerts import build_latest_alerts
     def forbidden(*_a, **_kw):
         raise AssertionError('提醒关闭后不能主动查询')
     monkeypatch.setattr('latest_info_controller.build_latest_alerts', forbidden)

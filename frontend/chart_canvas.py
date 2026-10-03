@@ -12,14 +12,15 @@ from decimal import Decimal
 from math import atan2, ceil, cos, degrees, floor, hypot, log10, radians, sin
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath,
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath,
                            QPen)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 import stats_tokens as tokens
+from stats_typography import emphasis_font
 
 KINDS = ('line', 'bar', 'hbar', 'donut')
-COMPARISON_ALPHA = .42
+COMPARISON_ALPHA = tokens.CHART_COMPARISON_OPACITY
 
 
 @dataclass(frozen=True)
@@ -135,55 +136,34 @@ def _alpha(color: QColor, alpha: float) -> QColor:
     return result
 
 
-def _bar_path(rect: QRectF, radius: float, upward: bool) -> QPainterPath:
-    """Rounded only at the free end of the bar; the baseline stays square."""
-    radius = max(0., min(radius, rect.width() / 2, rect.height()))
+def _bar_path(rect: QRectF) -> QPainterPath:
+    """The original capsule silhouette, including the baseline end."""
+    radius = max(0., min(rect.width(), rect.height()) / 2)
     path = QPainterPath()
-    if radius < .5:
-        path.addRect(rect)
-        return path
-    x0, x1, y0, y1 = rect.left(), rect.right(), rect.top(), rect.bottom()
-    if upward:
-        path.moveTo(x0, y1)
-        path.lineTo(x0, y0 + radius)
-        path.quadTo(x0, y0, x0 + radius, y0)
-        path.lineTo(x1 - radius, y0)
-        path.quadTo(x1, y0, x1, y0 + radius)
-        path.lineTo(x1, y1)
-    else:
-        path.moveTo(x0, y0)
-        path.lineTo(x0, y1 - radius)
-        path.quadTo(x0, y1, x0 + radius, y1)
-        path.lineTo(x1 - radius, y1)
-        path.quadTo(x1, y1, x1, y1 - radius)
-        path.lineTo(x1, y0)
-    path.closeSubpath()
+    path.addRoundedRect(rect, radius, radius)
     return path
 
 
-def _hbar_path(rect: QRectF, radius: float, rightward: bool) -> QPainterPath:
-    radius = max(0., min(radius, rect.height() / 2, rect.width()))
-    path = QPainterPath()
-    if radius < .5:
-        path.addRect(rect)
-        return path
-    x0, x1, y0, y1 = rect.left(), rect.right(), rect.top(), rect.bottom()
-    if rightward:
-        path.moveTo(x0, y0)
-        path.lineTo(x1 - radius, y0)
-        path.quadTo(x1, y0, x1, y0 + radius)
-        path.lineTo(x1, y1 - radius)
-        path.quadTo(x1, y1, x1 - radius, y1)
-        path.lineTo(x0, y1)
-    else:
-        path.moveTo(x1, y0)
-        path.lineTo(x0 + radius, y0)
-        path.quadTo(x0, y0, x0, y0 + radius)
-        path.lineTo(x0, y1 - radius)
-        path.quadTo(x0, y1, x0 + radius, y1)
-        path.lineTo(x1, y1)
-    path.closeSubpath()
-    return path
+def _bar_brush(color: QColor, rect: QRectF, horizontal=False) -> QBrush:
+    gradient = (QLinearGradient(rect.left(), rect.center().y(), rect.right(), rect.center().y())
+                if horizontal else
+                QLinearGradient(rect.center().x(), rect.top(), rect.center().x(), rect.bottom()))
+    leading = QColor(color)
+    hue, saturation, value, alpha = leading.getHsvF()
+    leading.setHsvF(hue, saturation, value * tokens.CHART_BAR_GRADIENT_TOP_FACTOR, alpha)
+    gradient.setColorAt(0, leading)
+    gradient.setColorAt(1, color)
+    return QBrush(gradient)
+
+
+def _value_font(text, width, height, total=False):
+    for size in range(15 if total else 13, 11 if total else 9, -1):
+        font = emphasis_font(size, QFont.Weight.Bold) if total else QFont(tokens.FONT_FAMILY)
+        font.setPixelSize(size)
+        metrics = QFontMetricsF(font)
+        if metrics.horizontalAdvance(text) <= width - 8 and metrics.height() <= height - 4:
+            return font
+    return font
 
 
 class ChartCanvas(QWidget):
@@ -215,7 +195,7 @@ class ChartCanvas(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
         self._font = QFont(tokens.FONT_FAMILY)
-        self._font.setPixelSize(13 if detailed else 12)
+        self._font.setPixelSize(tokens.FONT_SIZE_CAPTION)
         self._strong = QFont(self._font)
         self._strong.setWeight(QFont.Weight.DemiBold)
 
@@ -458,10 +438,10 @@ class ChartCanvas(QWidget):
         first, last = self.window()
         slot = self._plot.width() / max(1, last - first)
         count = max(1, len(stacks))
-        band = slot * (.72 if count > 1 else .56)
-        gap = min(4., band * .08) if count > 1 else 0.
-        limit = 64. if self.detailed else 34.
-        width = max(1.5, min(limit, (band - gap * (count - 1)) / count))
+        gap = min(24. if self.detailed else 4., max(.8, slot * .075))
+        width = min(48. if self.detailed else 20.,
+                    max(.6 if self.detailed else 2.,
+                        (slot * (.78 if self.detailed else .72) - gap * (count - 1)) / count))
         total = width * count + gap * (count - 1)
         return stacks, width, gap, total
 
@@ -471,18 +451,19 @@ class ChartCanvas(QWidget):
         baseline = self._y(0) if self.axis.lower <= 0 <= self.axis.upper else (
             self._plot.bottom() if self.axis.lower > 0 else self._plot.top())
         labels = []
-        radius = 3. if width >= 6 else 0.
         for index in range(first, last):
             left = self._slot_center(index) - total / 2
             for position, stack in enumerate(stacks):
                 x = left + position * (width + gap)
                 positive = negative = 0.
                 members = [item for item in self.visible_series() if (item.stack or item.key) == stack]
+                raw_values = [item.values[index] if index < len(item.values) else None for item in members]
                 pieces = []
                 for item in members:
                     value = item.values[index] if index < len(item.values) else None
-                    if value is None or float(value) == 0:
+                    if value is None:
                         continue
+                    raw_value = value
                     value = float(value)
                     start = positive if value > 0 else negative
                     end = start + value
@@ -494,20 +475,46 @@ class ChartCanvas(QWidget):
                     if item.faded:
                         color = _alpha(color, COMPARISON_ALPHA)
                     y0, y1 = self._y(start), self._y(end)
-                    pieces.append((QRectF(x, min(y0, y1), width, abs(y1 - y0)), color, value > 0))
-                for number, (rect, color, upward) in enumerate(pieces):
-                    outermost = all(other[2] != upward for other in pieces[number + 1:])
-                    path = _bar_path(rect, radius if outermost else 0., upward)
-                    painter.fillPath(path, color)
-                    if number and rect.height() > 2:
-                        painter.setPen(QPen(QColor(tokens.CARD_BG), 1))
-                        edge = rect.bottom() if upward else rect.top()
-                        painter.drawLine(QPointF(rect.left(), edge), QPointF(rect.right(), edge))
-                if pieces:
-                    total_value = positive + negative
-                    anchor = self._y(positive) if positive or not negative else self._y(negative)
-                    labels.append(dict(text=format_value(round(total_value, 2)), x=x + width / 2,
-                                       y=anchor, above=positive >= -negative,
+                    rect = QRectF(x, min(y0, y1), width, abs(y1 - y0))
+                    if value:
+                        pieces.append((rect, color, value > 0))
+                    if self.detailed and len(members) > 1:
+                        labels.append(dict(text=format_value(raw_value), x=rect.center().x(),
+                                           y=rect.center().y(), above=True, inside_rect=rect,
+                                           color=QColor('white') if color.lightnessF() < .55 and not item.faded
+                                           else QColor(tokens.TEXT_PRIMARY),
+                                           slot_width=self._plot.width() / max(1, last - first) / max(1, len(stacks))))
+                for upward in (True, False):
+                    side = [(rect, color) for rect, color, sign in pieces if sign == upward]
+                    if not side:
+                        continue
+                    outline = QRectF(side[0][0])
+                    for rect, _ in side[1:]:
+                        outline = outline.united(rect)
+                    painter.save()
+                    painter.setClipPath(_bar_path(outline), Qt.ClipOperation.IntersectClip)
+                    for rect, color in side:
+                        painter.fillRect(rect, _bar_brush(color, rect))
+                    painter.restore()
+                zeros = [item for item, value in zip(members, raw_values) if value == 0]
+                for zero_index, item in enumerate(zeros):
+                    lane = width / len(zeros)
+                    color = QColor(item.colors[index]) if item.colors else QColor(item.color)
+                    if item.faded:
+                        color = _alpha(color, COMPARISON_ALPHA)
+                    center = QPointF(x + (zero_index + .5) * lane,
+                                     min(max(baseline, self._plot.top() + 3), self._plot.bottom() - 3))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(color)
+                    painter.drawEllipse(center, min(3., lane / 2), 3.)
+                if any(value is not None for value in raw_values):
+                    total_value = (sum((Decimal(str(value)) for value in raw_values), Decimal(0))
+                                   if all(value is not None for value in raw_values) else None)
+                    above = positive >= -negative
+                    anchor = self._y(positive if above else negative)
+                    labels.append(dict(text=format_value(total_value), x=x + width / 2,
+                                       y=anchor, above=above,
+                                       total=True, bar_width=width,
                                        slot_width=self._plot.width() / max(1, last - first) / max(1, len(stacks))))
         return labels
 
@@ -578,20 +585,55 @@ class ChartCanvas(QWidget):
         return labels
 
     def _paint_value_labels(self, painter, labels):
-        metrics = self._metrics()
-        painter.setPen(QColor(tokens.TEXT_PRIMARY))
+        painter.save()
         placed: list[QRectF] = []
-        for label in labels:
+        # Reserve totals first; a tiny segment must not displace its column sum.
+        for label in sorted(labels, key=lambda item: not item.get('total', False)):
+            inside = label.get('inside_rect')
+            available = label['slot_width']
+            height = 40
+            if inside is not None and inside.height() >= 18:
+                available, height = min(available, inside.width()), min(height, inside.height())
+            font = (_value_font(label['text'], available, height, label.get('total', False))
+                    if self.detailed else self._font)
+            metrics = self._metrics(font)
             width = metrics.horizontalAdvance(label['text']) + 4
             if width > label['slot_width'] + 6:
                 continue
             height = metrics.height()
-            y = label['y'] - height - 3 if label['above'] else label['y'] + 3
-            box = QRectF(label['x'] - width / 2, y, width, height)
-            if box.top() < 0 or any(box.intersects(other) for other in placed):
+            box = QRectF(label['x'] - width / 2, label['y'] - height / 2, width, height)
+            centered = inside is not None and inside.adjusted(1, 1, -1, -1).contains(box)
+            if not centered:
+                y = label['y'] - height - 3 if label['above'] else label['y'] + 3
+                box.moveTop(y)
+            candidates = [box]
+            if label.get('total'):
+                half_bar = label['bar_width'] / 2
+                candidates.extend((QRectF(label['x'] + half_bar + 5, label['y'] - height / 2, width, height),
+                                   QRectF(label['x'] - half_bar - width - 5, label['y'] - height / 2, width, height),
+                                   box.translated(0, height + 6 if label['above'] else -height - 6)))
+            if inside is not None:
+                for lane in range(ceil(self.height() / (height + 3))):
+                    offsets = (0,) if lane == 0 else (lane * (height + 3), -lane * (height + 3))
+                    for offset in offsets:
+                        candidates.extend((QRectF(inside.right() + 5, label['y'] - height / 2 + offset, width, height),
+                                           QRectF(inside.left() - width - 5, label['y'] - height / 2 + offset, width, height)))
+            chosen = next((candidate for candidate in candidates
+                           if candidate.top() >= 0 and candidate.bottom() <= self.height()
+                           and candidate.left() >= self._plot.left() and candidate.right() <= self.width()
+                           and not any(candidate.intersects(other) for other in placed)), None)
+            if chosen is None:
                 continue
+            centered = centered and chosen == box
+            box = chosen
             placed.append(box)
+            if inside is not None and not centered:
+                painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY), .6))
+                painter.drawLine(QPointF(label['x'], label['y']), box.center())
+            painter.setFont(font)
+            painter.setPen(label.get('color', QColor(tokens.TEXT_PRIMARY)) if centered else QColor(tokens.TEXT_PRIMARY))
             painter.drawText(box, Qt.AlignmentFlag.AlignCenter, label['text'])
+        painter.restore()
 
     def _tooltip_rows(self, index):
         rows = []
@@ -668,7 +710,10 @@ class ChartCanvas(QWidget):
         visible = self.visible_series()
         values = [float(value) for item in visible for value in item.values if value is not None]
         label_width = min(rect.width() * .32, max(metrics.horizontalAdvance(str(text)) for text in data.labels) + 12)
-        value_width = max((metrics.horizontalAdvance(format_value(value)) for value in values), default=0) + 10
+        value_font = QFont(tokens.FONT_FAMILY)
+        value_font.setPixelSize(13 if self.detailed else 12)
+        value_metrics = self._metrics(value_font)
+        value_width = max((value_metrics.horizontalAdvance(format_value(value)) for value in values), default=0) + 10
         plot_width = max(20., rect.width() - label_width - value_width)
         max_ticks = max(2, min(6, int(plot_width / 70) + 1))
         self.axis = self.axis_override or auto_axis(values, zero=True, max_ticks=max_ticks)
@@ -692,8 +737,8 @@ class ChartCanvas(QWidget):
         count = len(data.labels)
         row = plot.height() / max(1, count)
         bands = max(1, len(visible))
-        gap = 2.
-        bar = max(3., min(18., (row * .7 - gap * (bands - 1)) / bands))
+        gap = min(3., max(1., row * .045))
+        bar = min(14., max(3., (row * .72 - gap * (bands - 1)) / bands))
         block = bar * bands + gap * (bands - 1)
         baseline = self._x(0)
         if self._hover is not None:
@@ -715,14 +760,23 @@ class ChartCanvas(QWidget):
                     color = _alpha(color, COMPARISON_ALPHA)
                 box = QRectF(min(baseline, end), center - block / 2 + position * (bar + gap),
                              max(1.5, abs(end - baseline)), bar)
-                painter.fillPath(_hbar_path(box, 3, end >= baseline), color)
+                if value == 0:
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(color)
+                    painter.drawEllipse(QPointF(min(max(baseline, plot.left() + 3), plot.right() - 3),
+                                               box.center().y()), 3., 3.)
+                else:
+                    painter.fillPath(_bar_path(box), _bar_brush(color, box, horizontal=True))
                 if bands == 1 or self.show_values or bar >= 11:
+                    painter.setFont(value_font)
                     painter.setPen(QColor(tokens.TEXT_SECONDARY))
                     text = format_value(value)
                     painter.drawText(QRectF(box.right() + 4 if end >= baseline else box.left() - value_width,
-                                            box.center().y() - line_height / 2, value_width, line_height),
+                                            box.center().y() - value_metrics.height() / 2,
+                                            value_width, value_metrics.height()),
                                      (Qt.AlignmentFlag.AlignLeft if end >= baseline else Qt.AlignmentFlag.AlignRight)
                                      | Qt.AlignmentFlag.AlignVCenter, text)
+                    painter.setFont(self._font)
         if self._hover is not None:
             self._paint_tooltip(painter, str(data.labels[self._hover]), self._tooltip_rows(self._hover))
 
@@ -731,7 +785,7 @@ class ChartCanvas(QWidget):
         item = next((entry for entry in data.series), None)
         metrics = self._metrics()
         rect = QRectF(self.rect()).adjusted(4, 4, -4, -4)
-        entries = [(key, name, float(value), QColor(color))
+        entries = [(key, name, float(value), _alpha(color, COMPARISON_ALPHA) if item.faded else QColor(color))
                    for key, name, value, color in zip(
                        item.keys or data.labels, data.labels, item.values,
                        item.colors or [item.color] * len(data.labels))

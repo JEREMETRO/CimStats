@@ -414,9 +414,13 @@ def test_statistics_header_and_pivot_share_wide_row_but_wrap_on_narrow_window(mo
     for size in ((1440, 960), (980, 680), (2560, 1440)):
         window.resize(*size)
         app.processEvents()
-        # The sub-tabs stay in the one header row at every window size.
-        assert tabs.parentWidget() is window.header and tabs.isVisibleTo(window)
-        assert window.header.height() <= 64
+        assert window.header.isAncestorOf(tabs) and tabs.isVisibleTo(window)
+        if size[0] < 1000:
+            assert window.header._stacked_tabs
+            assert window.header.height() == 106
+        else:
+            assert not window.header._stacked_tabs
+            assert window.header.height() == 64
     window.close()
 
 
