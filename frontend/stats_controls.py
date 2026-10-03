@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBo
 from qfluentwidgets import ComboBox, ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
 
 import stats_tokens as tokens
+from stats_typography import ui_font
 import stats_motion as motion_policy
 
 _FONT_ID = -1
@@ -120,8 +121,7 @@ class FluentSegmentedControl(QFrame):
         button = TogglePushButton(text, self, icon)
         button.setAccessibleName(text)
         button.setFixedHeight(self._height - 2)
-        font = QFont(tokens.FONT_FAMILY)
-        font.setPixelSize(tokens.FONT_SIZE_CAPTION if self._compact else tokens.FONT_SIZE_BODY)
+        font = ui_font(tokens.FONT_SIZE_CAPTION if self._compact else tokens.FONT_SIZE_BODY)
         button.setFont(font)
         button.setIconSize(QSize(16, 16))
         text_width = QFontMetrics(font).horizontalAdvance(text)
@@ -348,12 +348,12 @@ def configure_fluent_table(table, *, font_size=12, header_font_size=11, header_p
     from qfluentwidgets import FluentStyleSheet
     # Apply the actual Fluent table stylesheet, not a naked QTableWidget rule.
     FluentStyleSheet.TABLE_VIEW.apply(table)
-    font = QFont(tokens.FONT_FAMILY); font.setPixelSize(font_size)
+    font = ui_font(font_size)
     table.setFont(font)
     table.setShowGrid(False)
     table.setBorderVisible(False)
     header = table.horizontalHeader()
-    header_font = QFont(tokens.FONT_FAMILY); header_font.setPixelSize(header_font_size)
+    header_font = ui_font(header_font_size)
     header.setFont(header_font)
     header.setStyleSheet(f'QHeaderView::section {{font-family:"{tokens.FONT_FAMILY}";'
                          f'font-size:{header_font_size}px;padding:{header_padding}px;'

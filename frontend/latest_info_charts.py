@@ -18,7 +18,7 @@ from stats_charts import ChartPanel
 from stats_controls import FluentSegmentedControl
 from stats_elevation import attach_card_elevation
 from stats_motion import SurfaceMotion, attach_surface_reveal
-from stats_typography import emphasis_font
+from stats_typography import emphasis_font, ui_font
 import stats_tokens as tokens
 
 
@@ -39,8 +39,7 @@ def shown(value):
 def font(size=12, bold=False):
     if size >= 18 or bold:
         return emphasis_font(size, QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
-    result = QFont(tokens.FONT_FAMILY)
-    result.setPixelSize(size)
+    result = ui_font(size)
     result.setWeight(QFont.Weight.DemiBold if bold else QFont.Weight.Normal)
     return result
 

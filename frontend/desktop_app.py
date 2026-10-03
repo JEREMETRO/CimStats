@@ -991,8 +991,8 @@ class MainWindow(FluentMainWindow):
         self.line_table.blockSignals(True)
         self.line_table.setSortingEnabled(False)
         self.line_table.setRowCount(len(rows))
-        body_font = QFont(FONT_FAMILY)
-        body_font.setPixelSize(FONT_SIZE_BODY)
+        from stats_typography import ui_font
+        body_font = ui_font(FONT_SIZE_BODY)
         for ri, row in enumerate(rows):
             values = [line_display_value(row, name) for name in (
                 "公司名称", "运输制式", "线路名称", "地图里程", "折算里程", "单程时间", "核定速度", "今日客流",

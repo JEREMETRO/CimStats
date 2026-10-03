@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 import stats_tokens as tokens
 from display_rules import format_number
-from stats_typography import emphasis_font, tooltip_font
+from stats_typography import emphasis_font, tooltip_font, ui_font
 
 KINDS = ('line', 'bar', 'hbar', 'donut')
 COMPARISON_ALPHA = tokens.CHART_COMPARISON_OPACITY
@@ -169,7 +169,7 @@ def _bar_brush(color: QColor, rect: QRectF, horizontal=False) -> QBrush:
 
 def _value_font(text, width, height, total=False):
     for size in range(15 if total else 13, 11 if total else 9, -1):
-        font = emphasis_font(size, QFont.Weight.Bold) if total else QFont(tokens.FONT_FAMILY)
+        font = emphasis_font(size, QFont.Weight.Bold) if total else ui_font(size)
         font.setPixelSize(size)
         metrics = QFontMetricsF(font)
         if metrics.horizontalAdvance(text) <= width - 8 and metrics.height() <= height - 4:
@@ -236,8 +236,7 @@ class ChartCanvas(QWidget):
         self.setMinimumHeight(140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
-        self._font = QFont(tokens.FONT_FAMILY)
-        self._font.setPixelSize(tokens.FONT_SIZE_CAPTION)
+        self._font = ui_font(tokens.FONT_SIZE_CAPTION)
         self._strong = QFont(self._font)
         self._strong.setWeight(QFont.Weight.DemiBold)
         from touch_input import install_touch_input
@@ -818,8 +817,7 @@ class ChartCanvas(QWidget):
         visible = self.visible_series()
         values = [float(value) for item in visible for value in item.values if value is not None]
         label_width = min(rect.width() * .32, max(metrics.horizontalAdvance(str(text)) for text in data.labels) + 12)
-        value_font = QFont(tokens.FONT_FAMILY)
-        value_font.setPixelSize(13 if self.detailed else 12)
+        value_font = ui_font(13 if self.detailed else 12)
         value_metrics = self._metrics(value_font)
         value_width = max((value_metrics.horizontalAdvance(format_value(value, self.data.decimal_places)) for value in values), default=0) + 10
         plot_width = max(20., rect.width() - label_width - value_width)

@@ -23,6 +23,7 @@ from qfluentwidgets import (ComboBox, FluentIcon, IconWidget, TogglePushButton,
 
 from line_schedule import PERIOD_LABELS, prepare_schedule, timetable_entry_inactive
 import stats_tokens as tokens
+from stats_typography import ui_font
 from stats_typography import emphasis_css, apply_emphasis_font
 from stats_controls import FluentSegmentedControl, StatisticsScrollArea
 from stats_elevation import attach_card_elevation
@@ -83,9 +84,8 @@ class ScheduleMatrix(QWidget):
         self.columns = 10
         self._scroll = None
         self.setObjectName('scheduleMatrix')
-        font = QFont(tokens.FONT_FAMILY)
+        font = ui_font(tokens.FONT_SIZE_BODY)
         font.setFeature(QFont.Tag('tnum'), 1)
-        font.setPixelSize(tokens.FONT_SIZE_BODY)
         font.setWeight(QFont.Weight.Normal)
         self.setFont(font)
         self.setMouseTracking(True)
