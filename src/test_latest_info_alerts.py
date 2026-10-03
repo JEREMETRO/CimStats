@@ -385,7 +385,8 @@ def test_summary_rows_keep_input_order_neutral_marker_and_grouped_values_gui(gui
     assert len(rows) == 5
     for row, alert in zip(rows, snapshot.alerts[:5]):
         assert 76 <= row.height() <= 88
-        assert alert.key[1] in row.toolTip()
+        assert row.toolTip() == ''
+        assert alert.key[1] in row.accessibleName()
         assert f'{alert.after:,.0f}' in row.findChild(QLabel, 'alertSummaryValue').text()
         marker = row.findChild(QLabel, 'alertNeutralMarker')
         assert marker.toolTip() == '未读'

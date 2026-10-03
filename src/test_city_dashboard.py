@@ -9,6 +9,48 @@ from statistics_page import StatisticsPage
 from test_city_model import build, r
 
 
+def test_energy_and_trip_tooltips_show_user_data_without_internal_conversion():
+    from city_dashboard import CityDashboard
+    from PySide6.QtWidgets import QWidget
+    QApplication.instance() or QApplication([])
+    widget = CityDashboard()
+    snapshot = build([r('energy-prices', 'electricity', 0, 50),
+                      r('energy-prices', 'fuel', 0, 145),
+                      r('trip-time', 'A', 0, 100, 2)])
+    widget.set_snapshot(snapshot)
+    energy = widget.panels['energy-prices']
+    assert energy.toolTip() == ''
+    assert energy.result.metric.unit == '货币'
+    bucket = energy.result.series[('', '电力')][0]
+    note = energy._point_note('', '电力', bucket, False)
+    assert '实际观测' in note
+    assert all(word not in note for word in ('原值', '未确认', '÷'))
+    assert widget.panels['trip-time'].toolTip() == ''
+    tile = widget.tiles['trip-time']
+    assert all('原始分钟' not in w.toolTip() and '÷' not in w.toolTip()
+               for w in [tile, *tile.findChildren(QWidget)])
+    widget.set_snapshot(build([r('trip-time', 'A', 0, 100, 0)]))
+    assert widget.panels['trip-time'].toolTip()
+    widget.close()
+
+
+def test_city_hover_preserves_full_population_and_density_peak_time():
+    from city_dashboard import CityDashboard
+    QApplication.instance() or QApplication([])
+    widget = CityDashboard()
+    widget.set_snapshot(build([r('population', 'A', 0, 123456),
+                               r('traffic-density', 'Road', 1, 91, 100),
+                               r('traffic-density', 'Track', 2, 0, 100)]))
+    assert '123,456 人' in widget.tiles['population'].toolTip()
+    density = widget.tiles['traffic-density'].toolTip()
+    for text in ('道路峰值：91 %', '轨道峰值：0 %', '2024-01-02 01:00',
+                 '2024-01-02 02:00', '统计时间内最高小时交通密度'):
+        assert text in density
+    bucket = widget.panels['population'].result.series[('', '总计')][1]
+    assert widget.panels['population']._point_note('', '总计', bucket, False) == '数据不完整'
+    widget.close()
+
+
 def test_city_six_charts_five_kpis_defaults_and_switches_use_same_snapshot():
     from city_dashboard import CityDashboard
     QApplication.instance() or QApplication([])

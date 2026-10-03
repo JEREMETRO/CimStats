@@ -258,7 +258,7 @@ def test_company_total_line_legend_disambiguates_duplicate_company_names():
     state.companies = {'a': '同名公司', 'b': '同名公司'}
     panel.set_descriptor(descriptor(make_result(metric='stopcount', groups=('总计',)), key='stopcount',
                                     allowed=('line', 'bar')), state)
-    assert {chip.text() for chip in panel.legend_buttons.values()} == {'同名公司 (a)', '同名公司 (b)'}
+    assert {chip.text() for chip in panel.legend_buttons.values()} == {'同名公司 [a]', '同名公司 [b]'}
     panel.deleteLater()
 
 
@@ -322,8 +322,27 @@ def test_selected_companies_series_has_public_identity_in_legend():
     panel = NetworkChartPanel()
     data = make_result(metric='coverage', companies=('__selected__', 'a'), groups=('总计',))
     panel.set_descriptor(descriptor(data, key='coverage', allowed=('line',)), snapshot('overall'))
-    assert panel.legend_buttons['__selected__'].text() == '已选公司'
+    assert panel.legend_buttons['__selected__'].text() == '甲公司、乙公司合计'
     assert all('__selected__' not in item.name for item in chart(panel).series)
+    panel.deleteLater()
+
+
+def test_single_company_overall_and_enlarged_summary_use_selected_name():
+    from chart_details import summary_cards
+    app()
+    panel = NetworkChartPanel()
+    names = {'a': '任意公司甲', 'b': '任意公司乙'}
+    state = snapshot('overall')
+    state.companies = names
+    state.filters = SimpleNamespace(companies=('b',))
+    data = make_result(companies=('b',))
+    panel.set_descriptor(descriptor(data), state)
+    assert panel._group_name('__overall__') == '任意公司乙'
+    assert panel._display_company('__selected__') == '任意公司乙'
+    data.series = {('__selected__', category): buckets for (_, category), buckets in data.series.items()}
+    assert summary_cards(data, names)[0]['name'] == '任意公司乙'
+    state.filters.companies = ('a', 'b')
+    assert panel._display_company('__selected__') == '任意公司甲、任意公司乙合计'
     panel.deleteLater()
 
 

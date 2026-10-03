@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 import stats_tokens as tokens
 from display_rules import format_number
-from stats_typography import emphasis_font
+from stats_typography import emphasis_font, tooltip_font
 
 KINDS = ('line', 'bar', 'hbar', 'donut')
 COMPARISON_ALPHA = tokens.CHART_COMPARISON_OPACITY
@@ -668,7 +668,8 @@ class ChartCanvas(QWidget):
     def _paint_tooltip(self, painter, title, rows):
         if not rows:
             return
-        metrics, strong = self._metrics(), self._metrics(self._strong)
+        tip_font = tooltip_font()
+        metrics = strong = self._metrics(tip_font)
         line = metrics.height() + 4
         name_width = max(metrics.horizontalAdvance(name) for _, name, _, _ in rows)
         value_width = max(strong.horizontalAdvance(value) for _, _, value, _ in rows)
@@ -686,11 +687,11 @@ class ChartCanvas(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 18))
         painter.drawRoundedRect(box.translated(0, 2), 8, 8)
-        painter.setPen(QPen(QColor(tokens.BORDER_STRONG), 1))
-        painter.setBrush(QColor(tokens.CARD_BG))
-        painter.drawRoundedRect(box, 8, 8)
-        painter.setFont(self._strong)
-        painter.setPen(QColor(tokens.TEXT_PRIMARY))
+        painter.setPen(QPen(QColor(tokens.TOOLTIP_BORDER), 1))
+        painter.setBrush(QColor(tokens.TOOLTIP_BG))
+        painter.drawRoundedRect(box, tokens.TOOLTIP_RADIUS, tokens.TOOLTIP_RADIUS)
+        painter.setFont(tip_font)
+        painter.setPen(QColor(tokens.TOOLTIP_TEXT))
         cursor = y + 8
         painter.drawText(QRectF(x + 12, cursor, width - 24, line), Qt.AlignmentFlag.AlignVCenter, title)
         cursor += line
@@ -698,18 +699,18 @@ class ChartCanvas(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             painter.drawRoundedRect(QRectF(x + 12, cursor + line / 2 - 4, 8, 8), 2, 2)
-            painter.setFont(self._font)
-            painter.setPen(QColor(tokens.TEXT_SECONDARY))
+            painter.setFont(tip_font)
+            painter.setPen(QColor(tokens.TOOLTIP_TEXT))
             painter.drawText(QRectF(x + 26, cursor, width - 38, line), Qt.AlignmentFlag.AlignVCenter,
                              metrics.elidedText(name, Qt.TextElideMode.ElideRight, width - 46 - value_width))
-            painter.setFont(self._strong)
-            painter.setPen(QColor(tokens.TEXT_PRIMARY))
+            painter.setFont(tip_font)
+            painter.setPen(QColor(tokens.TOOLTIP_TEXT))
             painter.drawText(QRectF(x + 12, cursor, width - 24, line),
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, value)
             cursor += line
             if note:
-                painter.setFont(self._font)
-                painter.setPen(QColor(tokens.TEXT_SECONDARY))
+                painter.setFont(tip_font)
+                painter.setPen(QColor(tokens.TOOLTIP_TEXT))
                 painter.drawText(QRectF(x + 26, cursor, width - 38, line), Qt.AlignmentFlag.AlignVCenter,
                                  metrics.elidedText(note, Qt.TextElideMode.ElideRight, width - 38))
                 cursor += line
@@ -874,10 +875,12 @@ class ChartCanvas(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(_alpha(part['color'], .35) if hidden else part['color'])
             painter.drawRoundedRect(QRectF(x, y + line / 2 - 4, 8, 8), 2, 2)
-            percent = format_number(part['percent'], 1, fixed=True) + '%'
+            percentage_value = data.unit == '%'
+            percent = (f"{format_value(part['value'], data.decimal_places)} %" if percentage_value
+                       else format_number(part['percent'], 1, fixed=True) + '%')
             value_text = f"{format_value(part['value'], data.decimal_places)}"
             right_width = metrics.horizontalAdvance(percent) + 8 if self.detailed else 0
-            value_space = metrics.horizontalAdvance(value_text) + 12 if self.detailed else 0
+            value_space = metrics.horizontalAdvance(value_text) + 12 if self.detailed and not percentage_value else 0
             painter.setPen(QColor(tokens.TEXT_DISABLED if hidden else tokens.TEXT_PRIMARY))
             painter.drawText(QRectF(x + 14, y, column_width - 14 - right_width - value_space, line),
                              Qt.AlignmentFlag.AlignVCenter,
@@ -885,8 +888,9 @@ class ChartCanvas(QWidget):
                                                 column_width - 14 - right_width - value_space))
             if self.detailed:
                 painter.setPen(QColor(tokens.TEXT_SECONDARY))
-                painter.drawText(QRectF(x, y, column_width - right_width - 4, line),
-                                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, value_text)
+                if not percentage_value:
+                    painter.drawText(QRectF(x, y, column_width - right_width - 4, line),
+                                     Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, value_text)
                 painter.setFont(self._strong)
                 painter.setPen(QColor(tokens.TEXT_DISABLED if hidden else tokens.TEXT_PRIMARY))
                 painter.drawText(QRectF(x, y, column_width - 4, line),
@@ -896,7 +900,7 @@ class ChartCanvas(QWidget):
         hovered = next((part for part in self._slices if part['key'] == self._hover_slice), None)
         if hovered is not None:
             self._paint_tooltip(painter, hovered['name'], [(
-                hovered['color'], format_number(hovered['percent'], 1, fixed=True) + '%',
+                hovered['color'], item.name if data.unit == '%' else format_number(hovered['percent'], 1, fixed=True) + '%',
                 f"{format_value(hovered['value'], data.decimal_places)} {data.unit}".strip(), '')])
 
     # ------------------------------------------------------------- pointer

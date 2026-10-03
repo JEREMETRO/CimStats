@@ -132,7 +132,7 @@ def test_network_comparison_keeps_one_decimal_for_vehicle_values():
     from card_comparisons import change
     comparison = change(Decimal('121.928577'), Decimal('110.9988'), '辆', '较上日', value_places=1)
     assert '当前 121.9 辆' in comparison.tooltip
-    assert '基准 110.9 辆' in comparison.tooltip
+    assert '对比 110.9 辆' in comparison.tooltip
     assert comparison.amount == (Decimal('121.928577') - Decimal('110.9988')) * 100 / Decimal('110.9988')
 
 

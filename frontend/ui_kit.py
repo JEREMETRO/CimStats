@@ -9,6 +9,17 @@ from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QLa
 import stats_tokens as tokens
 
 
+def elision_tooltip(full, shown, company_id=None):
+    """Only add text that was lost, using a caller-supplied real identity."""
+    if full == shown:
+        return ''
+    if company_id is not None:
+        for suffix in (f' [{company_id}]', f' ({company_id})'):
+            if full.endswith(suffix):
+                return f'{full[:-len(suffix)]}\n公司标识：{company_id}'
+    return full
+
+
 class FlowLayout(QLayout):
     """Left-to-right wrapping layout with height-for-width support."""
 
@@ -89,6 +100,9 @@ class LegendChip(QAbstractButton):
     def __init__(self, text: str, color: QColor, parent=None, *, compact=False):
         super().__init__(parent)
         self._compact = compact
+        self._hover_full_text = None
+        self._hover_company = None
+        self._hover_override = None
         self.setText(text)
         self._color = QColor(color)
         self.setCheckable(True)
@@ -98,9 +112,51 @@ class LegendChip(QAbstractButton):
         font.setPixelSize(11 if compact else tokens.FONT_SIZE_CAPTION)
         self.setFont(font)
         self.setAccessibleName(text)
-        self.setToolTip(f'{text} · 点击显示/隐藏')
+        self._refresh_tooltip()
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.ensurePolished()
+
+    def setText(self, text):
+        super().setText(text)
+        if hasattr(self, '_hover_full_text'):
+            self._refresh_tooltip()
+
+    def setToolTip(self, text):
+        # Specialized sources retain their separately reviewed hover content.
+        self._hover_override = text
+        super().setToolTip(text)
+
+    def set_full_text(self, text):
+        self._hover_full_text = text
+        self._hover_override = None
+        self.setAccessibleName(text)
+        self._refresh_tooltip()
+
+    def set_company_identity(self, name, company_id):
+        self._hover_company = (name, str(company_id))
+        self._refresh_tooltip()
+
+    def _text_width(self):
+        return self.width() - (13 if self._compact else 25)
+
+    def _refresh_tooltip(self):
+        if self._hover_override is not None:
+            return
+        full = self._hover_full_text or self.text()
+        shown = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                             max(0, self._text_width()))
+        tip = full if shown != full else ''
+        if self._hover_company:
+            name, identity = self._hover_company
+            identity_visible = shown in (f'{name} [{identity}]', f'{name} ({identity})')
+            if not identity_visible:
+                tip = (name + '\n' if shown != name else '') + f'公司标识：{identity}'
+        if self.toolTip() != tip:
+            super().setToolTip(tip)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_tooltip()
 
     def set_color(self, color: QColor):
         self._color = QColor(color)
@@ -121,6 +177,7 @@ class LegendChip(QAbstractButton):
         super().leaveEvent(event)
 
     def paintEvent(self, event):
+        self._refresh_tooltip()
         painter = QPainter(self)
         painter.setFont(self.font())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -156,7 +213,10 @@ class SeriesLegend(LegendChip):
         self.setCheckable(False)
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setToolTip(text)
+        self._refresh_tooltip()
+
+    def _text_width(self):
+        return self.width() - 30
 
     def sizeHint(self):
         return QSize(min(140 if self._compact else 252, self.fontMetrics().horizontalAdvance(self.text()) + 32),
@@ -169,6 +229,7 @@ class SeriesLegend(LegendChip):
             self.update()
 
     def paintEvent(self, event):
+        self._refresh_tooltip()
         painter = QPainter(self)
         painter.setFont(self.font())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

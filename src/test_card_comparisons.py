@@ -10,7 +10,7 @@ from test_statistics_model import row
 def test_change_percent_points_negative_zero_and_missing():
     assert change(V(120), V(100), '人', '较上日').amount == 20
     assert change(V(68), V(70), '%', '较上日').amount == -2
-    assert '-2 点' in change(V(68), V(70), '%', '较上日').text
+    assert '-2 百分点' in change(V(68), V(70), '%', '较上日').text
     assert change(V(-80), V(-100), '货币', '较上日').amount == 20
     assert '增加 5 人' in change(V(5), V(0), '人', '较上日').text
     assert '持平' in change(V(0), V(0), '人', '较上日').text
@@ -112,6 +112,22 @@ def test_comparison_label_bolds_only_numbers_and_units():
     assert document.find('较上日').charFormat().fontWeight() == 400
     label.set_comparison(change(V(68), V(70), '%', '较上日'))
     document.setHtml(label.text())
-    assert document.find('-2 点').charFormat().fontWeight() == 600
+    assert document.find('-2 百分点').charFormat().fontWeight() == 600
     assert label.accessibleName() == label.full_text
     label.close()
+
+
+def test_comparison_copy_keeps_values_dates_zero_and_valid_peer_scope():
+    current = (D(2024, 1, 2), D(2024, 1, 3))
+    previous = (D(2024, 1, 1), D(2024, 1, 2))
+    comparison = change(V(68), V(70), '%', '较上日', current_window=current,
+                        previous_window=previous, partial=True)
+    for text in ('当前 68 %', '对比 70 %', '2024-01-02', '2024-01-01',
+                 '绝对差 -2 百分点', '数据不完整'):
+        assert text in comparison.tooltip
+    assert all(text not in comparison.tooltip for text in ('计算', '0.01', '年化', '|基准|'))
+    zero = change(V(-5), V(0), '人', '较上日')
+    assert '减少 5 人' in zero.text and '对比值为零' in zero.tooltip
+    ranked = peer_comparisons({'a': V(10), 'b': V(10), 'c': None}, {}, '人')
+    assert '并列第 1 名' in ranked['a'].tooltip
+    assert '2 家有效' in ranked['a'].tooltip and '竞赛' not in ranked['a'].tooltip

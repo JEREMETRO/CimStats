@@ -459,7 +459,10 @@ def test_long_identity_names_keep_compact_chart_plot_readable(mode):
     assert view.plot_rect().height() >= 20
     assert view.plot_rect().bottom() + view._metrics().height() + 6 <= view.height()
     assert all(entry['widget'].width() <= 140 for entry in widget.series_legend_entries)
-    assert all(entry['widget'].toolTip() == entry['name'] for entry in widget.series_legend_entries)
+    for entry in widget.series_legend_entries:
+        # The short current-period label is already visible; long company and
+        # custom comparison identities still need their complete hover text.
+        assert entry['widget'].toolTip() == ('' if entry['name'] == '本期' else entry['name'])
     widget.close()
 
 

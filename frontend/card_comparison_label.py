@@ -9,7 +9,7 @@ from stats_tokens import FONT_SIZE_CAPTION, TEXT_SECONDARY
 from stats_typography import emphasis_html, emphasis_css, apply_emphasis_font
 
 
-_AMOUNT = re.compile(r'[+-]?\d[\d,]*(?:\.\d+)?(?:\s*(?:万人|人次|货币|分钟|评分|%|点|辆|次|人|条|个|倍))?')
+_AMOUNT = re.compile(r'[+-]?\d[\d,]*(?:\.\d+)?(?:\s*(?:万人|人次|货币|分钟|评分|百分点|%|点|辆|次|人|条|个|倍))?')
 
 
 def _rich_text(text):

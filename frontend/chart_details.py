@@ -10,6 +10,7 @@ from shiboken6 import isValid
 
 from statistics_model import summarize_buckets
 from display_rules import format_number, number_places
+from company_labels import company_selection_name
 from stats_text import group_label
 from stats_typography import apply_emphasis_font, emphasis_css
 import stats_tokens as tokens
@@ -210,7 +211,10 @@ def summary_cards(result, companies, comparison_label='对比', company_name=Non
             grouped[company].append((group, value))
         for company, values in grouped.items():
             name = (company_name(company) if company_name else
-                    companies.get(company, {'__selected__': '已选公司', '': '整体'}.get(company, company)))
+                    companies.get(company, {'__selected__': company_selection_name(
+                        companies, tuple(k for k in result.query.companies if not k.startswith('__'))
+                        or tuple(k for k in companies if not k.startswith('__'))),
+                        '': '整体'}.get(company, company)))
             card = dict(company=company, name=name, period=comparison_label if previous else '本期',
                         window=window, values=values, unit=result.metric.unit, kind=result.metric.kind)
             if result.metric.kind == 'flow':

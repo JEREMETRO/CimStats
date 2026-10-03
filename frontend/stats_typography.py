@@ -80,6 +80,15 @@ def emphasis_font(size: int, weight: QFont.Weight = QFont.Weight.DemiBold) -> QF
     return result
 
 
+def tooltip_font() -> QFont:
+    """Independent regular font; never inherit a KPI's size or emphasis."""
+    result = QFont()
+    result.setFamilies(['Segoe UI', tokens.FONT_FAMILY])
+    result.setPixelSize(tokens.TOOLTIP_FONT_SIZE)
+    result.setWeight(QFont.Weight.Normal)
+    return result
+
+
 def typography_status() -> dict:
     """Internal availability record; actual glyph verification remains separate."""
     families = emphasis_families(20)

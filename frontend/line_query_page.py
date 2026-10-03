@@ -1,11 +1,12 @@
 """Compact line query surfaces; the list may float over a stable detail pane."""
-from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent
+from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QObject
 from PySide6.QtGui import QAction, QPainter, QFont, QColor, QFontMetrics
 import re
 from decimal import Decimal
 from display_rules import format_number
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QScrollArea, QSizePolicy, QHeaderView, QTableWidget, QFrame)
+    QScrollArea, QSizePolicy, QHeaderView, QTableWidget, QFrame, QStyle, QStyleOptionButton,
+    QStyleOptionViewItem, QToolTip)
 from qfluentwidgets import (CardWidget, CheckableMenu, DropDownPushButton,
     LineEdit, ComboBox, TableWidget, TransparentToolButton, FluentIcon, IconWidget, setCustomStyleSheet)
 from stats_motion import SurfaceMotion, CollapseMotion, animations_enabled
@@ -19,6 +20,55 @@ HEADERS = ['公司', '制式', '线路名称', '地图 km', '折算 km', '单程
            '今日平均单班人次', '今日平均车公里人次']
 CORE_COLUMNS = {2, 7, 8, 9, 10}
 QUERY_COLUMNS = frozenset(range(len(HEADERS))) - {4}
+
+
+class LineFilterComboBox(ComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentIndexChanged.connect(self._refresh_tooltip)
+
+    def _refresh_tooltip(self, *_):
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        rect = self.style().subElementRect(QStyle.SubElement.SE_PushButtonContents, option, self)
+        self.setToolTip(self.currentText() if self.fontMetrics().horizontalAdvance(self.currentText()) > rect.width() else '')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_tooltip()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
+            self._refresh_tooltip()
+
+
+class ElisionOnlyTableTooltips(QObject):
+    def __init__(self, table):
+        super().__init__(table)
+        self.table = table
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.Type.ToolTip:
+            return False
+        index = self.table.indexAt(event.pos())
+        if not index.isValid():
+            return False
+        option = QStyleOptionViewItem()
+        self.table.initViewItemOption(option)
+        option.widget = self.table
+        delegate = self.table.itemDelegateForIndex(index)
+        delegate.initStyleOption(option, index)
+        option.rect = self.table.visualRect(index)
+        # Fluent TABLE_VIEW gives plain text cells 16 px padding on each side.
+        # Querying SE_ItemViewItemText through its stylesheet proxy can crash Qt.
+        rect = option.rect.adjusted(16, 0, -16, 0)
+        rect = rect.intersected(self.table.viewport().rect())
+        if QFontMetrics(option.font).horizontalAdvance(option.text) <= rect.width():
+            delegate.tooltipDelegate.hideToolTip()
+            QToolTip.hideText()
+            return True
+        return False
 
 
 def shown(value, unit=''):
@@ -43,16 +93,41 @@ def line_display_value(line, key):
 
 
 class FullTextLabel(QLabel):
-    """Elide only paint; tooltip and assistive technologies retain the full value."""
+    """Reveal clipped text without replacing dedicated explanatory tooltips."""
     def __init__(self, text='', parent=None):
+        self._explicit_tooltip = None
         super().__init__(text, parent)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setAccessibleName(text)
+        self._refresh_tooltip()
 
     def setText(self, text):
         super().setText(text)
-        self.setToolTip(text)
         self.setAccessibleName(text)
+        self._refresh_tooltip()
+
+    def setToolTip(self, text):
+        self._explicit_tooltip = text
+        self._refresh_tooltip()
+
+    def _is_clipped(self):
+        return self.fontMetrics().horizontalAdvance(self.text()) > self.contentsRect().width()
+
+    def _refresh_tooltip(self):
+        tip = self._explicit_tooltip
+        if tip is None:
+            tip = self.text() if self._is_clipped() else ''
+        QLabel.setToolTip(self, tip)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_tooltip()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
+            self._refresh_tooltip()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -72,6 +147,14 @@ class MetricValueLabel(FullTextLabel):
     def unit_font(self):
         return emphasis_font(tokens.FONT_SIZE_CAPTION, QFont.Weight.DemiBold)
 
+    def _is_clipped(self):
+        match = re.fullmatch(r'(.*?) (km/h|km|min|班|辆|人次)', self.text())
+        if not match:
+            return super()._is_clipped()
+        number, unit = match.groups()
+        width = self.fontMetrics().horizontalAdvance(number) + 6 + QFontMetrics(self.unit_font()).horizontalAdvance(unit)
+        return width > self.contentsRect().width()
+
     def paintEvent(self,event):
         match=re.fullmatch(r'(.*?) (km/h|km|min|班|辆|人次)',self.text())
         if not match:
@@ -89,6 +172,17 @@ class MetricValueLabel(FullTextLabel):
         painter.setFont(unit_font)
         painter.setPen(QColor(tokens.TEXT_SECONDARY))
         painter.drawText(rect.x()+metrics.horizontalAdvance(number)+gap,baseline,unit)
+
+
+class WrappedFactLabel(FullTextLabel):
+    def _is_clipped(self):
+        rect = self.contentsRect()
+        bounds = self.fontMetrics().boundingRect(
+            rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft, self.text())
+        return bounds.height() > rect.height() or bounds.width() > rect.width()
+
+    def paintEvent(self, event):
+        QLabel.paintEvent(self, event)
 
 
 class CompactFactCard(QFrame):
@@ -123,7 +217,7 @@ class CompactFactCard(QFrame):
         self.label.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};font-family:"{tokens.FONT_FAMILY}";font-size:{tokens.FONT_SIZE_CAPTION}px;')
         garage = primary[0] == '线路车库' and not alternate
         date = primary[0] == '开线日期'
-        self.value = (QLabel(shown(primary[1]), self) if garage else
+        self.value = (WrappedFactLabel(shown(primary[1]), self) if garage else
                       FullTextLabel(shown(primary[1]), self) if date else
                       MetricValueLabel(shown(primary[1]), self))
         if garage:
@@ -155,10 +249,10 @@ class CompactFactCard(QFrame):
         else:
             layout.addLayout(note)
         self.value.setText(shown(primary[1]))
-        self.value.setToolTip(shown(primary[1])); self.value.setAccessibleName(shown(primary[1]))
+        self.value.setAccessibleName(shown(primary[1]))
         self.note_value.setText(shown(alternate[1]) if alternate else '')
         if tooltip:
-            self.setToolTip(tooltip); self.note_label.setToolTip(tooltip); self.note_value.setToolTip(tooltip)
+            self.note_label.setToolTip(tooltip); self.note_value.setToolTip(tooltip)
         self.setAccessibleName('；'.join((str(primary[0])+' '+shown(primary[1]),
             str(alternate[0])+' '+shown(alternate[1]) if alternate else '')))
 
@@ -193,9 +287,9 @@ class LinesPage(QWidget):
         filters = QGridLayout(); filters.setContentsMargins(0,0,0,0); filters.setSpacing(6)
         self._filters_layout = filters
         self._filter_wrapped = None
-        self.line_company = ComboBox(self.left); self.line_company.setMinimumWidth(0)
+        self.line_company = LineFilterComboBox(self.left); self.line_company.setMinimumWidth(0)
         self.line_company.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.line_mode = ComboBox(self.left); self.line_mode.setMinimumWidth(0)
+        self.line_mode = LineFilterComboBox(self.left); self.line_mode.setMinimumWidth(0)
         self.line_mode.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         for combo in (self.line_company, self.line_mode):
             combo.setFixedHeight(36); combo.currentIndexChanged.connect(owner.refresh_lines)
@@ -207,6 +301,8 @@ class LinesPage(QWidget):
         self.line_count.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};font-family:"{tokens.FONT_FAMILY}";font-size:12px;')
         left_layout.addLayout(filters)
         self.line_table = TableWidget(self.left)
+        self._table_tooltips = ElisionOnlyTableTooltips(self.line_table)
+        self.line_table.viewport().installEventFilter(self._table_tooltips)
         self.line_table.setColumnCount(len(HEADERS)); self.line_table.setHorizontalHeaderLabels(HEADERS)
         self.line_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.line_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -284,8 +380,6 @@ class LinesPage(QWidget):
         self._apply_columns(); self._update_button()
         self.left.installEventFilter(self)
         self._fit_filters()
-        for combo in (self.line_company, self.line_mode):
-            combo.currentIndexChanged.connect(lambda _=0, control=combo: control.setToolTip(control.currentText()))
         self.installEventFilter(self)
 
     def _fit_filters(self):

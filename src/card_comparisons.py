@@ -51,11 +51,11 @@ def window_text(window):
 def change(current, baseline, unit, prefix, *, current_window=None, previous_window=None,
            partial=False, value_places=2):
     if current is None or baseline is None:
-        return CardComparison(tooltip=f'{prefix}：当前或基准缺少有效数据；缺测不补零')
+        return CardComparison(tooltip=f'{prefix}：当前或对比期缺少有效数据')
     delta = current - baseline
     direction = (delta > 0) - (delta < 0)
     if unit == '%':
-        amount, suffix = delta, '点'
+        amount, suffix = delta, '百分点'
         body = f'{"+" if delta > 0 else ""}{number(delta)} {suffix}' if delta else '持平'
     elif baseline:
         amount, suffix = delta * 100 / abs(baseline), '%'
@@ -65,13 +65,13 @@ def change(current, baseline, unit, prefix, *, current_window=None, previous_win
         body = f'{"增加" if delta > 0 else "减少"} {number(abs(delta), value_places)} {unit}' if delta else '持平'
     text = f'{prefix} {body}'
     tooltip = (f'{prefix}；当前 {number(current, value_places)} {unit}（{window_text(current_window)}）；'
-               f'基准 {number(baseline, value_places)} {unit}（{window_text(previous_window)}）；'
-               f'绝对差 {number(delta, value_places)} {"点" if unit == "%" else unit}。')
-    tooltip += ('占比按点数差计算；1 点对应比率差 0.01。' if unit == '%' else
-                '相对差=(当前-基准)/|基准|；基准为零时显示绝对差。')
+               f'对比 {number(baseline, value_places)} {unit}（{window_text(previous_window)}）；'
+               f'绝对差 {number(delta, value_places)} {"百分点" if unit == "%" else unit}。')
+    if not baseline:
+        tooltip += '对比值为零。'
     if partial:
         text += ' *'
-        tooltip += '包含部分周期或不完整记录，未进行补齐或年化。'
+        tooltip += '数据不完整。'
     return CardComparison(text, tooltip, direction, True, amount, suffix)
 
 
@@ -112,8 +112,8 @@ def peer_comparisons(values, names, unit, window=None, *, value_places=2):
         if len(valid) != len(values):
             text += ' *'
         result[owner] = CardComparison(text,
-            f'本次所选 {len(values)} 家公司中有 {len(valid)} 家有效；按指标数值从高到低，'
-            f'并列采用竞赛排名；第一名：{"、".join(names.get(key, key) for key in leader_ids)}；{comparison.tooltip}',
+            f'{"并列" if tied else ""}第 {rank} 名；本次所选 {len(values)} 家公司中有 {len(valid)} 家有效；'
+            f'第一名：{"、".join(names.get(key, key) for key in leader_ids)}；{comparison.tooltip}',
             comparison.direction, True, comparison.amount, comparison.unit, rank)
     return result
 

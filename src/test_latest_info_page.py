@@ -18,7 +18,7 @@ METRIC_KEYS = (
 )
 METRIC_TITLES = (
     '线路总数', '车辆总数', '行车总时间', '车辆周转率', '每周收入',
-    '每周支出', '净利润', '平均间隔', '平均核定速度', '平均单班人次',
+    '每周支出', '周利润', '平均间隔', '平均核定速度', '平均单班人次',
     '平均车公里人次', '公共交通分担率', '平均换乘系数',
 )
 MODES = ('公交', '有轨电车', '无轨电车', '地铁', '单轨列车', '水上巴士')
@@ -107,6 +107,17 @@ def child(page, name):
     result = page.findChild(QWidget, name)
     assert result is not None, f'Missing visible content: {name}'
     return result
+
+
+def test_city_name_and_clock_never_tip_after_session_snapshot_or_clipping(page, qt_application):
+    assert all(not w.toolTip() for w in (page.city_name,page.city_date,page.city_clock))
+    page.set_session(session())
+    page.set_snapshot(snapshot())
+    for widget in (page.city_name,page.city_date,page.city_clock):
+        widget.setFixedWidth(15)
+    qt_application.processEvents()
+    assert all(not w.toolTip() for w in (page.city_name,page.city_date,page.city_clock))
+    assert page.city_name.accessibleName() and page.city_clock.accessibleName()
 
 
 def inside(container, widget):
@@ -350,8 +361,8 @@ def test_hero_preserves_seconds_separate_clock_and_population_unit(page, qt_appl
     date = child(page, 'citySimulationDate')
     assert clock.text() == '10:30:13' and clock.font().pixelSize() == 21
     assert date.text() == '2024-06-10  周一' and date.font().pixelSize() == 14
-    assert all(part in clock.toolTip() for part in ('2024-06-10', '周一', '10:30:13'))
-    assert all(part in date.toolTip() for part in ('2024-06-10', '周一', '10:30:13'))
+    assert clock.toolTip() == date.toolTip() == ''
+    assert all(part in clock.accessibleName() for part in ('2024-06-10', '周一', '10:30:13'))
     assert child(page, 'cityPopulation').text() == '123,456'
     assert child(page, 'cityPopulationUnit').text() == '人'
     assert child(page, 'cityPopulationUnit').font().pixelSize() == 12
@@ -406,7 +417,8 @@ def test_upper_budget_preserves_module_axes_and_highlight_hierarchy(page, qt_app
         assert inside(page.highlights_group, highlight)
         assert snapshot().highlights[i].line.mode in highlight.name.text()
         assert [number.font().pixelSize() for number in highlight.values] == ([20, 13, 13, 13] if i < 2 else [13, 20, 13, 13])
-    assert '全市' in child(page, 'metric-public-transport-share').toolTip()
+    assert child(page, 'metric-public-transport-share').toolTip() == ''
+    assert '全市' in child(page, 'metric-public-transport-share').title.toolTip()
 
 
 def test_user_removes_explanation_badges_routes_and_merges_metric_surfaces(page, qt_application):
@@ -511,7 +523,8 @@ def test_untrusted_metadata_filename_never_becomes_city_and_snapshot_trace_is_av
                    city_internal_id='273831404', city_name_reason='可靠原始来源')
     page.set_snapshot(snap)
     assert child(page, 'cityName').text() == 'Eixeia'
-    assert ':273831404:Eixeia1.1' in child(page, 'cityName').toolTip()
+    assert child(page, 'cityName').toolTip() == ''
+    assert page._snapshot.city_raw_reference == ':273831404:Eixeia1.1'
 
 
 def test_home_keeps_all_metrics_highlights_and_chart_sections(page):
@@ -700,7 +713,8 @@ def test_missing_values_keep_zero_distinct_and_units_small(page):
     page.set_snapshot(data)
     assert child(page, 'metric-line-count-value').text() == '0'
     assert child(page, 'metric-fleet-value').text() == '—'
-    assert '未提供车辆数据' in child(page, 'metric-fleet').toolTip()
+    assert child(page, 'metric-fleet').toolTip() == ''
+    assert '未提供车辆数据' in child(page, 'metric-fleet').title.toolTip()
     for key in METRIC_KEYS:
         assert child(page, f'metric-{key}-value').font().pixelSize() == (28 if key in ('line-count', 'fleet') else 24 if key in CORE_METRIC_KEYS else 20)
         assert child(page, f'metric-{key}-unit').font().pixelSize() == 12
@@ -822,8 +836,19 @@ def test_aggregate_trend_uses_friendly_company_name_without_changing_identity(pa
     page.set_snapshot(replace(data, trend=aggregate, company_trend=aggregate))
     panel = child(page, 'todayTrend')
     assert panel.result is aggregate
-    assert panel.companies['__selected__'] == '所选公司合计'
+    from company_labels import company_selection_name
+    assert panel.companies['__selected__'] == company_selection_name(data.companies, dict(data.companies))
     assert '__selected__' not in label_texts(panel)
+
+
+def test_aggregate_alias_does_not_make_unique_company_look_duplicated(qt_application):
+    from latest_info_page import TodayTrendPanel
+    panel = TodayTrendPanel('当日客流')
+    panel.set_result(snapshot().trend, {'company-a': '任意公司', '__selected__': '任意公司'})
+    assert panel.companies['company-a'] == '任意公司'
+    assert panel._legend_tooltip('company-a') == ''
+    assert panel._legend_tooltip('__selected__') == ''
+    panel.close()
 
 
 def test_today_trend_hour_labels_fit_three_card_width(page, qt_application):

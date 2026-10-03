@@ -20,6 +20,9 @@ from stats_tokens import (BORDER, CARD_BG, CARD_PADDING, CHART_BLUE, CONTROL_GAP
 from stats_view_model import company_result
 from card_comparisons import company_comparison, CardComparison
 from card_comparison_label import ComparisonLabel
+from ui_kit import elision_tooltip
+from app_shell import ElidedText
+from filter_summary import card_baseline_text
 
 
 KPI_KEYS = ('cashflow', 'company-value', 'monthly-ticket', 'satisfaction-speed',
@@ -141,12 +144,15 @@ class CompanyGroup(QFrame):
         dot.setStyleSheet(f'color: {color}; font-size: {FONT_SIZE_BODY}px;')
         self.color_dot = dot
         self.name_label = QLabel(name, self.summary_card)
-        self.name_label.setToolTip(name)
+        self.name_label.installEventFilter(self)
         self.name_label.setAccessibleName(name)
         self.name_label.setStyleSheet(f'color: {TEXT_PRIMARY}; {emphasis_css(FONT_SIZE_BODY)}')
         apply_emphasis_font(self.name_label, FONT_SIZE_BODY)
         header.addWidget(dot)
         header.addWidget(self.name_label, 1)
+        self.baseline_context = ElidedText('', self.summary_card, size=12)
+        header.addWidget(self.baseline_context, 1)
+        self.baseline_context.hide()
         self.summary_button = SummaryToggleButton(self.summary_card)
         self.summary_button.setFixedSize(24, 24)
         self.summary_button.clicked.connect(lambda: self.summary_toggled.emit(not self.summary_button.collapsed))
@@ -167,7 +173,7 @@ class CompanyGroup(QFrame):
         self.satisfaction_combo.setFixedHeight(28)
         self.satisfaction_combo.setStyleSheet(self.satisfaction_combo.styleSheet() +
             f'\nComboBox {{ color: {TEXT_SECONDARY}; font-family: "{FONT_FAMILY}"; font-size: {FONT_SIZE_CAPTION}px; font-weight: 400; }}')
-        self.satisfaction_combo.setToolTip('满意度维度')
+        self.satisfaction_combo.setToolTip('')
         self.satisfaction_combo.setAccessibleName('满意度维度')
         for key in ('satisfaction-speed', 'satisfaction-cost', 'satisfaction-quality'):
             self.satisfaction_combo.addItem(label(key), userData=key)
@@ -188,9 +194,18 @@ class CompanyGroup(QFrame):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._elide_name()
+
+    def eventFilter(self, watched, event):
+        if watched is self.name_label and event.type() == QEvent.Type.Resize:
+            self._elide_name()
+        return super().eventFilter(watched, event)
+
+    def _elide_name(self):
         width = max(20, self.name_label.width())
         self.name_label.setText(QFontMetrics(self.name_label.font()).elidedText(
             self.full_name, Qt.TextElideMode.ElideRight, width))
+        self.name_label.setToolTip(elision_tooltip(self.full_name, self.name_label.text(), self.company_id))
 
     def reflow(self, kpi_columns: int, chart_columns: int):
         for tile in self.kpis.values():
@@ -295,6 +310,9 @@ class CompanyDashboard(QWidget):
                 tile.title.setText(label(metric_key))
                 tile.set_result(snapshot.results.get(metric_key), company_id)
                 tile.comparison_label.set_comparison(company_comparison(snapshot, mode, metric_key, company_id, names))
+            if mode == 'default' and any(tile.comparison_label.comparison.available for tile in group.kpis.values()):
+                group.baseline_context.setText(card_baseline_text(snapshot.filters))
+                group.baseline_context.show()
             if mode != 'companies':
                 for index, slot in enumerate(slots):
                     key = satisfaction if slot == 'satisfaction-speed' else slot

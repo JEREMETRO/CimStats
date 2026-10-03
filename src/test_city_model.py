@@ -59,9 +59,12 @@ def test_mode_pie_common_denominator_once_and_no_forced_normalization():
     assert snap.pie_valid and snap.pie_denominator == 10
     assert [v.value for v in snap.kpis['city-mode-share'].details] == [50, 30, 20]
     bad = build(rows[:-1] + [r('private-motoring', 'A', 0, 2, 20)])
-    assert not bad.pie_valid and bad.pie_reason
+    assert not bad.pie_valid and bad.pie_reason == '统计范围不一致，饼图不可用'
     assert bad.charts['city-mode-share'].series[('', '私家车')][0].value == 10
-    assert not build(rows[:-1]).pie_valid
+    assert build(rows[:-1]).pie_reason == '数据不完整，饼图不可用'
+    assert snap.kpis['city-mode-share'].reason == ''
+    incomplete = build(rows[:-1] + [r('private-motoring', 'A', 0, 1, 10)])
+    assert incomplete.pie_reason == '数据不完整，饼图不可用'
 
 
 def test_energy_scaled_once_economy_negative_and_missing_weights_unavailable():

@@ -16,7 +16,7 @@ METRICS = {
     'city-mode-share': Metric('交通方式分担率', 'city', 'ratio_flow', '%'),
     'trip-time': Metric('出行时间', 'city', 'weighted', '分钟'),
     'economy': Metric('经济增长与利率', 'city', 'ratio_stock', '%'),
-    'energy-prices': Metric('能源价格', 'city', 'stock', '游戏显示值', 100),
+    'energy-prices': Metric('能源价格', 'city', 'stock', '货币', 100),
 }
 
 
@@ -162,7 +162,7 @@ def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=Non
         title = {'population': '人口', 'trip-number': '出行量', 'trip-time': '平均出行时间'}[key]
         reason = ('窗口最后有效全市观测' if key == 'population' else
                   '所选时段累计' if key == 'trip-number' else
-                  '总分钟 ÷ 有效完成记录数；原始分钟已整数截断')
+                  '')
         if value is None:
             reason = '缺少有效观测' if key != 'trip-time' else '缺少有效时间分母，平均不可计算'
         kpis[key] = CityValue(title, value, result.metric.unit,
@@ -187,6 +187,7 @@ def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=Non
                            if r.raw.get('分组层级') != '总计'})
     membership = set(signatures[0])
     valid_pie = bool(membership) and all(set(s) == membership for s in signatures)
+    pie_reason = '数据不完整，饼图不可用' if not valid_pie else ''
     denominator = 0
     if valid_pie:
         for identity in sorted(membership):
@@ -195,6 +196,8 @@ def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=Non
             d = rows[0].divider
             if d < 0 or any(r.divider != d or r.value < 0 for r in rows) or sum(r.value for r in rows) != d:
                 valid_pie = False
+                pie_reason = ('统计范围不一致，饼图不可用' if any(r.divider != d for r in rows)
+                              else '数据不完整，饼图不可用')
                 break
             denominator += d
         # No silently omitted category/hour in any total observation.
@@ -202,10 +205,11 @@ def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=Non
         for t in {time for time, _ in membership}:
             if {g for time, g in membership if time == t} != expected_groups:
                 valid_pie = False
+                pie_reason = '数据不完整，饼图不可用'
     valid_pie = valid_pie and denominator > 0
-    reason = '' if valid_pie else '三方式缺测、共同分母不一致或构成不完整，饼图不可用'
+    reason = '' if valid_pie else pie_reason or '数据不完整，饼图不可用'
     kpis['city-mode-share'] = CityValue('交通方式分担率', unit='%', details=tuple(details),
-        complete=all(d.complete for d in details), reason='同窗口各方式原始计数 ÷ 对应总体计数；不强制归一')
+        complete=all(d.complete for d in details), reason='')
     # The pie uses a single window bucket per mode, after source-level validation.
     pie_series = {}
     for key, name in MODES:
@@ -228,8 +232,8 @@ def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=Non
         peak = max(valid, key=lambda r: Decimal(r.value) / r.divider, default=None)
         peaks.append(CityValue(name, Decimal(peak.value) * 100 / peak.divider if peak else None,
             '%', peak.time if peak else None, False,
-            '游戏加权交通密度，以百分比表示；所选范围内最大小时记录' if peak else '缺少有效观测'))
-    kpis['traffic-density'] = CityValue('最大交通密度', details=tuple(peaks), reason='道路/轨道分别取小时观测峰')
+            '' if peak else '缺少有效观测'))
+    kpis['traffic-density'] = CityValue('最大交通密度', details=tuple(peaks), reason='统计时间内最高小时交通密度')
     if _comparisons:
         start, end = baseline_window(filters.start, filters.end)
         previous = build_city_snapshot(store, replace(filters, start=start, end=end, comparison=None),

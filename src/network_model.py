@@ -78,7 +78,7 @@ def _check_cancelled(cancelled: Callable[[], bool] | None) -> None:
 
 def _display_name(company_id: str, companies: dict[str, str]) -> str:
     name = companies.get(company_id, company_id)
-    return f'{name} ({company_id})' if list(companies.values()).count(name) > 1 else name
+    return f'{name} [{company_id}]' if list(companies.values()).count(name) > 1 else name
 
 
 def _bucket_for_company(buckets: list[Bucket] | None, index: int) -> Bucket | None:

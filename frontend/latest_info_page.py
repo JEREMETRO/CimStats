@@ -13,6 +13,7 @@ from qfluentwidgets import (DropDownPushButton, FluentIcon, IconWidget,
                            PrimaryPushButton, PushButton, RoundMenu)
 from display_rules import display_mode
 from latest_info_model import InfoValue, LatestInfoSnapshot
+from company_labels import company_selection_name
 from map_name_source import resolve_session_map_name
 from latest_info_charts import (DepartureStructure, PassengerRanking, font,
                                 label, numeric, short_line_name, shown)
@@ -29,7 +30,7 @@ METRICS = (
     ('line-count', '线路总数', '条'), ('fleet', '车辆总数', '辆'),
     ('drive-minutes', '行车总时间', '分钟'), ('turnover', '车辆周转率', '班/辆/天'),
     ('weekly-income', '每周收入', ''), ('weekly-expense', '每周支出', ''),
-    ('profit', '净利润', ''), ('interval', '平均间隔', '分钟'),
+    ('profit', '周利润', ''), ('interval', '平均间隔', '分钟'),
     ('speed', '平均核定速度', 'km/h'), ('passengers-per-run', '平均单班人次', '人次'),
     ('passengers-per-km', '平均车公里人次', '人次/车公里'),
     ('public-transport-share', '公共交通分担率', '%'),
@@ -58,8 +59,10 @@ class TodayTrendPanel(ChartPanel):
 
     def set_result(self, result, companies=None):
         self._raw_company_names = dict(companies or {})
-        names = list(self._raw_company_names.values())
-        duplicate_ids = {key for key, name in self._raw_company_names.items() if names.count(name) > 1}
+        real_names = {key: name for key, name in self._raw_company_names.items() if not key.startswith('__')}
+        names = list(real_names.values())
+        duplicate_ids = {key for key, name in real_names.items() if names.count(name) > 1}
+        self._duplicate_company_ids = duplicate_ids
         self._short_company_names = dict(self._raw_company_names)
         full_names = dict(self._raw_company_names)
         for key in duplicate_ids:
@@ -79,7 +82,7 @@ class TodayTrendPanel(ChartPanel):
 
     def _legend_tooltip(self, key):
         raw = getattr(self, '_raw_company_names', {})
-        if self._combined_totals and key in raw:
+        if self._combined_totals and key in getattr(self, '_duplicate_company_ids', ()):
             return f'{raw[key]}\n公司标识：{key}'
         return ''
 
@@ -214,8 +217,11 @@ class MetricCard(QFrame):
         self.unit.setText(value.unit if value else self.default_unit)
         for widget in (self.value, self.unit):
             widget.setFixedWidth(widget.fontMetrics().horizontalAdvance(widget.text()) + 1)
-        parts = (value.title, value.scope, value.reason) if value else (self.title.text(), '未载入数据')
-        self.setToolTip('\n'.join(part for part in parts if part))
+        self.setToolTip('')
+        parts = ([value.scope] if value and value.key in ('public-transport-share', 'transfer-coefficient') else [])
+        if value and value.reason:
+            parts.append(value.reason)
+        self.title.setToolTip('\n'.join(parts))
 
     def content_width(self):
         return max(self.title.fontMetrics().horizontalAdvance(self.title.text()),
@@ -322,15 +328,15 @@ class HighlightCard(QFrame):
     def set_line(self, line):
         self._line_key = line.key if line else None
         self.name.setText(f'{line.mode} {short_line_name(line.name)}' if line else '—')
-        self.name.setToolTip(self.name.text())
+        self.name.setToolTip(f'{line.mode} {line.name}' if line and line.name != short_line_name(line.name) else '')
         self.name.setAccessibleName(self.name.text())
         values = (line.passengers, line.departures, line.passengers_per_departure,
                   line.passengers_per_vehicle_km) if line else (None,) * 4
         for widget, value in zip(self.values, values):
             widget.setText(shown(value))
             widget.setFixedWidth(widget.fontMetrics().horizontalAdvance(widget.text()) + 1)
-        self.setToolTip(f'{self.role_title}\n{line.mode} {short_line_name(line.name)}\n公司：{line.company_id}' if line else '当前范围没有可用线路')
-        self.setAccessibleName(self.toolTip())
+        self.setToolTip('')
+        self.setAccessibleName(f'{self.role_title} {line.mode} {line.name}' if line else '当前范围没有可用线路')
         self.setCursor(Qt.CursorShape.PointingHandCursor if line else Qt.CursorShape.ArrowCursor)
 
     def prepare_header(self, width):
@@ -578,6 +584,8 @@ class LatestInfoPage(QWidget):
         self.city_name = label('未提供城市名称', 'cityName', 29, True)
         self.city_date = label('未提供模拟时间', 'citySimulationDate', 14)
         self.city_clock = label('—', 'citySimulationTime', 21, True)
+        for widget in (self.city_name, self.city_date, self.city_clock):
+            widget.setToolTip('')
         self.city_population = label('—', 'cityPopulation', 21, True)
         self.city_population.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.city_population_unit = label('人', 'cityPopulationUnit', 12)
@@ -686,19 +694,17 @@ class LatestInfoPage(QWidget):
                        numeric(metadata.get('当前人口数')),
                        PureWindowsPath(str(data.get('save_path') or '')).name
                        or str(data.get('save_name') or '未提供存档名称'))
-        self.city_name.setToolTip('\n'.join(part for part in (
-            city_info.display_name, city_info.source, city_info.raw_reference,
-            city_info.raw_map_name, city_info.internal_id, city_info.reason) if part))
         self.scope_label.setText('等待当前范围数据')
 
     def _set_city(self, city, clock, population, save):
         self.city_name.setText(city)
+        self.city_name.setToolTip('')
         date = f'{clock:%Y-%m-%d}  周{"一二三四五六日"[clock.weekday()]}' if clock else '未提供模拟时间'
         self.city_date.setText(date)
         self.city_clock.setText(f'{clock:%H:%M:%S}' if clock else '—')
         complete_clock = f'{date} {clock:%H:%M:%S}' if clock else date
         for widget in (self.city_date, self.city_clock):
-            widget.setToolTip(complete_clock)
+            widget.setToolTip('')
             widget.setAccessibleName(complete_clock)
         self.city_population.setText(shown(population))
         self.city_save.setText(save or '未提供存档名称')
@@ -710,16 +716,14 @@ class LatestInfoPage(QWidget):
         self._snapshot = snapshot
         self._populate_scopes(snapshot.companies, snapshot.modes, self.scope())
         self._set_city(snapshot.city_name, snapshot.simulation_time, snapshot.population, snapshot.save_name)
-        self.city_name.setToolTip('\n'.join(part for part in (
-            snapshot.city_name, snapshot.city_source, snapshot.city_raw_reference,
-            snapshot.city_raw_name, snapshot.city_internal_id, snapshot.city_name_reason) if part))
         metrics = {metric.key: metric for metric in snapshot.metrics}
         for key, widget in self.metric_cards.items():
             widget.set_value(metrics.get(key))
         for i, widget in enumerate(self.highlights):
             widget.set_line(snapshot.highlights[i].line if i < len(snapshot.highlights) else None)
         company_names = dict(snapshot.companies)
-        company_names['__selected__'] = '所选公司合计'
+        company_names['__selected__'] = company_selection_name(
+            snapshot.companies, (snapshot.company_id,) if snapshot.company_id else tuple(company_names))
         self.trend.set_company_palette({key: tokens.DATA_COMPANY_COLORS[index % len(tokens.DATA_COMPANY_COLORS)]
                                        for index, key in enumerate(sorted(dict(snapshot.companies)))})
         self.trend.set_result(snapshot.company_trend, company_names)

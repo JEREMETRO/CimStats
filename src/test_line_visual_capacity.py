@@ -124,7 +124,9 @@ def test_separate_peak_summaries_backgrounds_and_all_day_order(visual_window):
     line['班次']={'周一至周四':[dict(time=f'{m//60:02d}:{m%60:02d}',vehicle_type='任意') for m in range(0,1440,10)]}
     line['日组']=tuple(line['班次']);w.show_line(line);QTest.qWait(100)
     panel=w.schedule_panel;matrix=panel.matrix
-    assert set(panel.summary_values)=={'first','last','count','morning_peak','evening_peak','offpeak','night'}
+    assert set(panel.summary_values)=={'service','count','morning_peak','evening_peak','offpeak','night'}
+    assert panel.summary_values['service'].text() == '00:00-24:00'
+    assert panel.summary_values['service'].toolTip() == '24小时运营线路'
     assert panel.summary['all_day'] and matrix.entries[0]['time']=='00:00'
     assert panel.summary_values['morning_peak'].text()=='10m0s'
     assert panel.summary_values['evening_peak'].text()=='10m0s'

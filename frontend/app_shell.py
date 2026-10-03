@@ -8,6 +8,7 @@ from qfluentwidgets import Action, FluentIcon, IconWidget, PrimaryPushButton, Pu
 
 import stats_tokens as tokens
 from stats_typography import apply_emphasis_font, emphasis_css
+from ui_kit import elision_tooltip
 
 HEADER_HEIGHT = 64
 PAGE_GUTTER = 24
@@ -16,8 +17,9 @@ PAGE_GUTTER = 24
 class ElidedText(QLabel):
     """Label that elides in the middle and keeps the full text as tooltip."""
 
-    def __init__(self, text='', parent=None, *, size=13, color=tokens.TEXT_PRIMARY, weight=400):
+    def __init__(self, text='', parent=None, *, size=13, color=tokens.TEXT_PRIMARY, weight=400, company_id=None):
         super().__init__(parent)
+        self._company_id = company_id
         self._full = ''
         self.setStyleSheet(f'color: {color}; font-size: {size}px; font-weight: {weight}; '
                            f'background: transparent; border: 0;')
@@ -27,7 +29,6 @@ class ElidedText(QLabel):
 
     def setText(self, text):
         self._full = str(text or '')
-        self.setToolTip(self._full)
         self.setAccessibleName(self._full)
         self._elide()
 
@@ -42,6 +43,7 @@ class ElidedText(QLabel):
         width = max(0, self.width())
         shown = self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideMiddle, width) if width else self._full
         super().setText(shown)
+        self.setToolTip(elision_tooltip(self._full, shown, self._company_id))
 
 
 class SaveChip(QFrame):

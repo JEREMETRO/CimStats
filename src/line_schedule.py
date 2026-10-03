@@ -251,8 +251,10 @@ def prepare_schedule(entries, period_rules=None) -> dict:
         service_note += '运行日未知，不能假定这些记录属于同一天，首末班及运营段显示—。'
     result['first_tooltip'] = result['last_tooltip'] = service_note
     result['period_diagnostics'] = {}
+    result['period_ranges'] = {}
     for period, label in PERIOD_LABELS.items():
         ranges = period_ranges[period]
+        result['period_ranges'][period] = [text for _, _, text in ranges]
         window_counts = [sum(_pair_in_range(tick, 0, lower, upper) for tick, _ in calendar)
                          for lower, upper, _ in ranges]
         departure_count = sum(any(_pair_in_range(tick, 0, lower, upper)

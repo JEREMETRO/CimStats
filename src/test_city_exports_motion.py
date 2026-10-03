@@ -21,7 +21,7 @@ def test_city_export_keeps_energy_raw_display_and_current_preferences(tmp_path):
     energy = next(row for row in rows[1:] if row[0] == 'energy-prices')
     assert energy[3:5] == (50, 0)
     points = list(book['城市图表'].values)
-    assert any(row[0] == '能源价格' and row[5] == .5 and row[6] == '游戏显示值' for row in points[1:])
+    assert any(row[0] == '能源价格' and row[5] == .5 and row[6] == '货币' for row in points[1:])
     book.close()
 
 

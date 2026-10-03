@@ -391,7 +391,8 @@ def test_statistics_shell_has_file_header_and_live_actions(monkeypatch, tmp_path
     app.processEvents()
     # The shared header shows the save, opens files and carries every export.
     assert window.header.isVisibleTo(window) and window.header.title.text() == '统计数据'
-    assert window.header.save_chip.name.toolTip() == '测试存档.save'
+    assert window.header.save_chip.name.accessibleName() == '测试存档.save'
+    assert window.header.save_chip.name.toolTip() == ''
     assert window.header.open_button.isVisibleTo(window)
     assert window.header.export_button.isEnabled()
     window._refresh_exports()

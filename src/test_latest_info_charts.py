@@ -474,7 +474,7 @@ def test_line_share_uses_visible_matching_legend_colors_and_human_slice_labels(p
         assert panel.share_ring.colors[row.entry.key] == expected
         assert row.dot.property('legendColor') == expected.name()
         assert row.dot.isVisible()
-        assert panel.share_ring.display_labels[row.entry.key] == f'{row.entry.mode} {short_line_name(row.entry.name)}'
+        assert panel.share_ring.display_labels[row.entry.key] == f'{row.entry.mode} {row.entry.name}'
         assert row.entry.key not in panel.share_ring.display_labels[row.entry.key]
 
 

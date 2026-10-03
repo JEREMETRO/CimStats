@@ -37,6 +37,8 @@ from network_model import NetworkOptions, build_network_snapshot
 from network_dashboard import NetworkDashboard
 from city_dashboard import CityDashboard
 from city_model import build_city_snapshot
+from ui_kit import elision_tooltip
+from filter_summary import CompactFilterSummary, summary_window
 import stats_motion as motion_policy
 from stats_tokens import (ACCENT, ACCENT_SOFT, BORDER, CARD_BG, DATA_COMPANY_COLORS,
                           ACTION_BUTTON_WIDTH, CONTROL_HEIGHT,
@@ -232,7 +234,7 @@ class CategoryTile(MetricTile):
 
 
 class CompanyTag(QFrame):
-    def __init__(self, name: str, remove, parent=None):
+    def __init__(self, name: str, remove, parent=None, *, company_id=None):
         super().__init__(parent)
         self.setObjectName('companyFilterTag')
         self.setStyleSheet(f'QFrame#companyFilterTag {{ background: {ACCENT_SOFT}; border: 0; '
@@ -241,7 +243,7 @@ class CompanyTag(QFrame):
         row.setContentsMargins(6, 0, 2, 0)
         row.setSpacing(2)
         from app_shell import ElidedText
-        self.name_label = ElidedText(name, self, size=12, color=ACCENT)
+        self.name_label = ElidedText(name, self, size=12, color=ACCENT, company_id=company_id)
         self.name_label.setMaximumWidth(105)
         row.addWidget(self.name_label, 1)
         self.close_button = TransparentToolButton(self)
@@ -353,7 +355,7 @@ class StatisticsPage(QWidget):
         compact_row = QHBoxLayout(self.compact_filter_bar)
         compact_row.setContentsMargins(0, 0, 0, 0)
         compact_row.setSpacing(CONTROL_GAP)
-        self.compact_filter_summary = QLabel('', self.compact_filter_bar)
+        self.compact_filter_summary = CompactFilterSummary(self.compact_filter_bar)
         self.compact_filter_summary.setStyleSheet(f'color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}px;')
         self.compact_filter_summary.setSizePolicy(QSizePolicy.Policy.Ignored,
                                                   QSizePolicy.Policy.Preferred)
@@ -647,23 +649,21 @@ class StatisticsPage(QWidget):
             return
         companies = '、'.join(action.text() for action in self.company_menu.actions()
                              if action.isChecked()) or '未选择公司'
+        time = f'统计时间：{summary_window(self._range_window)}'
+        grain = f'按{self.grain_combo.currentText()}'
         if self.tab_bar.currentRouteKey() == 'city':
-            summary = ' · '.join((self.range_summary.text(), self.grain_combo.currentText()))
-            self.compact_filter_summary.setText(summary)
-            self.compact_filter_summary.setToolTip(summary)
+            self.compact_filter_summary.set_summary('', [time, grain])
             return
         is_network = self.tab_bar.currentRouteKey() == 'network'
-        mode = (self.network_mode_control.currentKey() if is_network else
-                self.analysis_mode_control.currentKey())
-        mode_name = ({'overall': '总体数据', 'companies': '多公司对比', 'period': '单公司同期'}
-                     if is_network else
-                     {'default': '默认模式', 'companies': '多公司对比', 'period': '同期对比'})[mode]
-        parts = [companies, self.range_summary.text(), self.grain_combo.currentText(), mode_name]
-        if mode == 'period':
-            parts.append(self.compare_combo.currentText())
-        summary = ' · '.join(part for part in parts if part)
-        self.compact_filter_summary.setText(summary)
-        self.compact_filter_summary.setToolTip(summary)
+        control = self.network_mode_control if is_network else self.analysis_mode_control
+        parts = [f'图表模式：{control.currentText()}', time, grain]
+        if control.currentKey() == 'period':
+            try:
+                comparison = self._route_comparison('network' if is_network else 'company')
+            except ValueError:
+                comparison = None
+            parts.append(f'对比时间：{summary_window(comparison)}' if comparison else '对比时间：未设置')
+        self.compact_filter_summary.set_summary(f'公司：{companies}', parts)
 
     def _filter_padding(self, width: int, collapsed: bool) -> int:
         if self.tab_bar.currentRouteKey() == 'city':
@@ -973,7 +973,7 @@ class StatisticsPage(QWidget):
             company_id = str(action.data())
             name = action.text()
             tag = CompanyTag(name, lambda _=False, item=action: item.setChecked(False),
-                             self.company_tag_host)
+                             self.company_tag_host, company_id=company_id)
             self.company_tag_layout.addWidget(tag)
             self.company_tags[company_id] = tag
         if len(checked) > 2:

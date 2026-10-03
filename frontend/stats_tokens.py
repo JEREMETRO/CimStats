@@ -14,6 +14,12 @@ BORDER_STRONG: str = '#C8D6E7'
 TEXT_PRIMARY: str = '#18314F'
 TEXT_SECONDARY: str = '#65758B'
 TEXT_DISABLED: str = '#98A8B9'
+# WinUI light ToolTip: neutral primary text, regular 12 logical px.
+TOOLTIP_TEXT: str = '#1B1B1B'
+TOOLTIP_BG: str = '#FFFFFF'
+TOOLTIP_BORDER: str = '#D6D6D6'
+TOOLTIP_FONT_SIZE: int = 12
+TOOLTIP_RADIUS: int = 4
 ACCENT: str = '#0067C0'
 ACCENT_HOVER: str = '#005BAA'
 ACCENT_PRESSED: str = '#004A8C'

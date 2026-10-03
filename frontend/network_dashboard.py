@@ -15,6 +15,8 @@ from display_rules import format_number, number_places
 from stats_charts import nice_axis
 from stats_controls import FluentSegmentedControl, SummaryToggleButton
 from card_comparison_label import ComparisonLabel
+from app_shell import ElidedText
+from filter_summary import card_baseline_text
 from stats_tokens import (BORDER, CARD_BG, CHART_BLUE, CONTROL_GAP,
                           FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_KPI,
                           RADIUS_CARD, RADIUS_KPI, SECTION_GAP, TEXT_PRIMARY,
@@ -136,7 +138,7 @@ class NetworkValueTile(QFrame):
             box.addWidget(reason)
         detail_text = '；'.join(f'{name}: {_number(amount, value.metric_id)}' for name, amount in value.details)
         self.setToolTip('；'.join(dict.fromkeys(part for part in
-            (value.reason, detail_text, value.comparison.tooltip) if part)))
+            (value.reason, detail_text) if part)))
 
     def _update_unit_baseline(self):
         delta = round(QFontMetricsF(self.number.font()).descent() - QFontMetricsF(self.unit.font()).descent())
@@ -177,6 +179,9 @@ class NetworkSummaryCard(QFrame):
         apply_emphasis_font(self.title, FONT_SIZE_BODY)
         heading.addWidget(self.title)
         heading.addStretch()
+        self.baseline_context = ElidedText('', self, size=12)
+        heading.addWidget(self.baseline_context, 1)
+        self.baseline_context.hide()
         if self.overview:
             dot.hide()
             self.title.setText('数据摘要')
@@ -369,6 +374,9 @@ class NetworkDashboard(QWidget):
                 card = NetworkSummaryCard(summary, snapshot.options,
                     self.palette.get(summary.company_id, CHART_BLUE), summary_host,
                     tight=snapshot.options.mode == 'companies')
+                if snapshot.options.mode == 'overall' and any(value.comparison.available for value in summary.values):
+                    card.baseline_context.setText(card_baseline_text(snapshot.filters))
+                    card.baseline_context.show()
                 card.option_changed.connect(self._request_option)
                 card.set_summary_collapsed(self._summary_collapsed)
                 card.summary_toggled.connect(self.set_summary_collapsed)
@@ -448,7 +456,7 @@ class NetworkDashboard(QWidget):
                 if summary_columns == 6 and self.snapshot.options.vehicle != 'maximum':
                     vehicle_title = self.summary_cards[index].tiles[2].metric_title
                     vehicle_title.setText('车辆' if section_width < 1300 else '运行车辆')
-                    vehicle_title.setToolTip('运行车辆')
+                    vehicle_title.setToolTip('')
                 if self._viewport_height > 0:
                     card = self.summary_cards[index]
                     target = 46 if card.summary_motion.collapsed else 160 if summary_columns == 6 else 248
@@ -476,7 +484,7 @@ class NetworkDashboard(QWidget):
                         vehicle_title = card.tiles[2].metric_title
                         vehicle_title.setText('车辆' if wide_minimum <= width < 1300
                                               else '运行车辆')
-                        vehicle_title.setToolTip('运行车辆')
+                        vehicle_title.setToolTip('')
                 else:
                     card.reflow(3 if summary_columns == 2 or width >= 700 else 2)
             chart_columns = 4 if width >= 1100 and self.snapshot.options.mode == 'overall' else (

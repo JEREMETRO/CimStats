@@ -173,7 +173,7 @@ def test_unknown_running_day_does_not_display_confirmed_count_as_total(lines_win
     line['当日发班数Tooltip'] = '有班次运行日缺失；已确认0班，无法确认当日总数。'
     w.show_line(line)
     assert w.fact_cards[4].value.text() == '—'
-    assert w.fact_cards[4].value.toolTip() == line['当日发班数Tooltip']
+    assert w.fact_cards[4].value.toolTip() == ''  # Daily departure count explicitly has no tooltip.
     assert line['当日发班数'] == 0
 
 

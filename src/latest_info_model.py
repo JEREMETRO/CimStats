@@ -1,7 +1,7 @@
 """Qt-free latest-information snapshot over normalized save-local observations.
 
-Operating cards preserve the former home page's line/fleet definitions. Historical
-cards and the hourly trend deliberately use HistoryData, not line snapshot totals.
+Operating cards use normalized line durations, planned departures and fleet counts.
+Historical cards and the hourly trend use HistoryData, not line snapshot totals.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import PureWindowsPath
 
 from city_model import build_city_snapshot
+from company_labels import company_selection_name
 from dashboard_model import FilterState
 from display_rules import display_mode
 from map_name_source import resolve_session_map_name
@@ -118,6 +119,73 @@ def _vehicle_km(row):
     return departures * distance if departures is not None and distance is not None else None
 
 
+def _planned_speed(rows, cancelled):
+    """Weight distance and duration by the same valid planned departures."""
+    distance_total = minutes_total = Decimal(0)
+    exclusions = {}
+    for row in rows:
+        _check(cancelled)
+        departures = _number(row.get('当日发班数'))
+        if departures == 0:
+            continue
+        distance = _measurement(row, '地图里程')
+        duration = _measurement(row, '单程时间')
+        if departures is None or departures < 0:
+            problem = '计划班次数缺失' if departures is None else '计划班次数为负值'
+        elif distance is None or distance < 0:
+            problem = '地图里程缺失' if distance is None else '地图里程为负值'
+        elif duration is None or duration <= 0:
+            problem = '核定周转时间缺失' if duration is None else '核定周转时间不大于零'
+        else:
+            distance_total += departures * distance
+            minutes_total += departures * duration
+            continue
+        exclusions[problem] = exclusions.get(problem, 0) + 1
+    value = _ratio(distance_total, minutes_total)
+    reason = ''.join(f'；{count}条线路{problem}，未计入里程和时间' for problem, count in exclusions.items())
+    if value is None and not exclusions:
+        reason += '；所选线路没有正数计划班次' if rows else '；未选中线路'
+    return value * 60 if value is not None else None, not exclusions, reason
+
+
+def _planned_minutes(row):
+    departures = _number(row.get('当日发班数'))
+    if departures is None or departures < 0:
+        return None
+    if departures == 0:
+        return Decimal(0)
+    duration = _measurement(row, '单程时间')
+    return departures * duration if duration is not None and duration > 0 else None
+
+
+def _missing_operation_reason(key, rows, fleet, passenger, departures, vehicle_km, income, expense):
+    if key == 'fleet':
+        return '车队车辆数量缺失'
+    if not rows:
+        return '未选中线路'
+    if key == 'drive-minutes':
+        if any(_number(r.get('当日发班数')) is None for r in rows):
+            return '当日计划班次数缺失'
+        if any(_number(r.get('当日发班数')) < 0 for r in rows):
+            return '当日计划班次数为负值'
+        return '线路核定周转时间缺失' if any(_measurement(r, '单程时间') is None for r in rows) else '线路核定周转时间不大于零'
+    if key in ('weekly-income', 'weekly-expense', 'profit'):
+        fields = {'weekly-income': [('周收入', income)], 'weekly-expense': [('周支出', expense)],
+                  'profit': [('周收入', income), ('周支出', expense)]}
+        return '、'.join(f'{name}缺失' for name, value in fields[key] if value is None)
+    if key == 'interval':
+        return '所选线路已启用且运行日已知的日组内没有有效相邻班次'
+    if key == 'turnover' and (fleet is None or fleet <= 0):
+        return '车队车辆数量缺失' if fleet is None else '车队车辆数量不大于零'
+    if key in ('passengers-per-run', 'passengers-per-km') and passenger is None:
+        return '当日累计客流缺失'
+    if departures is None:
+        return '当日计划班次数缺失'
+    if key == 'passengers-per-km':
+        return '地图里程缺失' if vehicle_km is None else '当日计划行驶总里程不大于零'
+    return '当日计划班次数不大于零'
+
+
 def _owner(row, companies):
     """Legacy names are usable only when they identify exactly one company."""
     explicit = str(row.get('公司标识') or row.get('玩家ID') or '')
@@ -180,7 +248,7 @@ def _transfer_value(store, ids, start, end, cancelled):
     complete = True
     missing_company = False
     excluded = 0
-    effective = []
+    problems = set()
     for company in ids:
         _check(cancelled)
         categories = {metric: {group for name, owner, group in store.series
@@ -201,23 +269,34 @@ def _transfer_value(store, ids, start, end, cancelled):
                         by_time.setdefault(row.time, set()).add(row.group)
                 if not expected or not by_time or any(groups != expected for groups in by_time.values()):
                     valid = False
+                    problems.add('客流类别不完整' if metric == 'transport-by-type' else '分区出行类别不完整')
             if valid:
                 numerator += bucket.numerator
                 denominator += bucket.denominator
                 hours += 1
             elif bucket.raw:
                 excluded += 1
+                if bucket.denominator is not None and bucket.denominator <= 0:
+                    problems.add('分区出行量不大于零')
+                if bucket.numerator is not None and bucket.numerator < 0:
+                    problems.add('客流为负值')
+                if bucket.numerator is None or bucket.denominator is None:
+                    problems.add('客流与分区出行量缺少同期配对观测')
+            else:
+                problems.add('部分时段没有观测')
+            if valid and not bucket.complete:
+                problems.add('有效小时观测尚未完整')
             complete = complete and valid and bucket.complete
-        effective.append(f'{company}: {hours}小时')
         if not hours:
             missing_company = True
             complete = False
     value = None if missing_company else _ratio(Decimal(numerator), Decimal(denominator))
-    reason = ('；仅累计各公司全部已序列化制式及分区出行类别完整、分子/分母配对的有效小时；'
-              f"各公司有效配对小时：{'，'.join(effective)}；"
-              f'排除{excluded}个缺类别、未配对或无有效分母的观测小时')
+    reason = ('；仅累计客流与出行量类别完整且同期配对的有效小时'
+              f'；排除{excluded}个观测小时') if excluded else ''
+    if problems:
+        reason += '；' + '；'.join(sorted(problems))
     if missing_company:
-        reason += '；有公司没有可安全配对的完整类别小时，总体系数不可计算'
+        reason += '；有公司没有客流与出行量类别完整且同期配对的有效小时，换乘系数不可计算'
     return value, complete and value is not None, reason
 
 
@@ -235,7 +314,8 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
         _check(cancelled)
         if _owner(row, companies) in ids and (mode == '综合' or display_mode(row.get('运输制式')) == mode):
             rows.append(row)
-    line_scope = f"所选公司{'（' + company_id + '）' if company_id else '（全部）'} · {mode}"
+    company_scope = company_selection_name(companies, ids)
+    line_scope = f'公司：{company_scope}    {mode}'
     now = _simulation_time(data)
     metadata = data.get('metadata') or {}
     city_info = resolve_session_map_name(data)
@@ -261,40 +341,46 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
         _ratio(_number(r.get('今日客流')), _vehicle_km(r))) for r in rows)
     passenger = _sum(s.passengers for s in summaries)
     departures = _sum(s.departures for s in summaries)
-    minutes = _sum(_number(r.get('行车总时间')) for r in rows)
+    minutes = _sum(_planned_minutes(r) for r in rows)
     vehicle_km = _sum(_vehicle_km(r) for r in rows)
     fleet = _sum(_number(c.get('车辆总数')) if mode == '综合' else
                  _number((c.get('车队') or {}).get(mode)) for c in scoped_companies)
     income = _sum(_number(r.get('每周收入')) for r in rows)
     expense = _sum(_number(r.get('每周支出')) for r in rows)
-    speeds = [v for r in rows if (v := _number(r.get('核定速度'))) is not None and v > 0]
+    speed, speed_complete, speed_reason = _planned_speed(rows, cancelled)
     values = (len(rows), fleet, minutes, _ratio(departures, fleet), income, expense,
               income - expense if income is not None and expense is not None else None,
-              _interval(rows, cancelled), _ratio(_sum(speeds), Decimal(len(speeds))),
+              _interval(rows, cancelled), speed,
               _ratio(passenger, departures), _ratio(passenger, vehicle_km))
     definitions = (
-        ('line-count', '线路总数', '条', '当前线路快照数量'),
-        ('fleet', '车辆总数', '辆', '公司完整车队；选择制式时取对应车队'),
-        ('drive-minutes', '行车总时间', '分钟', '线路当日发班数 × 单程时间之和；全日计划班次'),
-        ('turnover', '车辆周转率', '班/辆/天', '线路当日发班总数 ÷ 公司完整车队'),
-        ('weekly-income', '每周收入', '货币', '所选线路周收入快照之和'),
-        ('weekly-expense', '每周支出', '货币', '所选线路周支出快照之和'),
-        ('profit', '净利润', '货币', '所选线路周收入 − 周支出'),
-        ('interval', '平均间隔', '分钟', '旧首页口径：全部已启用且运行日已知日组内有效相邻间隔均值；排除未启用/运行日未知；非仅模拟当日，不含跨午夜间隔'),
-        ('speed', '平均核定速度', 'km/h', '所选线路正值核定速度的算术均值'),
-        ('passengers-per-run', '平均单班人次', '人次/班', '线路今日总客流 ÷ 全日计划发班总数'),
-        ('passengers-per-km', '平均车公里人次', '人次/车公里', '线路今日总客流 ÷ Σ（全日计划班次 × 地图里程）'),
+        ('line-count', '线路总数', '条', '所选线路的数量'),
+        ('fleet', '车辆总数', '辆', '所选车队的车辆总数' if mode == '综合' else '所选车队该制式的车辆数量'),
+        ('drive-minutes', '行车总时间', '分钟', '所选线路当日计划班次的核定周转时间之和'),
+        ('turnover', '车辆周转率', '班/辆/天', '当日计划发班总数与车队车辆总数之比，反映平均每辆车每天的计划运行班次数'),
+        ('weekly-income', '每周收入', '货币', '所选线路的周收入'),
+        ('weekly-expense', '每周支出', '货币', '所选线路的周支出'),
+        ('profit', '周利润', '货币', '所选线路的周利润'),
+        ('interval', '平均间隔', '分钟', '所选线路运营时间内的平均间隔'),
+        ('speed', '平均核定速度', 'km/h', '所选线路的总运营里程数与计划班次总核定时间之比'),
+        ('passengers-per-run', '平均单班人次', '人次/班', '当日累计客流与当日计划发班总数之比'),
+        ('passengers-per-km', '平均车公里人次', '人次/车公里', '当日累计客流与当日计划行驶总里程之比，反映线路车辆运营的乘客周转率，进而反映线路效益'),
     )
     schedule_complete = all(r.get('班次数据完整', True) and not r.get('运行日未知班次') for r in rows)
     metrics = []
     for value, (key, title, unit, reason) in zip(values, definitions):
         _check(cancelled)
         complete = value is not None
-        if key in ('drive-minutes', 'turnover', 'passengers-per-run', 'passengers-per-km') and not schedule_complete:
+        if key == 'speed':
+            complete = complete and speed_complete
+            reason += speed_reason
+        if key in ('drive-minutes', 'turnover', 'speed', 'passengers-per-run', 'passengers-per-km') and not schedule_complete:
             complete = False
-            reason += '；存在运行日未知或不完整班次，仅含已确认班次'
-        if value is None:
-            reason += '；缺少有效来源、有效相邻间隔或正分母'
+            if any(r.get('运行日未知班次') for r in rows):
+                reason += '；部分班次运行日未知，仅含已确认班次'
+            if any(not r.get('班次数据完整', True) for r in rows):
+                reason += '；班次数据不完整'
+        if value is None and key != 'speed':
+            reason += '；' + _missing_operation_reason(key, rows, fleet, passenger, departures, vehicle_km, income, expense)
         metrics.append(InfoValue(key, title, value, unit, line_scope, reason, complete))
 
     trend = company_trend = None
@@ -302,7 +388,7 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
     share_complete = coefficient_complete = False
     day_scope = f"模拟当日 {now:%Y-%m-%d} 00:00 至 {now:%H:%M:%S}" if now else '缺少模拟时间'
     share_reason = '全市公共交通有效历史计数 ÷ 对应历史总体计数 × 100；缺小时不补零，当前小时可能为部分观测'
-    coefficient_reason = '所选公司模拟当日历史总客流 ÷ 总分区出行量；各公司原始分子/分母合计，缺小时不补零'
+    coefficient_reason = '所选公司当日总客流与总分区出行量之比，即平均每位乘客单次行程的乘车次数'
     if mode != '综合':
         coefficient_reason += '；历史分区出行量缺少对应制式分母，保持所选公司全部制式范围，不随制式筛选'
     population = _number(metadata.get('当前人口数'))
@@ -328,13 +414,16 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
             coefficient, coefficient_complete, pairing_reason = _transfer_value(store, ids, start, now, cancelled)
             coefficient_reason += pairing_reason
     if share is None:
-        share_reason += '；缺少有效观测或有效分母'
+        share_reason += '；缺少模拟时间' if now is None else ('；模拟当日尚无观测时段' if now == now.replace(hour=0, minute=0, second=0, microsecond=0) else '；当日公共交通占比观测不足，无法计算')
     if coefficient is None:
-        coefficient_reason += '；缺少匹配的客流/分区出行观测或正分母'
+        if now is None:
+            coefficient_reason += '；缺少模拟时间'
+        elif now == now.replace(hour=0, minute=0, second=0, microsecond=0):
+            coefficient_reason += '；模拟当日尚无观测时段'
     metrics.extend((InfoValue('public-transport-share', '公共交通分担率', share, '%',
                              f'全市 · {day_scope}', share_reason, share_complete),
                     InfoValue('transfer-coefficient', METRICS['transfer-coefficient'].label, coefficient, '倍',
-                              f"所选公司{'（' + company_id + '）' if company_id else '（全部）'} · 全部制式 · {day_scope}",
+                              f'公司：{company_scope}    全部制式    {day_scope}',
                               coefficient_reason, coefficient_complete)))
     def highlight(title, field, maximum):
         valid = [s for s in summaries if getattr(s, field) is not None]

@@ -15,6 +15,8 @@ import stats_tokens as tokens
 from stats_motion import SurfaceMotion, CollapseMotion
 from stats_elevation import attach_card_elevation
 from card_comparison_label import ComparisonLabel
+from app_shell import ElidedText
+from filter_summary import card_baseline_text
 
 MODE_COLORS = {'步行': '#1677FF', '公共交通': '#159A79', '私家车': '#F5A653'}
 SERIES_COLORS = {**MODE_COLORS, '平均': '#1677FF', 'WhiteCollar': '#F5A653',
@@ -67,7 +69,7 @@ class CityTile(QFrame):
             item = self.values.takeAt(0)
             item.widget().hide()
             item.widget().deleteLater()
-        tooltip = [model.reason]
+        tooltip = []
         for detail in model.details or (model,):
             row = QWidget(self)
             layout = QHBoxLayout(row)
@@ -102,12 +104,16 @@ class CityTile(QFrame):
                 comparison = ComparisonLabel(detail.comparison, self.value_host)
                 self.values.addWidget(comparison)
             stamp = detail.observed.strftime('%Y-%m-%d %H:%M') if detail.observed else '无有效观测'
-            tip = f'{detail.title}：{number(detail.value)} {detail.unit}；{stamp}；{detail.reason}'
-            if detail.comparison.tooltip and detail.comparison.tooltip not in tip:
-                tip += '；' + detail.comparison.tooltip
+            parts = [f'{detail.title}：{number(detail.value)} {detail.unit}'.strip(), stamp]
+            if detail.reason:
+                parts.append(detail.reason)
+            if not detail.complete:
+                parts.append('数据不完整')
+            tip = '；'.join(parts)
             row.setToolTip(tip)
             tooltip.append(tip)
-        tooltip.append('完整自然周期' if model.complete else '已记录部分；存在部分周期、缺测或未完成小时')
+        if model.reason and model.reason not in '\n'.join(tooltip):
+            tooltip.append(model.reason)
         self.setToolTip('\n'.join(tooltip))
 
     def _update_unit_baselines(self):
@@ -162,9 +168,7 @@ class CityChartPanel(ChartPanel):
         if bucket.observed:
             parts.append(f'实际观测 {bucket.observed:%Y-%m-%d %H:%M}')
         if not bucket.complete:
-            parts.append('部分/缺测/未完成小时')
-        if self.city_key == 'energy-prices':
-            parts.append('原值÷100；物理单位未确认')
+            parts.append('数据不完整')
         return ' · '.join(parts)
 
     def _create_clone(self, dialog):
@@ -220,6 +224,9 @@ class CityDashboard(QWidget):
         self.city_title.setStyleSheet(f'{emphasis_css(14)}color:{tokens.TEXT_PRIMARY};')
         apply_emphasis_font(self.city_title, 14)
         header.addWidget(self.city_title, 1)
+        self.baseline_context = ElidedText('', self.summary, size=12)
+        header.addWidget(self.baseline_context, 1)
+        self.baseline_context.hide()
         self.summary_button = SummaryToggleButton(self.summary)
         self.summary_button.clicked.connect(lambda: self.set_summary_collapsed(not self.summary_collapsed))
         header.addWidget(self.summary_button)
@@ -309,6 +316,10 @@ class CityDashboard(QWidget):
         panel.motion.reveal()
 
     def set_snapshot(self, snapshot):
+        available = any(detail.comparison.available for value in snapshot.kpis.values()
+                        for detail in value.details or (value,))
+        self.baseline_context.setText(card_baseline_text(snapshot.filters) if available else '')
+        self.baseline_context.setVisible(available)
         self.snapshot = snapshot
         for key, tile in self.tiles.items():
             tile.set_value(snapshot.kpis[key])
@@ -323,10 +334,11 @@ class CityDashboard(QWidget):
         self.set_curves(selected)
         self.set_mode(self.mode_preference or ('pie' if snapshot.pie_valid else 'line'))
         self.panels['trip-time'].setToolTip(snapshot.kpis['trip-time'].reason)
-        self.panels['energy-prices'].setToolTip('游戏显示值 = 原始值 ÷ 100；物理单位未确认')
+        self.panels['energy-prices'].setToolTip('')
 
     def clear(self):
         self.snapshot = None
+        self.baseline_context.hide()
         for tile in self.tiles.values():
             tile.set_value(CityValue(tile.title.text()))
         for panel in self.panels.values():

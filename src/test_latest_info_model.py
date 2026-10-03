@@ -25,7 +25,8 @@ def history(metric, value, divider=0, company='', hour=0, group='Student', curre
 def line(key, company, mode, passengers, departures, minutes, km, speed, income, expense):
     return {'key': key, '公司标识': company, '公司名称': '同名公司', '运输制式': mode,
             '线路名称': key, '今日客流': passengers, '当日发班数': departures,
-            '行车总时间': minutes, '地图里程': km, '核定速度': speed,
+            '行车总时间': minutes, '单程时间': minutes / departures if departures else 0,
+            '地图里程': km, '核定速度': speed,
             '每周收入': income, '每周支出': expense, '班次': {}, '班次数据完整': True}
 
 
@@ -81,6 +82,103 @@ def test_original_eleven_metrics_use_line_and_complete_fleet_sources(data):
     assert all_values['passengers-per-run'].value == Decimal(1110) / 16
     assert all_values['passengers-per-km'].value == Decimal(1110) / 130
     assert all_values['profit'].value == 87
+    assert all_values['drive-minutes'].value == 420
+    assert all_values['speed'].value == Decimal(130) / 420 * 60
+
+
+def test_speed_weights_plan_distance_and_time_instead_of_cached_speeds(data):
+    data['lines'][0]['核定速度'] = 999
+    data['lines'][1]['核定速度'] = 999
+    values = metrics(build(data, 'a'))
+    assert values['speed'].value == 25  # (4*10 + 2*5) / (4*20 + 2*20) * 60
+    assert values['speed'].complete
+    assert values['drive-minutes'].value == 120
+
+
+@pytest.mark.parametrize('field,value', [('地图里程', None), ('地图里程', -1),
+    ('单程时间', None), ('单程时间', 0), ('单程时间', -1),
+    ('当日发班数', None), ('当日发班数', -1)])
+def test_speed_uses_same_valid_line_set_for_both_totals(data, field, value):
+    data['lines'][0][field] = value
+    speed = metrics(build(data, 'a'))['speed']
+    assert speed.value == 15  # Only tram: 2*5 km / (2*20 minutes) * 60.
+    assert not speed.complete
+    assert '1条线路' in speed.reason
+
+
+def test_speed_respects_measurement_availability_and_real_zero(data):
+    data['lines'][0]['字段可用性'] = {'地图里程': False}
+    speed = metrics(build(data, 'a'))['speed']
+    assert speed.value == 15 and not speed.complete
+    data['lines'][0]['字段可用性'] = {'地图里程': True}
+    data['lines'][0]['地图里程'] = 0
+    speed = metrics(build(data, 'a', '公交'))['speed']
+    assert speed.value == 0 and speed.complete
+    data['lines'][0]['当日发班数'] = 0
+    assert metrics(build(data, 'a', '公交'))['speed'].value is None
+
+
+def test_drive_minutes_uses_plan_count_and_duration_not_cached_total(data):
+    data['lines'][0]['行车总时间'] = 9999
+    data['lines'][0]['当日发班数'] = 3
+    values = metrics(build(data, 'a'))
+    assert values['drive-minutes'].value == 100  # 3*20 + 2*20, not 20+20.
+    assert values['drive-minutes'].complete
+    data['lines'][0]['班次数据完整'] = False
+    values = metrics(build(data, 'a', '公交'))
+    assert values['drive-minutes'].value == 60 and not values['drive-minutes'].complete
+    assert not values['speed'].complete
+    data['lines'][0]['单程时间'] = None
+    assert metrics(build(data, 'a', '公交'))['drive-minutes'].value is None
+    data['lines'][0]['当日发班数'] = 0
+    assert metrics(build(data, 'a', '公交'))['drive-minutes'].value == 0
+
+
+@pytest.mark.parametrize('field,value', [('单程时间', None), ('单程时间', 0),
+    ('单程时间', -1), ('当日发班数', None), ('当日发班数', -1)])
+def test_drive_minutes_does_not_pad_missing_or_invalid_plan_inputs(data, field, value):
+    data['lines'][0][field] = value
+    result = metrics(build(data, 'a', '公交'))['drive-minutes']
+    assert result.value is None and not result.complete
+    assert '或' not in result.reason
+
+
+def test_approved_metric_titles_and_business_descriptions(data):
+    values = metrics(build(data, 'a', '公交'))
+    assert values['profit'].title == '周利润'
+    assert values['fleet'].reason == '所选车队该制式的车辆数量'
+    assert values['interval'].reason == '所选线路运营时间内的平均间隔'
+    assert values['speed'].reason == '所选线路的总运营里程数与计划班次总核定时间之比'
+    assert values['turnover'].reason == '当日计划发班总数与车队车辆总数之比，反映平均每辆车每天的计划运行班次数'
+    assert values['passengers-per-km'].reason == '当日累计客流与当日计划行驶总里程之比，反映线路车辆运营的乘客周转率，进而反映线路效益'
+    for value in values.values():
+        assert '旧首页' not in value.reason and '原始' not in value.reason
+    assert '平均每位乘客单次行程的乘车次数' in values['transfer-coefficient'].reason
+    assert '不随制式筛选' in values['transfer-coefficient'].reason
+
+
+def test_missing_operation_reasons_identify_actual_source(data):
+    data['lines'][0]['地图里程'] = None
+    data['lines'][0]['每周收入'] = None
+    values = metrics(build(data, 'a', '公交'))
+    assert '地图里程缺失' in values['passengers-per-km'].reason
+    assert '周收入缺失' in values['profit'].reason
+    assert '缺少有效来源、有效相邻间隔或正分母' not in values['profit'].reason
+
+
+def test_report_model_normalized_duration_and_distance_feed_home_metrics(tmp_path, monkeypatch):
+    from test_line_schedule import session_fixture
+    session = session_fixture(tmp_path, monkeypatch, departures=[
+        {'发班时间': '06:00', '时刻表_运行日掩码': '2'},
+        {'发班时间': '07:00', '时刻表_运行日掩码': '2'},
+    ], line_extra={'地图里程': '5120000'})
+    row = session['lines'][0]
+    assert row['单程时间'] == 60  # 36,000,000,000 ticks = 60 minutes.
+    assert row['行车总时间'] == 120
+    assert row['地图里程'] == 10  # Existing map scale already includes x2.
+    values = metrics(build(session))
+    assert values['drive-minutes'].value == 120
+    assert values['speed'].value == 10  # 20 km / 120 min * 60, no second x2.
 
 
 def test_four_extremes_and_top10_use_real_filtered_lines(data):

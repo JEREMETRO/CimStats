@@ -48,6 +48,8 @@ def font(size=12, bold=False):
 class FullLabel(QLabel):
     """Full identity survives elided painting; numeric fields reserve measured width."""
     def __init__(self, text='', size=12, bold=False, parent=None):
+        self._explicit_tip = None
+        self._full_text = None
         super().__init__(parent)
         self.setFont(font(size, bold))
         self.setStyleSheet(f'color:{tokens.TEXT_PRIMARY};background:transparent;')
@@ -57,14 +59,43 @@ class FullLabel(QLabel):
 
     def setText(self, text):
         super().setText(str(text))
-        self.setToolTip(str(text))
+        self._refresh_tip()
         self.setAccessibleName(str(text))
+
+    def setToolTip(self, text):
+        # An explicit empty tip is a persistent opt-out (city/date/clock).
+        self._explicit_tip = str(text)
+        super().setToolTip(str(text))
+
+    def set_full_text(self, text):
+        self._full_text = str(text)
+        self._refresh_tip()
+
+    def _refresh_tip(self):
+        if self._explicit_tip is not None:
+            super().setToolTip(self._explicit_tip)
+            return
+        rect = self.contentsRect()
+        metrics = self.fontMetrics()
+        clipped = metrics.horizontalAdvance(self.text()) > rect.width() or metrics.height() > rect.height()
+        full = self._full_text or self.text()
+        super().setToolTip(full if clipped or full != self.text() else '')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_tip()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange, QEvent.Type.ContentsRectChange):
+            self._refresh_tip()
 
     def setFixedWidth(self, width):
         super().setFixedWidth(width)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
 
     def paintEvent(self, event):
+        self._refresh_tip()
         painter = QPainter(self)
         painter.setFont(self.font())
         painter.setPen(self.palette().color(self.foregroundRole()))
@@ -205,7 +236,7 @@ class ModeMenu(DropDownPushButton):
         text = self._items[index][0]
         self.setText(text)
         self.setFixedWidth(self.fontMetrics().horizontalAdvance(text) + 24)
-        self.setToolTip('制式：' + text)
+        self.setToolTip('')
         self.setAccessibleName('制式：' + text)
         for position, item in enumerate(self._items):
             item[2].setChecked(position == index)
@@ -218,7 +249,7 @@ def text_button(text, name, parent):
     button.setObjectName(name)
     button.setFont(font())
     button.setFixedHeight(28)
-    button.setToolTip(text)
+    button.setToolTip('')
     button.setAccessibleName(text)
     return button
 
@@ -347,7 +378,7 @@ class RankingRow(QFrame):
         display_name = short_line_name(line.name)
         self.name = label(f'{line.mode} {display_name}' if aggregate else display_name, size=12, parent=self)
         self.name.setFixedWidth(112)
-        self.name.setToolTip(f'{line.mode} {display_name}\n公司：{line.company_id}')
+        self.name.set_full_text(f'{line.mode} {line.name}' if aggregate else line.name)
         self.track = BarTrack(numeric(value), maximum, QColor(tokens.ACCENT) if aggregate else mode_color(line.mode), self)
         self.number = label(f'{shown(value)} {unit}', bold=True, parent=self)
         self.number.setFixedWidth(max(76, self.number.fontMetrics().horizontalAdvance(self.number.text()) + 2))
@@ -372,6 +403,7 @@ class ModeRing(QWidget):
         super().__init__(parent)
         self.counts, self.total, self.colors = (), None, {}
         self.caption = '制式占比'
+        self.unit = ''
         self.display_labels = {}
         self.inner_ratio = .78
         self.setFixedSize(136, 136)
@@ -390,6 +422,7 @@ class ModeRing(QWidget):
     def set_data(self, counts, total, colors=None, *, caption='制式占比', display_labels=None, unit=''):
         self.counts, self.total, self.colors = counts, numeric(total), colors or {}
         self.caption, self.display_labels = caption, display_labels or {}
+        self.unit = unit
         self.center_total.setText(shown(total))
         self.center_caption.setText(unit or caption)
         self.center_note.setText('总量不完整' if not complete_distribution(counts, total) else '暂无占比' if numeric(total) == 0 else '')
@@ -452,7 +485,7 @@ class ModeRing(QWidget):
 
     def mouseMoveEvent(self, event):
         sector = self._hit(event.position())
-        self.setToolTip(f'{self.display_labels.get(sector[2], sector[2])} · {shown(sector[3])} · {format_number(sector[3] / self.total * 100, 1, fixed=True)}%' if sector else '线路占比')
+        self.setToolTip(f'{self.display_labels.get(sector[2], sector[2])} · {shown(sector[3])} {self.unit} · {format_number(sector[3] / self.total * 100, 1, fixed=True)}%' if sector else '')
         super().mouseMoveEvent(event)
 
     def touch_inspect(self, global_point):
@@ -465,6 +498,10 @@ class ModeRing(QWidget):
 
     def touch_inspect_end(self):
         QToolTip.hideText()
+
+    def leaveEvent(self, event):
+        self.setToolTip('')
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -494,8 +531,7 @@ class ModeRow(QFrame):
         self.setObjectName(f'{prefix}-row-{index}')
         self.setFixedHeight(22)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setToolTip(f'{count.mode} · 点击查看线路排行')
-        self.setAccessibleName(self.toolTip())
+        self.setAccessibleName(f'{count.mode} · 点击查看线路排行')
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
@@ -518,7 +554,7 @@ class ModeRow(QFrame):
         row.addWidget(self.share)
         self.number.hide()
         self.share.hide()
-        self.setToolTip(' · '.join((self.number.toolTip(), self.share.toolTip())))
+        self.setToolTip('')
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -561,7 +597,8 @@ class ShareRow(QFrame):
             self.name.setMinimumWidth(0)
             self.name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             self.name.setStyleSheet(f'color:{tokens.TEXT_PRIMARY};background:transparent;')
-        self.name.setToolTip(f'{entry.mode} {display_name}'.strip())
+        if entry.line_key:
+            self.name.set_full_text(f'{entry.mode} {entry.name}'.strip())
         row.addWidget(self.name, 1)
         known = '（已知）' if not entry.complete and entry.value is not None else ''
         self.number = label(f'{shown(entry.value)}{known} {unit}', parent=self)
@@ -574,7 +611,7 @@ class ShareRow(QFrame):
         row.addWidget(self.share)
         self.number.hide()
         self.share.hide()
-        self.setToolTip(' · '.join((self.number.toolTip(), self.share.toolTip())))
+        self.setToolTip('')
         self.setAccessibleName(f'{entry.mode} {entry.name} {shown(entry.value)} {unit} {self.share.text()}')
 
     def mousePressEvent(self, event):
@@ -832,6 +869,8 @@ class StructureAnalysis(CategoryCard):
         maximum = max((numeric(getattr(line, self.attribute)) for line in lines), default=Decimal(0))
         for i, line in enumerate(lines):
             row = RankingRow(line, getattr(line, self.attribute), maximum, i, self.prefix, self.unit, mode is None)
+            if sum(other.name == line.name and other.mode == line.mode for other in lines) > 1:
+                row.name.set_full_text(f'{line.mode} {line.name}\n公司标识：{line.company_id}')
             row.line_requested.connect(self.line_requested.emit)
             self.ranking_rows.addWidget(row)
             row.show()
@@ -844,7 +883,7 @@ class StructureAnalysis(CategoryCard):
         self.status.setText(f'{mode or "全部制式"} · {len(lines)}条 · {self.unit}')
         available = sum(1 for line in self._lines if (mode is None or line.mode == mode)
                         and numeric(getattr(line, self.attribute)) is not None)
-        self.ranking_button.setToolTip(f'按{self.caption}排序 · 当前范围{available}条有效线路 · 显示{len(lines)}条')
+        self.ranking_button.setToolTip('')
         self._header('ranking')
 
     def _mode_selected(self, *_):
@@ -869,7 +908,7 @@ class StructureAnalysis(CategoryCard):
                                                         complete_total(getattr(line, self.attribute) for line in source))
         entries, total = line_share_data(source, self.attribute, expected)
         colors = {entry.key: mode_color(entry.mode) if entry.line_key else QColor(tokens.TEXT_DISABLED) for entry in entries}
-        labels = {entry.key: f'{entry.mode} {short_line_name(entry.name) if entry.line_key else entry.name}'.strip() for entry in entries}
+        labels = {entry.key: f'{entry.mode} {entry.name}'.strip() for entry in entries}
         self.share_ring.set_data(tuple(ModeCount(entry.key, entry.value) for entry in entries), total, colors,
                                  caption='线路占比', display_labels=labels, unit=self.unit)
         self._header('line_share')
@@ -877,6 +916,11 @@ class StructureAnalysis(CategoryCard):
         self._share_widgets = []
         for i, entry in enumerate(entries):
             row = ShareRow(entry, total, self.unit, i, colors[entry.key])
+            if entry.line_key and sum(other.name == entry.name and other.mode == entry.mode for other in entries) > 1:
+                line = next(line for line in source if line.key == entry.line_key)
+                identity = f'{entry.mode} {entry.name}\n公司标识：{line.company_id}'
+                row.name.set_full_text(identity)
+                self.share_ring.display_labels[entry.key] = identity
             row.line_requested.connect(self.line_requested.emit)
             self.share_rows.addWidget(row)
             row.show()
@@ -884,7 +928,7 @@ class StructureAnalysis(CategoryCard):
         if not entries:
             self.share_rows.addWidget(label('当前范围暂无有效线路数据'))
         self.share_rows.addStretch()
-        self.share_button.setToolTip(f'当前范围{len(source)}条线路')
+        self.share_button.setToolTip('')
         self._header('line_share')
 
     def visible_mode_rows(self):

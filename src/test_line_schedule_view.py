@@ -39,6 +39,44 @@ def departures(count):
                  original_index=index) for index in range(count)]
 
 
+def test_operating_time_shows_segments_and_only_special_annotations(panel):
+    for times, expected, tip in (
+        (['00:00','02:00','04:00','06:00','08:00','10:00','12:00','14:00','16:00','18:00','20:00','22:00'],
+         '00:00-24:00', '24小时运营线路'),
+        (['07:30','08:30','09:30','16:30','17:30','18:30'],
+         '07:30-09:30    16:30-18:30', '分时段运营线路'),
+        (['07:30','08:30','09:30'], '07:30-09:30', ''),
+    ):
+        panel.set_line({'班次': {'周一': [dict(time=t) for t in times]}})
+        assert 'first' not in panel.summary_values and 'last' not in panel.summary_values
+        assert panel.summary_labels['service'].text() == '运营时间'
+        assert panel.summary_values['service'].text() == expected
+        assert panel.summary_values['service'].toolTip() == tip
+        assert panel.summary_labels['service'].toolTip() == tip
+
+
+def test_narrow_operating_time_wraps_without_losing_segments(panel, qt_application):
+    from PySide6.QtCore import QRect
+    times = ['05:00','06:00','10:00','11:00','15:00','16:00','20:00','21:00']
+    panel.set_line({'班次': {'周一': [dict(time=t) for t in times]}})
+    panel.resize(400,700);qt_application.processEvents()
+    value = panel.summary_values['service']
+    assert all(segment in value.text() for segment in ('05:00-06:00','10:00-11:00','15:00-16:00','20:00-21:00'))
+    bounds = value.fontMetrics().boundingRect(QRect(0,0,value.width(),10000), Qt.TextFlag.TextWordWrap, value.text())
+    assert value.height() >= bounds.height()
+    assert panel.summary_host.rect().contains(value.mapTo(panel.summary_host,value.rect().bottomRight()))
+
+
+def test_period_tooltip_uses_actual_configured_ranges(panel):
+    panel.period_rules = {'morning_peak': (('06:45','08:15'),),
+                          'offpeak': (('08:15','12:00'),('14:00','18:00'))}
+    panel.set_line({'班次': {'周一': [dict(time='07:00'),dict(time='07:10')]}})
+    assert panel.summary_values['morning_peak'].toolTip() == '早高峰（06:45-08:15）平均间隔'
+    assert panel.summary_labels['offpeak'].toolTip() == '平峰（08:15-12:00、14:00-18:00）平均间隔'
+    assert '07:30' not in panel.summary_values['morning_peak'].toolTip()
+    assert panel.summary_values['night'].toolTip() == '夜间（时段未确认）平均间隔'
+
+
 @pytest.mark.parametrize('count', [0, 1, 50, 72, 100, 140, 200])
 @pytest.mark.parametrize('width', [888, 904])
 def test_all_departures_fit_without_scroll_and_final_time_is_visible(panel, qt_application, count, width):
@@ -130,7 +168,7 @@ def test_duplicates_midnight_tooltip_metadata_and_vehicle_accessibility(panel, q
     entries = panel.matrix.entries
     assert [item['time'] for item in entries] == ['23:50', '23:50', '00:10']
     assert entries[-1]['next_day'] is True
-    assert '次日' in panel.summary_values['last'].text()
+    assert '次日' in panel.summary_values['service'].text()
     tooltip = panel.matrix.tooltip_for(2)
     assert tooltip.splitlines() == ['发班序号：第3班', '完整时刻：次日00:10', '车型：大型']
     assert entries[-1]['备注'] == '夜间原始信息'
@@ -263,9 +301,9 @@ def test_compact_height_preserves_140_times_and_only_four_vehicle_legend(panel, 
     assert not any(label.isVisible() and '灰底' in label.text() for label in panel.findChildren(QLabel))
 
 
-def test_day_departure_count_is_in_seven_item_summary_and_changes_with_selection(panel):
+def test_day_departure_count_is_in_six_item_summary_and_changes_with_selection(panel):
     panel.set_line({'班次': {'周一': departures(200), '周二': departures(1)}})
-    assert tuple(panel.summary_values) == ('first', 'last', 'count', 'morning_peak', 'evening_peak', 'offpeak', 'night')
+    assert tuple(panel.summary_values) == ('service', 'count', 'morning_peak', 'evening_peak', 'offpeak', 'night')
     assert panel.summary_labels['count'].text() == '日发班'
     assert panel.summary_values['count'].text() == '200 班'
     assert panel.count_label is panel.summary_values['count']
@@ -339,7 +377,7 @@ def test_shared_content_track_left_aligns_time_and_leaves_information_gaps(panel
     assert panel.group_host.mapTo(panel, QPoint()).x() >= panel.title_label.geometry().right()
     assert abs(panel.group_host.mapTo(panel,panel.group_host.rect().center()).y()-
                panel.title_label.mapTo(panel,panel.title_label.rect().center()).y())<=2
-    assert panel.summary_labels['first'].mapTo(panel, QPoint()).x() == track
+    assert panel.summary_labels['service'].mapTo(panel, QPoint()).x() == track
     assert panel.matrix.mapTo(panel, QPoint()).x() == track
     summary_bottom = panel.summary_host.mapTo(panel, QPoint()).y() + panel.summary_host.height()
     assert panel.matrix.mapTo(panel, QPoint()).y() - summary_bottom >= 8
@@ -477,9 +515,9 @@ def test_summary_values_share_matrix_ten_column_tracks_without_clipping(panel, q
     panel.set_line({'班次': {'周一': departures(200 if expanded else 140)}})
     panel.resize(width, 818 if expanded else 458)
     qt_application.processEvents()
-    for index, (key, column) in enumerate({'first': 0, 'last': 1, 'count': 2, 'morning_peak': 3,
+    for index, (key, column) in enumerate({'service': 0, 'count': 2, 'morning_peak': 3,
                                           'evening_peak': 5, 'offpeak': 7, 'night': 9}.items()):
-        matrix_x = (panel.summary_host.x() + index * panel.summary_host.width() // 7 if expanded
+        matrix_x = (panel.summary_host.x() + (0 if index == 0 else index + 1) * panel.summary_host.width() // 7 if expanded
                     else panel.matrix.mapTo(panel, panel.matrix.cell_rect(column).topLeft()).x())
         summary_x = panel.summary_values[key].mapTo(panel, QPoint()).x()
         assert abs(summary_x - matrix_x) <= 1, f'{key} is off the time column track'
@@ -495,7 +533,7 @@ def test_expanded_summary_has_readable_values_and_complete_next_day_time(panel, 
     panel.set_line({'班次': {'周一': rows}})
     panel.resize(888, 812)
     qt_application.processEvents()
-    assert panel.summary_values['last'].text() == '次日00:54'
+    assert panel.summary_values['service'].text() == '05:00-次日00:54'
     for key, value in panel.summary_values.items():
         label = panel.summary_labels[key]
         assert value.font().pixelSize() == 21
@@ -503,7 +541,7 @@ def test_expanded_summary_has_readable_values_and_complete_next_day_time(panel, 
         assert value.height() >= value.fontMetrics().height()
         assert value.width() >= value.fontMetrics().horizontalAdvance(value.text())
         assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
-        assert value.y() == panel.summary_values['first'].y()
+        assert value.y() == panel.summary_values['service'].y()
     assert panel.summary_host.height() == 64
     assert panel.matrix.display_count == 200
     assert 28 <= panel.matrix.row_height <= 30

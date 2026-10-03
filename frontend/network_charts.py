@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 from chart_canvas import ChartData, Series
 from stats_charts import ChartPanel, _number
 from stats_text import group_label
+from company_labels import company_selection_name
 from stats_controls import FluentSegmentedControl
 from statistics_model import period_bounds, summarize_buckets
 from ui_kit import LegendChip
@@ -222,7 +223,7 @@ class NetworkChartPanel(ChartPanel):
             return self._display_company(company) + ' · ' + (
                 self.snapshot.options.comparison_label if previous else '本期')
         if group in ('__overall__', '__selected__'):
-            return '已选公司'
+            return self._selection_name()
         if group == 'current':
             return '本期'
         if group == 'comparison':
@@ -231,9 +232,18 @@ class NetworkChartPanel(ChartPanel):
 
     def _display_company(self, company):
         if company == '__selected__':
-            return '已选公司'
+            return self._selection_name()
         name = self.companies.get(company, company)
-        return f'{name} ({company})' if list(self.companies.values()).count(name) > 1 else name
+        return f'{name} [{company}]' if list(self.companies.values()).count(name) > 1 else name
+
+    def _selection_name(self):
+        filters = getattr(self.snapshot, 'filters', None)
+        selected = getattr(filters, 'companies', None)
+        if selected is None:
+            selected = self.result.query.companies if self.result else tuple(self.companies)
+            if '__selected__' in selected:
+                selected = tuple(self.companies)
+        return company_selection_name(self.companies, selected)
 
     def _endpoint_bucket(self, buckets, previous):
         """Consume the model's single selected endpoint without aggregating time."""
@@ -405,7 +415,7 @@ class NetworkChartPanel(ChartPanel):
                     chip = LegendChip(_COMPACT_CATEGORY_NAMES[key] if compact else name,
                                       self._legend_key_color(key), self.legend_host, compact=compact)
                     self.legend_host.flow.addWidget(chip)
-                chip.setToolTip(name)
+                chip.set_full_text(name)
                 chip.setAccessibleName(name)
                 self._configure_legend_toggle(key, chip)
         for group in self._group_legend:

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
 from qfluentwidgets import (ComboBox, FluentIcon, IconWidget, TogglePushButton,
                             TransparentToolButton, ToolTip)
 
-from line_schedule import prepare_schedule, timetable_entry_inactive
+from line_schedule import PERIOD_LABELS, prepare_schedule, timetable_entry_inactive
 import stats_tokens as tokens
 from stats_typography import emphasis_css, apply_emphasis_font
 from stats_controls import FluentSegmentedControl, StatisticsScrollArea
@@ -312,7 +312,7 @@ class SchedulePanel(QFrame):
     currentGroupChanged = Signal(str)
     expansionRequested = Signal(bool)
     SUMMARY_TRACKS = {
-        'first': (0, 1), 'last': (1, 1), 'count': (2, 1),
+        'service': (0, 2), 'count': (2, 1),
         'morning_peak': (3, 2), 'evening_peak': (5, 2),
         'offpeak': (7, 2), 'night': (9, 1),
     }
@@ -396,7 +396,7 @@ class SchedulePanel(QFrame):
         self.summary_labels = {}
         self._summary_tiles = {}
         for index, (key, title) in enumerate([
-                ('first', '首班'), ('last', '末班'), ('count', '日发班'),
+                ('service', '运营时间'), ('count', '日发班'),
                 ('morning_peak', '早高峰平均间隔'), ('evening_peak', '晚高峰平均间隔'),
                 ('offpeak', '平峰平均间隔'), ('night', '夜间平均间隔')]):
             host = QWidget(summary_host)
@@ -411,6 +411,8 @@ class SchedulePanel(QFrame):
                 f'font-size: {tokens.FONT_SIZE_CAPTION}px;')
             label.setFixedHeight(16)
             value = QLabel('—', host)
+            if key == 'service':
+                value.setWordWrap(True)
             value.setFixedHeight(20)
             value.setStyleSheet(f'{emphasis_css(tokens.FONT_SIZE_BODY)}color: {tokens.TEXT_PRIMARY};')
             apply_emphasis_font(value, tokens.FONT_SIZE_BODY)
@@ -603,13 +605,15 @@ class SchedulePanel(QFrame):
         night_width = self.summary_labels['night'].fontMetrics().horizontalAdvance('夜间平均间隔')
         if self.expanded:
             required = max(night_width, self.summary_labels['morning_peak'].fontMetrics().horizontalAdvance('早高峰平均间隔'),
-                           *(value.fontMetrics().horizontalAdvance(value.text()) for value in self.summary_values.values()))
+                           *(value.fontMetrics().horizontalAdvance(value.text()) / (2 if key == 'service' else 1)
+                             for key, value in self.summary_values.items()))
             aligned = available // 7 >= required
         else:
             aligned = available // 10 >= night_width
         required = max(night_width,
                        self.summary_labels['morning_peak'].fontMetrics().horizontalAdvance('早高峰平均间隔'),
-                       *(value.fontMetrics().horizontalAdvance(value.text()) for value in self.summary_values.values()))
+                       *(value.fontMetrics().horizontalAdvance(value.text()) / (2 if key == 'service' else 1)
+                         for key, value in self.summary_values.items()))
         equal_row = not aligned and available // 7 >= required
         aligned = aligned or equal_row
         self._summary_layout.setHorizontalSpacing(0 if aligned else tokens.CONTROL_GAP)
@@ -620,15 +624,23 @@ class SchedulePanel(QFrame):
             self._summary_layout.removeWidget(host)
             if aligned:
                 key = tuple(self._summary_tiles)[index]
-                column, span = (index, 1) if self.expanded or equal_row else self.SUMMARY_TRACKS[key]
+                column, span = ((0, 2) if index == 0 else (index + 1, 1)) if self.expanded or equal_row else self.SUMMARY_TRACKS[key]
                 self._summary_layout.addWidget(host, 0, column, 1, span)
             else:
-                self._summary_layout.addWidget(host, index // columns, index % columns)
-        rows = 1 if aligned else ceil(len(self._summary_tiles) / columns)
+                slot = 0 if index == 0 else index + 1
+                self._summary_layout.addWidget(host, slot // columns, slot % columns, 1, 2 if index == 0 else 1)
+        rows = 1 if aligned else ceil((len(self._summary_tiles) + 1) / columns)
         row_height = 48 if self.expanded else 40
         padding = 8 if self.expanded else 0
         self._summary_layout.setContentsMargins(0, padding, 0, padding)
-        self.summary_host.setFixedHeight(rows * row_height + (rows - 1) * tokens.CONTROL_GAP + 2 * padding)
+        service = self.summary_values['service']
+        service_width = max(1, 2 * (available - (columns - 1) * self._summary_layout.horizontalSpacing()) // columns
+                            + self._summary_layout.horizontalSpacing())
+        service_height = max(28 if self.expanded else 20, service.fontMetrics().boundingRect(
+            QRect(0, 0, service_width, 10000), Qt.TextFlag.TextWordWrap, service.text()).height())
+        service.setFixedHeight(service_height)
+        extra = max(0, service_height - (28 if self.expanded else 20))
+        self.summary_host.setFixedHeight(rows * row_height + (rows - 1) * tokens.CONTROL_GAP + 2 * padding + extra)
         for key, title in {'morning_peak': '早高峰', 'evening_peak': '晚高峰',
                            'offpeak': '平峰', 'night': '夜间'}.items():
             self.summary_labels[key].setText(title + ('平均间隔' if aligned else '间隔'))
@@ -727,10 +739,17 @@ class SchedulePanel(QFrame):
     def _show_summary(self, summary):
         self.summary = summary
         for key, label in self.summary_values.items():
-            value = summary.get(key)
+            value = ('    '.join(segment['text'].replace('–', '-') for segment in summary.get('segments', ())) or '—') if key == 'service' else summary.get(key)
             label.setText(f'{value} 班' if key == 'count' else str(value) if value not in (None, '') else '—')
-            tooltip = summary.get(f'{key}_tooltip') or (summary.get('service_text', '')
-                                                       if key in ('first', 'last') else '')
+            if key == 'service':
+                tooltip = ('24小时运营线路' if summary.get('all_day') else
+                           '分时段运营线路' if len(summary.get('segments', ())) > 1 else '')
+            elif key in PERIOD_LABELS:
+                ranges = summary.get('period_ranges', {}).get(key, ())
+                time_text = '、'.join(ranges).replace('–', '-') or '时段未确认'
+                tooltip = f'{PERIOD_LABELS[key]}（{time_text}）平均间隔'
+            else:
+                tooltip = summary.get(f'{key}_tooltip', '')
             label.setToolTip(tooltip)
             self.summary_labels[key].setToolTip(tooltip)
             label.setAccessibleName(f'{self.summary_labels[key].text()}：{label.text()}')

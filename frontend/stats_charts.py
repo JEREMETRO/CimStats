@@ -641,6 +641,17 @@ class ChartPanel(QFrame):
         if not colors:
             return
         widget = SeriesLegend(name, colors, self.legend_host, compact=self._compact_height is not None)
+        if key in self.companies:
+            # Use the actual key, never infer identity from a visual position.
+            raw = self.companies[key]
+            suffixes = (f' [{key}]', f' ({key})')
+            for suffix in suffixes:
+                if raw.endswith(suffix):
+                    raw = raw[:-len(suffix)]
+                    break
+            if (any(name.endswith(suffix) for suffix in suffixes)
+                    or list(self.companies.values()).count(raw) > 1):
+                widget.set_company_identity(raw, key)
         self.legend_host.flow.addWidget(widget)
         entry = dict(key=key, name=name, colors=tuple(QColor(color) for color in colors), widget=widget)
         self.series_legend_entries.append(entry)

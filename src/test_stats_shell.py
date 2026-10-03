@@ -211,7 +211,11 @@ def test_long_duplicate_company_names_wrap_without_horizontal_overflow():
     app.processEvents()
     groups = list(page.company_dashboard.groups.values())
     assert len(groups) == 2
-    assert all(name in group.name_label.toolTip() for group in groups)
+    for group in groups:
+        if group.name_label.text() == group.full_name:
+            assert group.name_label.toolTip() == ''
+        else:
+            assert group.name_label.toolTip() == f'{name}\n公司标识：{group.company_id}'
     assert all('765611' in group.full_name for group in groups)
     assert page.scroll.widget().width() <= page.scroll.viewport().width()
     page.close()

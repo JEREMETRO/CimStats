@@ -346,6 +346,24 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         self.sidebar = NavigationInterface(shell, showReturnButton=False)
+        # Fluent rewrites this action tip during both animated and immediate
+        # navigation changes. Translate at that boundary without changing them.
+        from PySide6.QtCore import QObject, QEvent
+
+        class NavigationActionTip(QObject):
+            def eventFilter(self, watched, event):
+                if event.type() == QEvent.Type.ToolTipChange:
+                    translated = {'Open Navigation': '展开导航',
+                                  'Close Navigation': '收起导航'}.get(watched.toolTip())
+                    if translated:
+                        watched.setToolTip(translated)
+                return False
+
+        menu_button = self.sidebar.panel.menuButton
+        self._navigation_action_tip = NavigationActionTip(menu_button)
+        menu_button.installEventFilter(self._navigation_action_tip)
+        menu_button.setToolTip('收起导航' if self.sidebar.panel.displayMode in (
+            NavigationDisplayMode.EXPAND, NavigationDisplayMode.MENU) else '展开导航')
         self.sidebar.setExpandWidth(NAV_WIDTH_EXPANDED)
         self.sidebar.setMinimumExpandWidth(1000)
         self.sidebar.displayModeChanged.connect(self._navigation_mode_changed)
@@ -987,15 +1005,20 @@ class MainWindow(QMainWindow):
         for index, (primary, alternate) in enumerate(facts):
             tooltip = ''
             if index == 4:
-                tooltip = line.get('平均间隔Tooltip', '模拟当日真实班次的有效相邻间隔；不随星期选择改变。')
+                tooltip = '该线路该天运营时间内的平均间隔'
+                if line.get('平均间隔') in (None, '', '—') and line.get('平均间隔Tooltip'):
+                    tooltip += '\n' + line['平均间隔Tooltip']
             elif index == 5:
-                tooltip = line.get('平均车辆需求数Tooltip', '按原游戏七天五分钟槽位计算的平均车辆需求。')
+                tooltip = '游戏系统计算的线路平均车辆需求数'
+                if line.get('平均车辆需求数') is None and line.get('平均车辆需求数Tooltip'):
+                    tooltip += '\n' + line['平均车辆需求数Tooltip']
             elif index == 6:
-                tooltip = '今日客流来自模拟当日；平均客流沿用累计客流除以开线日至模拟当前时间的天数。'
+                tooltip = '自开线以来的日均客流'
             card = CompactFactCard(primary, alternate, tooltip=tooltip)
-            if index == 4 and line.get('当日发班数Tooltip'):
-                card.label.setToolTip(line['当日发班数Tooltip'])
-                card.value.setToolTip(line['当日发班数Tooltip'])
+            if index == 4:
+                card.setToolTip('')
+                card.label.setToolTip('')
+                card.value.setToolTip('')
             self.fact_cards.append(card)
             self.facts_grid.addWidget(card, index // 3, index % 3)
             title = primary[0] + (' / ' + alternate[0] if alternate else '')
@@ -1006,7 +1029,6 @@ class MainWindow(QMainWindow):
             self.fact_menu.addAction(action)
         self.schedule_panel.set_line(line)
         self.lines_page.list_footer.setText(f"共 {len(self.data.get('lines', []))} 条线路    选中：{display_name}")
-        self.lines_page.list_footer.setToolTip(self.lines_page.list_footer.text())
 
     def clear_schedule_tabs(self):
         self.schedule_panel.clear()

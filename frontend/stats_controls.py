@@ -222,6 +222,10 @@ class FluentSegmentedControl(QFrame):
     def currentKey(self) -> str:
         return self._current_key
 
+    def currentText(self) -> str:
+        button = self._buttons.get(self._current_key)
+        return button.text() if button is not None else ''
+
     def setItemEnabled(self, key: str, enabled: bool) -> None:
         if key not in self._buttons:
             raise KeyError(key)

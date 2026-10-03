@@ -91,8 +91,8 @@ class AlertSummaryRow(QWidget):
         value_label.setObjectName('alertSummaryValue')
         value_label.setMinimumHeight(18)
         box.addWidget(value_label)
-        for text in self.findChildren(QLabel):
-            text.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        # Labels receive hover events for clipped identities and read markers;
+        # their unhandled clicks still propagate to the summary row.
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
@@ -192,7 +192,6 @@ class LatestInfoAlertsPanel(CardWidget):
         self.more_button.setFont(font(12))
         self.more_button.setFixedSize(62, 22)
         self.more_button.setAccessibleName('更多提醒操作')
-        self.more_button.setToolTip('更多：开关、阈值、全部标为已读')
         self.more_menu = RoundMenu(parent=self.more_button)
         self.enable_action = Action('开启提醒', self.more_menu)
         self.enable_action.setCheckable(True)
@@ -306,8 +305,7 @@ class LatestInfoAlertsPanel(CardWidget):
             unread = _alert_id(self.session_key, alert) not in self._read_ids
             row = AlertSummaryRow(title, company, value, unread, parent)
             row.activated.connect(lambda a=alert: self._show_details(a))
-            row.setToolTip(f'{company}\n{title}\n{value}\n{alert.reason}')
-            row.setAccessibleName(f'{row.toolTip()}\n{"未读" if unread else "已读"} · 点击或按 Enter 查看详情')
+            row.setAccessibleName(f'{company}\n{title}\n{value}\n{alert.reason}\n{"未读" if unread else "已读"} · 点击或按 Enter 查看详情')
             return row
         row = QWidget(parent)
         row.setObjectName('latestAlertRow')
@@ -336,8 +334,7 @@ class LatestInfoAlertsPanel(CardWidget):
         actions.addWidget(detail)
         actions.addWidget(read)
         box.addLayout(actions)
-        row.setToolTip(f'{company}\n{title}\n{value}\n{alert.reason}')
-        row.setAccessibleName(row.toolTip())
+        row.setAccessibleName(f'{company}\n{title}\n{value}\n{alert.reason}')
         return row
 
     def _refresh(self):
@@ -349,7 +346,9 @@ class LatestInfoAlertsPanel(CardWidget):
         self.scope_label.setText('公司及全市 · 前一完整日' if self._snapshot is not None else '未载入可比数据')
         if self._snapshot is not None:
             filters = self._snapshot.filters
-            tooltip = '所选公司及全市 · 前一完整日\n本期 ' + _window(filters.start, filters.end)
+            from company_labels import company_selection_name
+            company_name = company_selection_name(self.companies, filters.companies)
+            tooltip = f'公司：{company_name}\n城市指标：全市\n统计时间：' + _window(filters.start, filters.end)
             if filters.comparison:
                 before, end = filters.comparison
                 tooltip += '\n对比 ' + _window(before, end)

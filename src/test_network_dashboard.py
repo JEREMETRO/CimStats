@@ -43,6 +43,22 @@ class FakePanel(QWidget):
         self.setFixedHeight(height)
 
 
+def test_network_tile_retains_missing_reason_and_parts_without_repeating_comparison():
+    from decimal import Decimal
+    from card_comparisons import change
+    from network_dashboard import NetworkValueTile
+    from network_model import NetworkValue
+    QApplication.instance() or QApplication([])
+    comparison = change(Decimal(5), Decimal(4), '条', '较上日')
+    value = NetworkValue('linecount', '线路', '条', Decimal(5),
+                         (('公交', Decimal(5)),), False, '数据不完整', comparison)
+    tile = NetworkValueTile(0, value, NetworkOptions(), '#1677FF')
+    assert tile.toolTip() == '数据不完整；公交: 5'
+    assert comparison.tooltip == tile.comparison_label.toolTip()
+    assert comparison.tooltip not in tile.toolTip()
+    tile.close()
+
+
 def _fixture(mode='overall', grain='day', ids=('a', 'b')):
     rows = [history('transport-by-type', company, 0, amount, day=day)
             for company, amount in [('a', 10), ('b', 30)] for day in (1, 2)]
