@@ -505,3 +505,36 @@ def test_runtime_row_appends_average_cache_and_depot_name_without_loading_runtim
     assert row['平均车辆需求数_缓存_fixed'] == 2560
     assert row['线路车库名称'] == '东北电车厂'
     assert row['线路车库'] == 3
+
+
+@pytest.mark.parametrize('mask', ['0', '128', '-2147483648'])
+def test_disabled_only_line_has_no_display_groups_but_preserves_source(tmp_path, monkeypatch, mask):
+    line = session_fixture(tmp_path, monkeypatch, departures=[
+        {'发班时间': '00:00', '时刻表_运行日掩码': mask}])['lines'][0]
+    assert line['显示日组'] == []
+    assert len(line['班次']['未启用']) == 1
+    assert line['班次']['未启用'][0]['time'] == '00:00'
+    assert line['当日发班数'] == 0
+
+
+def test_mixed_timetables_display_enabled_and_keep_disabled_source(tmp_path, monkeypatch):
+    line = session_fixture(tmp_path, monkeypatch, departures=[
+        {'发班时间': '00:00', '时刻表_运行日掩码': '127'},
+        {'发班时间': '12:00', '时刻表_运行日掩码': '0'}])['lines'][0]
+    assert line['显示日组'] == ['周一至周四', '周五', '周六', '周日']
+    assert line['班次']['周五'][0]['time'] == '00:00'
+    assert len(line['班次']['未启用']) == 1
+    assert line['当日发班数'] == 1
+
+
+def test_enabled_zero_departure_table_retains_empty_calendar_groups(tmp_path, monkeypatch):
+    line = session_fixture(tmp_path, monkeypatch, departures=[], timetables=[
+        {'时刻表序号': '1', '运行日掩码': '127'}])['lines'][0]
+    assert line['显示日组'] == ['周一至周四', '周五', '周六', '周日']
+    assert all(line['时刻表'][group]['count'] == 0 for group in line['显示日组'])
+
+
+def test_unknown_days_are_not_hidden_as_inactive(tmp_path, monkeypatch):
+    line = session_fixture(tmp_path, monkeypatch, departures=[{'发班时间': '00:00'}])['lines'][0]
+    assert line['显示日组'] == ['运行日未知']
+    assert not line['班次数据完整']

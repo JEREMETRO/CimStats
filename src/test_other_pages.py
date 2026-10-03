@@ -114,7 +114,7 @@ def test_line_search_sort_details_and_fields(window):
     window.line_clicked(0, 0)
     assert window._selected_line['key'] == key
     selected = window._selected_line
-    assert window.schedule_panel.day_groups == tuple(selected.get('日组', selected['班次']))
+    assert window.schedule_panel.day_groups == tuple(selected['显示日组'])
     for day in window.schedule_panel.day_groups:
         entries = selected['班次'][day]
         window.schedule_panel.set_current_group(day)

@@ -174,7 +174,7 @@ def test_line_details_scroll_and_tabs_replace_cleanly(monkeypatch, tmp_path):
     previous_cards = list(window.fact_cards)
     window.show_line(window._selected_line)
     for _ in range(5): app.processEvents()
-    assert window.schedule_panel.day_groups == tuple(window._selected_line.get('日组', window._selected_line['班次']))
+    assert window.schedule_panel.day_groups == tuple(window._selected_line['显示日组'])
     assert all(card.isHidden() for card in previous_cards)
     assert len(window.fact_cards) == 9
     for width, height in ((1600, 900), (1024, 768), (920, 680)):

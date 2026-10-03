@@ -54,6 +54,13 @@ def running_day_mask(value):
     return mask if mask is not None and -(1 << 31) <= mask < (1 << 31) else None
 
 
+def timetable_entry_inactive(entry):
+    """Only explicit source status disables a row; zero times/counts do not."""
+    mask = running_day_mask(entry.get('运行日掩码', entry.get('时刻表_运行日掩码')))
+    return (not mask & WEEKDAY_MASK if mask is not None
+            else entry.get('运行日状态') == '未启用')
+
+
 def _clock_tick(value):
     text = str(value or '').strip().removeprefix('次日').strip()
     # The extractor emits "1d 01:30:00" for clocks beyond midnight.

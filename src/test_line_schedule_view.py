@@ -356,6 +356,7 @@ def test_shared_content_track_left_aligns_time_and_leaves_information_gaps(panel
 
 
 def test_period_background_uses_model_tags_and_next_day_has_priority(panel, qt_application):
+    panel.set_line({'班次': {'周一': []}})
     rows = [
         {'time': '12:00', 'period': 'morning_peak', 'vehicle_type': '小型'},
         {'time': '12:05', 'period': 'evening_peak', 'vehicle_type': '小型'},
@@ -632,3 +633,74 @@ def test_summary_emphasis_shapes_variable_numbers_with_chinese_fallback(panel, q
         if variable_available:
             assert all(font.familyName().startswith('Segoe UI Variable') and len(font.fontTable('fvar')) > 0
                        for font in latin)
+
+
+def test_panel_hides_inactive_group_and_preserves_enabled_zero_midnight(panel):
+    source = {'班次': {'周一': [{'time': '00:00', '运行日掩码': 2}],
+                       '周二': [], '未启用': [{'time': '12:00', '运行日掩码': 0}]}}
+    before = copy.deepcopy(source)
+    panel.set_line(source)
+    assert panel.day_groups == ('周一', '周二')
+    assert panel.matrix.entries[0]['time'] == '00:00'
+    panel.set_current_group('周二')
+    assert panel.summary['count'] == 0
+    assert panel.summary_host.isVisible()
+    assert source == before
+
+
+def test_panel_filters_explicit_disabled_rows_without_using_cached_summary(panel):
+    from line_schedule import prepare_schedule
+    rows = [{'time': '00:00', '运行日掩码': 130},
+            {'time': '12:00', '运行日掩码': 128},
+            {'time': '13:00', '运行日状态': '未启用'},
+            {'time': '14:00', '运行日掩码': None}]
+    panel.set_line({'班次': {'周一': rows}, '时刻表': {'周一': prepare_schedule(rows)}})
+    assert [row['time'] for row in panel.matrix.entries] == ['14:00', '00:00']
+    assert panel.summary['count'] == 2
+
+
+def test_panel_switch_to_inactive_clears_selection_summary_scroll_and_back(panel, qt_application):
+    active = {'班次': {'周一': departures(1), '周五': departures(201)}}
+    panel.set_line(active)
+    panel.set_current_group('周五')
+    qt_application.processEvents()
+    scroll = panel.matrix_scroll.verticalScrollBar()
+    assert scroll.maximum() > 0
+    scroll.setValue(scroll.maximum())
+    point = panel.matrix.cell_rect(200).center()
+    qt_application.sendEvent(panel.matrix, QHelpEvent(
+        QEvent.Type.ToolTip, point, panel.matrix.mapToGlobal(point)))
+    assert panel.matrix._tooltip.isVisible()
+    panel.set_line({'显示日组': [], '日组': ['周一', '未启用'],
+                    '班次': {'周一': [], '未启用': [{'time': '12:00', '运行日掩码': 0}]}})
+    qt_application.processEvents()
+    assert panel.day_groups == ()
+    assert panel.current_group is None
+    assert panel.group_combo.count() == 0
+    assert panel.group_control is None
+    assert panel.matrix.entries == []
+    assert panel.matrix._hover is None
+    assert panel.matrix._tooltip.isHidden()
+    assert panel.summary['count'] == 0
+    assert panel.matrix_scroll.verticalScrollBar().value() == 0
+    assert panel.summary_host.isHidden()
+    assert panel.footer_host.isHidden()
+    assert panel.expansion_button.isHidden()
+    assert panel.empty_label.isVisible()
+    assert panel.empty_label.text() == '暂无已启用时刻表'
+    assert all(label.toolTip() == '' for label in panel.summary_values.values())
+    panel.set_line(active)
+    assert panel.current_group == '周一'
+    assert len(panel.matrix.entries) == 1
+    assert panel.summary_host.isVisible()
+    assert panel.footer_host.isVisible()
+    assert panel.expansion_button.isVisible()
+    assert panel.empty_label.isHidden()
+
+
+def test_panel_all_explicit_inactive_rows_do_not_create_day_tabs(panel):
+    panel.set_line({'班次': {'周一': [{'time': '00:00', '运行日掩码': 0}],
+                            '未启用': [{'time': '06:00'}]}})
+    assert panel.day_groups == ()
+    assert panel.current_group is None
+    assert panel.matrix.entries == []

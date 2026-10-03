@@ -288,8 +288,10 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
     history_rows = normalize(history_rows, "history")
 
     timetable_by_key = {}
+    timetables_by_line = {}
     for row in timetable_rows:
         timetable_by_key[line_key(row) + (row.get("时刻表序号", ""),)] = row
+        timetables_by_line.setdefault(line_key(row), []).append(row)
     departures_by_line: dict[tuple[str, str, str], list[dict]] = {}
     for raw in departure_rows:
         key = line_key(raw)
@@ -317,6 +319,13 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
         deps = departures_by_line.get(key, [])
         metrics = _line_metrics(raw, deps, day_bit, map_km)
         day_groups, groups, schedules = _schedule_groups(deps)
+        # Presentation only: retain original groups/rows for calculations and exports.
+        # Native tables also establish enabled service when they contain zero rows.
+        masks = [running_day_mask(row.get("运行日掩码"))
+                 for row in timetables_by_line.get(key, []) + deps]
+        has_enabled_schedule = any(mask & WEEKDAY_MASK for mask in masks if mask is not None)
+        display_groups = [day for day in day_groups if day != "未启用"
+                          and (has_enabled_schedule or day == "运行日未知")]
         today_schedule = prepare_schedule([dep for dep in deps if integer(dep.get("运行日掩码")) & day_bit])
         unknown_departures = groups.get("运行日未知", [])
         today_note = f"模拟当日{current:%Y-%m-%d}，按当天运行日掩码对应的真实班次计算；" + today_schedule["average_interval_tooltip"]
@@ -349,7 +358,7 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
             "平均间隔": today_schedule["average_interval_text"],
             "平均间隔Tooltip": today_note,
             "平均车辆需求数": vehicle_average, "平均车辆需求数Tooltip": vehicle_average_note,
-            "原始字段": dict(raw), "日组": day_groups, "时刻表": schedules,
+            "原始字段": dict(raw), "日组": day_groups, "显示日组": display_groups, "时刻表": schedules,
             "字段可用性": {
                 "地图里程": _measurement_available(raw.get("地图里程")),
                 "折算里程": _measurement_available(raw.get("折算里程", raw.get("线路长度"))),

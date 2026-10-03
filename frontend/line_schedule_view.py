@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
 from qfluentwidgets import (ComboBox, FluentIcon, IconWidget, TogglePushButton,
                             TransparentToolButton, ToolTip)
 
-from line_schedule import prepare_schedule
+from line_schedule import prepare_schedule, timetable_entry_inactive
 import stats_tokens as tokens
 from stats_typography import emphasis_css, apply_emphasis_font
 from stats_controls import FluentSegmentedControl, StatisticsScrollArea
@@ -484,6 +484,10 @@ class SchedulePanel(QFrame):
                                         f'color: {tokens.TEXT_SECONDARY}; font-size: {tokens.FONT_SIZE_CAPTION}px;')
         footer.addWidget(self.display_label,0,3)
         self._layout.addWidget(self.footer_host)
+        self.empty_label = QLabel('暂无已启用时刻表', self)
+        self.empty_label.setObjectName('muted')
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self.empty_label, 1)
         self.group_host.installEventFilter(self)
         self.clear()
 
@@ -661,21 +665,44 @@ class SchedulePanel(QFrame):
         groups = self._line.get('班次') or {}
         if not isinstance(groups, Mapping):
             groups = {}
-        declared_groups = self._line.get('日组')
-        self.day_groups = (tuple(group for group in declared_groups if group in groups)
-                           if declared_groups is not None else tuple(groups))
+        declared_groups = self._line.get('显示日组', self._line.get('日组'))
+        candidates = declared_groups if declared_groups is not None else tuple(groups)
+        visible_groups = {}
+        for group in candidates:
+            if group not in groups or group == '未启用':
+                continue
+            rows = groups[group] or []
+            visible = [row for row in rows if not timetable_entry_inactive(row)]
+            if rows and not visible:
+                continue
+            visible_groups[group] = visible
+        self.day_groups = tuple(visible_groups)
         prepared = self._line.get('时刻表') or {}
         self._schedules = {
             group: prepared[group] if group in prepared and self.period_rules is None
-            else prepare_schedule(groups[group] or [], self.period_rules)
+            and len(visible_groups[group]) == len(groups[group] or [])
+            else prepare_schedule(visible_groups[group], self.period_rules)
             for group in self.day_groups}
         previous = self.current_group
         self.current_group = None
         self._rebuild_groups()
+        self._set_schedule_available(bool(self.day_groups))
         if self.day_groups:
             self.set_current_group(previous if previous in self.day_groups else self.day_groups[0])
         else:
             self._show_summary(prepare_schedule([], self.period_rules))
+            self._clear_summary_tooltips()
+
+    def _set_schedule_available(self, available):
+        for widget in (self.group_host, self.summary_host, self.matrix_scroll,
+                       self.footer_host, self.expansion_button):
+            widget.setVisible(available)
+        self.empty_label.setVisible(not available)
+
+    def _clear_summary_tooltips(self):
+        for labels in (self.summary_values, self.summary_labels):
+            for label in labels.values():
+                label.setToolTip('')
 
     def set_current_group(self, group):
         if group not in self._schedules:
@@ -716,4 +743,6 @@ class SchedulePanel(QFrame):
         self.day_groups = ()
         self.current_group = None
         self._rebuild_groups()
+        self._set_schedule_available(False)
         self._show_summary(prepare_schedule([], self.period_rules))
+        self._clear_summary_tooltips()
