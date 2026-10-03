@@ -117,6 +117,16 @@ def test_formal_010_release_records_known_issues_and_download_name():
     assert "StringStruct('Comments', metadata.license_spdx)" in spec
 
 
+def test_formal_010_release_leads_with_contributor_credit():
+    notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('## CimStats 0.1.0', 1)[0]
+    policy = (ROOT / 'docs/RELEASE.md').read_text(encoding='utf-8')
+    assert 'https://github.com/Trilleo' in notes
+    assert 'https://github.com/JEREMETRO/CimStats/pull/1' in notes
+    assert notes.index('Trilleo') < notes.index('###')
+    assert '### 验证' not in notes
+    assert '贡献者' in policy and '测试数量' in policy and '合并过程' in policy
+
+
 def test_curated_docs_are_in_source_and_bundle_manifests(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / 'tools'))
     import candidate_package
