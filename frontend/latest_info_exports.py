@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from display_rules import store_text_literally
+from display_rules import store_text_literally, workbook_number, format_number, number_places, truncated_number
 from statistics_model import METRICS
 from stats_text import group_label
 
@@ -18,21 +17,12 @@ if TYPE_CHECKING:
     from latest_info_model import LatestInfoSnapshot
 
 
-def _number(value):
-    if value is None:
-        return None
-    if isinstance(value, Decimal) and not value.is_finite():
-        return None
-    converted = value if isinstance(value, int) else float(value)
-    return converted if isfinite(converted) else None
+def _number(value, metric=None):
+    return workbook_number(value, number_places(metric))
 
 
 def _display(value):
-    number = _number(value)
-    if number is None:
-        return '—'
-    text = format(value, 'f') if isinstance(value, Decimal) else str(number)
-    return text.rstrip('0').rstrip('.') if '.' in text else text
+    return format_number(value, grouped=False)
 
 
 def _company(snapshot, owner):
@@ -55,7 +45,7 @@ def build_share_summary(snapshot: LatestInfoSnapshot) -> str:
                       '全部制式' if metric.key == 'transfer-coefficient' and snapshot.mode != '综合' else '')
         notes = [part for part in (scope_note,
                  '部分观测' if not metric.complete and _number(metric.value) is not None else '') if part]
-        lines.append(f'{metric.title}：{_display(metric.value)}{unit}' +
+        lines.append(f'{metric.title}：{format_number(metric.value, number_places(metric.key), grouped=False)}{unit}' +
                      (f'（{"；".join(notes)}）' if notes else ''))
     for highlight in snapshot.highlights:
         line = highlight.line
@@ -112,7 +102,7 @@ def export_latest_info_xlsx(snapshot: LatestInfoSnapshot, alerts: DashboardResul
     metrics = workbook.create_sheet('首页指标')
     _append(metrics, ['指标', '值', '单位', '指标范围', '观测状态', '缺测或口径说明'])
     for metric in snapshot.metrics:
-        value = _number(metric.value)
+        value = _number(metric.value, metric.key)
         _append(metrics, [metric.title, value, metric.unit, metric.scope,
                           '缺测' if value is None else ('完整' if metric.complete else '部分观测'), metric.reason])
 
@@ -132,13 +122,16 @@ def export_latest_info_xlsx(snapshot: LatestInfoSnapshot, alerts: DashboardResul
     total = _number(snapshot.total_departures)
     for category in snapshot.departure_modes:
         value = _number(category.value)
-        share = value / total if value is not None and total is not None and total > 0 else None
+        # Excel stores fractions; truncate the displayed percentage points.
+        share = (float(truncated_number(Decimal(str(category.value)) * 100 /
+                                       Decimal(str(snapshot.total_departures))) / 100)
+                 if value is not None and total is not None and total > 0 else None)
         _append(departures, [group_label(category.mode), value, share,
                             '班次缺测' if value is None else ('总班次缺测或不大于零，无法计算占比' if share is None else '')])
     _append(departures, ['总计', total, 1 if total is not None and total > 0 else None,
                         '总班次缺测' if total is None else ''])
     for row in range(2, departures.max_row + 1):
-        departures.cell(row, 3).number_format = '0.0%'
+        departures.cell(row, 3).number_format = '0.##%'
 
     reminder = workbook.create_sheet('关键提醒')
     _append(reminder, ['指标', '公司标识', '公司', '分组', '本期值', '对比值', '单位',
@@ -149,7 +142,7 @@ def export_latest_info_xlsx(snapshot: LatestInfoSnapshot, alerts: DashboardResul
             owner, group = alert.key
             metric = METRICS[alert.metric]
             _append(reminder, [metric.label, owner, names.get(owner, owner) if owner else '全市',
-                               group_label(group), _number(alert.after), _number(alert.before), metric.unit,
+                               group_label(group), _number(alert.after, alert.metric), _number(alert.before, alert.metric), metric.unit,
                                alert.start, alert.end, alert.comparison_start, alert.comparison_end, alert.reason])
 
     for sheet in workbook:

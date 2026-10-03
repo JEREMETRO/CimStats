@@ -1,6 +1,6 @@
 """In-window chart expansion and read-only company/period summaries."""
 from collections import defaultdict
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt, Signal
 from PySide6.QtGui import QFontMetricsF
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout
 from shiboken6 import isValid
 
 from statistics_model import summarize_buckets
+from display_rules import format_number, number_places
 from stats_text import group_label
 from stats_typography import apply_emphasis_font, emphasis_css
 import stats_tokens as tokens
@@ -183,11 +184,8 @@ class InlineChartDetail(QFrame):
         return super().eventFilter(watched, event)
 
 
-def exact_number(value):
-    if value is None:
-        return '—'
-    text = format(value, ',f')
-    return text.rstrip('0').rstrip('.') if '.' in text else text
+def exact_number(value, places=2):
+    return format_number(value, places)
 
 
 def summary_cards(result, companies, comparison_label='对比', company_name=None):
@@ -222,8 +220,7 @@ def summary_cards(result, companies, comparison_label='对比', company_name=Non
                 caption = {'hour': '小时', 'day': '日', 'week': '周', 'month': '月'}[result.query.grain] + '均' + label
                 card.update(grain_average=average, average_periods=len(totals),
                             display_values=[('区间' + label, total),
-                                            (caption, average.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                                             if average is not None else None)])
+                                            (caption, average)])
             cards.append(card)
     return cards
 
@@ -284,7 +281,7 @@ class DetailSummary(QFrame):
                     cell.addWidget(caption)
                 number_row = QHBoxLayout()
                 number_row.setSpacing(4)
-                number = QLabel(exact_number(value), surface)
+                number = QLabel(exact_number(value, number_places(self.panel.result.query.metric)), surface)
                 number.setObjectName('detailSummaryNumber')
                 number.setStyleSheet(emphasis_css(tokens.FONT_SIZE_KPI) + f'color:{tokens.TEXT_PRIMARY};border:0;')
                 apply_emphasis_font(number, tokens.FONT_SIZE_KPI)
@@ -308,10 +305,12 @@ class DetailSummary(QFrame):
             box.addLayout(values)
             surface.setMinimumHeight(80)
             desired = 240 if len(display_values) == 1 else 320
+            minimum = max(cell.minimumSize().width() for cell in cells) + 22
             if 'display_values' in card:
                 desired = max(desired, min(420, 2 + len(cells) *
                                            (max(cell.minimumSize().width() for cell in cells) + 18)))
-            self._surfaces.append((surface, values, cells, desired))
+            surface.setMinimumWidth(minimum)
+            self._surfaces.append((surface, values, cells, max(desired, minimum)))
         self._summary_layout.addWidget(self._body)
         self._reflow_cards()
         self.setVisible(bool(self.cards))
@@ -329,6 +328,9 @@ class DetailSummary(QFrame):
             desired = max(entry[3] for entry in self._surfaces)
             columns = max(1, min(len(self._surfaces), (available + 10) // (desired + 10)))
             width = min(desired, (available - (columns - 1) * 10) // columns)
+            minimum = max(cell.minimumSize().width() + 22
+                          for _, _, cells, _ in self._surfaces for cell in cells)
+            width = max(width, minimum)
             layout = self._cards_layout
             while layout.count():
                 layout.takeAt(0)

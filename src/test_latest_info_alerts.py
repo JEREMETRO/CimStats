@@ -18,7 +18,7 @@ def history(metric, before, after, *, company='p1', divider=0, missing=None):
 
 
 def build(rows, *, thresholds=(5, 20, 100), filters=None, cancelled=None):
-    from latest_info_alerts import build_latest_alerts, default_alert_filters
+    from src.latest_info_alerts import build_latest_alerts, default_alert_filters
     store = HistoryStore(rows, D(2024, 1, 3, 14, 37))
     filters = filters or default_alert_filters(store.simulation_time, ('p1',))
     return build_latest_alerts(store, filters, thresholds, cancelled)
@@ -30,7 +30,7 @@ def build(rows, *, thresholds=(5, 20, 100), filters=None, cancelled=None):
     (D(2024, 1, 1, 0, 0, 1), D(2024, 1, 1), D(2023, 12, 31), D(2023, 12, 30)),
 ])
 def test_default_filters_use_previous_complete_simulation_day(clock, end, start, previous):
-    from latest_info_alerts import default_alert_filters
+    from src.latest_info_alerts import default_alert_filters
     filters = default_alert_filters(clock, ('stable-a', 'stable-b'))
     assert filters == FilterState(('stable-a', 'stable-b'), start, end, 'hour', (previous, start))
 
@@ -46,7 +46,7 @@ def test_home_alerts_need_no_statistics_tab_visit():
 
 
 def test_all_company_ids_are_separate_even_with_duplicate_display_names():
-    from latest_info_alerts import default_alert_filters
+    from src.latest_info_alerts import default_alert_filters
     rows = history('cashflow', 100, 150) + history('cashflow', 200, 100, company='p2')
     filters = default_alert_filters(D(2024, 1, 3), ('p1', 'p2'))
     result = build(rows, filters=filters)
@@ -111,7 +111,7 @@ def test_city_alert_is_once_and_does_not_depend_on_company_selection():
 
 
 def test_empty_company_selection_keeps_city_scope_without_selecting_all_companies():
-    from latest_info_alerts import default_alert_filters
+    from src.latest_info_alerts import default_alert_filters
     rows = history('cashflow', 100, 150) + history('public-transport', 20, 25, company='', divider=100)
     filters = default_alert_filters(D(2024, 1, 3), ())
     assert [(a.metric, a.key) for a in build(rows, filters=filters).alerts] == [
@@ -322,7 +322,7 @@ def test_real_cached_alerts_mount_into_actual_page_without_extra_scroll_gui(gui_
     from pathlib import Path
     from PySide6.QtCore import QPoint, QRect
     from PySide6.QtWidgets import QLabel, QPushButton, QWidget
-    from latest_info_alerts import build_latest_alerts, default_alert_filters
+    from src.latest_info_alerts import build_latest_alerts, default_alert_filters
     from latest_info_model import build_latest_info
     from latest_info_page import LatestInfoPage
     from report_model import load_session

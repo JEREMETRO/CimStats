@@ -385,7 +385,7 @@ class NetworkChartPanel(ChartPanel):
                 series=[Series(key='share', name=caption or self.title_label.text(), color=QColor(tokens.ACCENT),
                                keys=keys, values=values, colors=colors,
                                faded=any(part[4] for part in selected))],
-                center_text=_number(total) if values else '', center_caption=self.result.metric.unit)))
+                center_text=_number(total, self.result.query.metric) if values else '', center_caption=self.result.metric.unit)))
         self._legend_keys = []
         return specs
 

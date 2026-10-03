@@ -5,6 +5,7 @@ from decimal import Decimal
 from math import ceil
 
 from statistics_model import period_bounds, summarize_buckets
+from display_rules import format_number
 
 
 @dataclass(frozen=True)
@@ -39,8 +40,8 @@ def baseline_label(start, end):
     return '较同期'
 
 
-def number(value):
-    return f'{value:,.2f}'.rstrip('0').rstrip('.')
+def number(value, places=2):
+    return format_number(value, places)
 
 
 def window_text(window):
@@ -48,7 +49,7 @@ def window_text(window):
 
 
 def change(current, baseline, unit, prefix, *, current_window=None, previous_window=None,
-           partial=False):
+           partial=False, value_places=2):
     if current is None or baseline is None:
         return CardComparison(tooltip=f'{prefix}：当前或基准缺少有效数据；缺测不补零')
     delta = current - baseline
@@ -61,11 +62,11 @@ def change(current, baseline, unit, prefix, *, current_window=None, previous_win
         body = f'{"+" if amount > 0 else ""}{number(amount)}%' if delta else '持平'
     else:
         amount, suffix = delta, unit
-        body = f'{"增加" if delta > 0 else "减少"} {number(abs(delta))} {unit}' if delta else '持平'
+        body = f'{"增加" if delta > 0 else "减少"} {number(abs(delta), value_places)} {unit}' if delta else '持平'
     text = f'{prefix} {body}'
-    tooltip = (f'{prefix}；当前 {number(current)} {unit}（{window_text(current_window)}）；'
-               f'基准 {number(baseline)} {unit}（{window_text(previous_window)}）；'
-               f'绝对差 {number(delta)} {"点" if unit == "%" else unit}。')
+    tooltip = (f'{prefix}；当前 {number(current, value_places)} {unit}（{window_text(current_window)}）；'
+               f'基准 {number(baseline, value_places)} {unit}（{window_text(previous_window)}）；'
+               f'绝对差 {number(delta, value_places)} {"点" if unit == "%" else unit}。')
     tooltip += ('占比按点数差计算；1 点对应比率差 0.01。' if unit == '%' else
                 '相对差=(当前-基准)/|基准|；基准为零时显示绝对差。')
     if partial:
@@ -74,7 +75,7 @@ def change(current, baseline, unit, prefix, *, current_window=None, previous_win
     return CardComparison(text, tooltip, direction, True, amount, suffix)
 
 
-def peer_comparisons(values, names, unit, window=None):
+def peer_comparisons(values, names, unit, window=None, *, value_places=2):
     if len(values) < 2:
         return {owner: CardComparison(tooltip='至少选择两家公司才可比较') for owner in values}
     valid = {key: value for key, value in values.items() if value is not None}
@@ -82,10 +83,12 @@ def peer_comparisons(values, names, unit, window=None):
     for owner, current in values.items():
         if len(values) == 2:
             other = next(key for key in values if key != owner)
-            comparison = change(current, values[other], unit, '', current_window=window, previous_window=window)
+            comparison = change(current, values[other], unit, '', current_window=window, previous_window=window,
+                                value_places=value_places)
             if comparison.available:
                 word = '领先' if comparison.direction > 0 else '落后' if comparison.direction < 0 else '持平'
-                amplitude = f' {number(abs(comparison.amount))}{comparison.unit}' if comparison.direction else ''
+                amplitude = (f' {number(abs(comparison.amount), 2 if comparison.unit == "%" else value_places)}'
+                             f'{comparison.unit}') if comparison.direction else ''
                 text = f'{word}对方{amplitude}' if comparison.direction else '与对方持平'
                 result[owner] = CardComparison(text,
                     f'对方：{names.get(other, other)}；{comparison.tooltip}', comparison.direction,
@@ -100,10 +103,12 @@ def peer_comparisons(values, names, unit, window=None):
         rank = 1 + sum(value > current for value in valid.values())
         tied = sum(value == current for value in valid.values()) > 1
         leader_ids = [key for key, value in valid.items() if value == maximum]
-        comparison = change(current, maximum, unit, '距第一名', current_window=window, previous_window=window)
+        comparison = change(current, maximum, unit, '距第一名', current_window=window, previous_window=window,
+                            value_places=value_places)
         text = f'{"并列" if tied else ""}第 {rank} 名'
         if rank > 1:
-            text += f' · 落后 {number(abs(comparison.amount))}{comparison.unit}'
+            text += (f' · 落后 {number(abs(comparison.amount), 2 if comparison.unit == "%" else value_places)}'
+                     f'{comparison.unit}')
         if len(valid) != len(values):
             text += ' *'
         result[owner] = CardComparison(text,

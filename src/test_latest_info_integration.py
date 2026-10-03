@@ -280,12 +280,18 @@ def test_reimport_clears_before_parser_runs_and_preserves_open_action(window, qt
 def test_original_workbooks_remain_available_from_home(window, qt_application, tmp_path, monkeypatch):
     ready(window, qt_application)
     source = tmp_path / '原线路.xlsx'
-    source.write_bytes(b'original workbook fixture')
+    from openpyxl import Workbook, load_workbook
+    workbook = Workbook()
+    workbook.active.append(['公司标识', '金额'])
+    workbook.active.append(['001', 1.239])
+    workbook.save(source)
+    original = source.read_bytes()
     target = tmp_path / '复制.xlsx'
     window.data['outputs']['line_workbook'] = str(source)
     monkeypatch.setattr('desktop_app.QFileDialog.getSaveFileName', lambda *_a, **_kw: (str(target), ''))
     window.latest_info_page.line_export_requested.emit()
-    assert target.read_bytes() == source.read_bytes()
+    assert list(load_workbook(target).active.values)[1] == ('001', 1.23)
+    assert source.read_bytes() == original
 
 
 def test_close_interrupts_latest_info_workers(window, qt_application):

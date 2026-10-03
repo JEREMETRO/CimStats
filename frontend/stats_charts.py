@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout,
 from qfluentwidgets import FluentIcon, TransparentPushButton, TransparentToolButton
 
 from chart_canvas import AxisSpec, ChartCanvas, ChartData, Series, format_value
+from display_rules import number_places
 from chart_details import DetailSummary, InlineChartDetail
 from shiboken6 import isValid
 from stats_controls import FluentSegmentedControl
@@ -99,8 +100,8 @@ def category_color(group: str, palette: tuple[str, ...] | None = None) -> QColor
     return _stable_color('category:' + group, palette)
 
 
-def _number(value: Decimal | None) -> str:
-    return label('missing') if value is None else format_value(value)
+def _number(value: Decimal | None, metric=None) -> str:
+    return format_value(value, number_places(metric))
 
 
 class ChartPanel(QFrame):
@@ -407,7 +408,7 @@ class ChartPanel(QFrame):
         return f'{date:%Y-%m}'
 
     def _donut_center(self, total, unit):
-        return _number(total), unit
+        return _number(total, self.result.query.metric), unit
 
     # ---------------------------------------------------------- building
     def _groups(self):
@@ -564,7 +565,7 @@ class ChartPanel(QFrame):
             return
         if self.mode == 'summary':
             self.summary_label.setText('\n'.join(
-                f'{self._company_name(company)}  {_number(self.summary_values.get(company))} '
+                f'{self._company_name(company)}  {_number(self.summary_values.get(company), self.result.query.metric)} '
                 f'{self.result.metric.unit}' for company in groups))
             self._build_legend({})
             return
@@ -588,6 +589,7 @@ class ChartPanel(QFrame):
             canvas = ChartCanvas(cell, detailed=self._detailed)
             canvas.set_hidden(self._hidden_groups)
             canvas.set_axis(self._axis_override if data.kind in ('line', 'bar', 'hbar') else None)
+            data.decimal_places = number_places(self.result.query.metric)
             canvas.set_data(data)
             canvas.setMinimumHeight(0 if self._compact_height is not None else
                                     140 if len(specs) > 1 and not self._detailed else 170)

@@ -9,6 +9,7 @@ from typing import Callable
 from dashboard_model import DashboardResult, FilterState
 from statistics_model import Bucket, QueryCancelled, Result, summarize_buckets
 from stats_view_model import company_result
+from display_rules import number_places
 from card_comparisons import CardComparison, change, peer_comparisons, baseline_label
 
 
@@ -469,7 +470,7 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                 window = (None if options.vehicle == 'maximum' and value.metric_id == 'vehicles-running'
                           else (snapshot.filters.start, snapshot.filters.end))
                 comparison = peer_comparisons(amounts, names, value.unit,
-                    window)[summary.company_id]
+                    window, value_places=number_places(value.metric_id))[summary.company_id]
                 values.append(replace(value, comparison=comparison))
             enriched.append(replace(summary, values=tuple(values)))
         summaries = tuple(enriched)
@@ -497,7 +498,8 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                         '较同比区间' if period else baseline_label(snapshot.filters.start, snapshot.filters.end),
                         current_window=(snapshot.filters.start, snapshot.filters.end),
                         previous_window=first.current_window,
-                        partial=not value.complete or not previous.complete)
+                        partial=not value.complete or not previous.complete,
+                        value_places=number_places(value.metric_id))
                     values.append(replace(value, comparison=comparison))
                 enriched.append(replace(summary, values=tuple(values)))
             summaries = tuple(enriched)

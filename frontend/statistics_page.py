@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / 'src') not in sys.path:
     sys.path.insert(0, str(ROOT / 'src'))
 from dashboard_model import FilterState, build_dashboard
+from display_rules import format_number, number_places
 from statistics_model import HistoryStore, parse_time, summarize_buckets
 from stats_charts import ChartPanel
 from stats_view_model import preset_window, resolve_comparison
@@ -48,15 +49,8 @@ PASSENGER = ('transport-by-group', 'transport-by-type', 'trip-types')
 CITY = ('population', 'economy', 'energy-prices', 'trip-number', 'city-mode-share', 'traffic-density')
 
 
-def display(value, coefficient=False):
-    if value is None:
-        return label('missing')
-    number = Decimal(value)
-    if coefficient:
-        return f'{number:,.2f}'
-    if number == number.to_integral_value():
-        return f'{number:,.0f}'
-    return f'{number:,.2f}'.rstrip('0').rstrip('.')
+def display(value, coefficient=False, metric=None):
+    return format_number(value, number_places(metric), fixed=coefficient)
 
 
 class DashboardTask(QThread):
@@ -1182,7 +1176,7 @@ class StatisticsPage(QWidget):
             if group not in ('', '__total__', '总计'):
                 name = (name + ' · ' if name else '') + group_label(group)
             unit = f' {result.metric.unit}' if result.metric.unit else ''
-            formatted = label('missing') if value is None else f'{display(value, coefficient)}{unit}'
+            formatted = label('missing') if value is None else f'{display(value, coefficient, result.query.metric)}{unit}'
             color = self._company_palette.get(owner, TEXT_SECONDARY)
             values.append((name, formatted, color))
         tile.set_rows(values)
@@ -1229,7 +1223,7 @@ class StatisticsPage(QWidget):
                     value = summarize_buckets(result.series.get((owner, group), []), result.metric)
                     short = '● ' + self._short_ids.get(owner, owner) if owner else ''
                     color = self._company_palette.get(owner, TEXT_SECONDARY)
-                    formatted = label('missing') if value is None else f'{display(value)} {result.metric.unit}'
+                    formatted = label('missing') if value is None else f'{display(value, metric=result.query.metric)} {result.metric.unit}'
                     groups[group].append((short, formatted, color))
         tile.set_categories(groups)
 

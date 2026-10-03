@@ -12,6 +12,7 @@ from qfluentwidgets import (Action, CardWidget, DoubleSpinBox, DropDownPushButto
 
 from latest_info_charts import font, label as compact_label
 from statistics_model import METRICS
+from display_rules import format_number, number_places
 from stats_alerts import _alert_id
 from stats_elevation import attach_card_elevation
 from stats_motion import attach_surface_reveal
@@ -36,8 +37,8 @@ def _window(start, end):
     return f'[{start.isoformat(sep=" ")}, {end.isoformat(sep=" ")})'
 
 
-def _summary_number(value):
-    return f'{value:,.2f}'.rstrip('0').rstrip('.')
+def _summary_number(value, metric=None):
+    return format_number(value, number_places(metric))
 
 
 class AlertMoreButton(DropDownPushButton):
@@ -300,7 +301,7 @@ class LatestInfoAlertsPanel(CardWidget):
         title = label(alert.metric)
         company = f'{self._company(alert)} · {group_label(alert.key[1])}'
         unit = METRICS[alert.metric].unit
-        value = f'{_summary_number(alert.before)} → {_summary_number(alert.after)} {unit}'.strip()
+        value = f'{_summary_number(alert.before, alert.metric)} → {_summary_number(alert.after, alert.metric)} {unit}'.strip()
         if not expanded:
             unread = _alert_id(self.session_key, alert) not in self._read_ids
             row = AlertSummaryRow(title, company, value, unread, parent)
@@ -423,7 +424,8 @@ class LatestInfoAlertsPanel(CardWidget):
         for text in (f'指标：{label(alert.metric)}',
                      f'公司：{self._company(alert)}', f'公司标识：{alert.key[0] or "全市"}',
                      f'分组：{group_label(alert.key[1])}',
-                     f'对比原值：{alert.before} {unit}', f'本期原值：{alert.after} {unit}',
+                     f'对比原值：{_summary_number(alert.before, alert.metric)} {unit}',
+                     f'本期原值：{_summary_number(alert.after, alert.metric)} {unit}',
                      '本期窗口：' + _window(alert.start, alert.end),
                      '对比窗口：' + _window(alert.comparison_start, alert.comparison_end),
                      '原因：' + alert.reason):

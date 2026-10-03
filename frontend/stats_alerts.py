@@ -8,12 +8,13 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import CardWidget, PushButton
 
 from statistics_model import METRICS
+from display_rules import format_number, number_places
 from stats_text import group_label, label
 from stats_elevation import attach_card_elevation
 
 
-def _display_number(value):
-    return f'{value:.2f}'.rstrip('0').rstrip('.')
+def _display_number(value, metric=None):
+    return format_number(value, number_places(metric), grouped=False)
 
 
 def _alert_id(session_key, alert):
@@ -87,7 +88,7 @@ class AlertsPanel(CardWidget):
                 name = f'{name} [{company}]'
             subject = ' · '.join(part for part in (name, group_label(group), label(alert.metric)) if part)
             unit = METRICS[alert.metric].unit
-            value = f'{_display_number(alert.before)} → {_display_number(alert.after)} {unit}'
+            value = f'{_display_number(alert.before, alert.metric)} → {_display_number(alert.after, alert.metric)} {unit}'
             row = QWidget(self)
             layout = QVBoxLayout(row)
             layout.setContentsMargins(0, 0, 0, 0)

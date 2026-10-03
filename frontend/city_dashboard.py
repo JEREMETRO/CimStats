@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QFontMetricsF
 from PySide6.QtWidgets import QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, IconWidget
 from city_model import CHART_KEYS, CityValue
+from display_rules import format_number
 from stats_charts import ChartPanel
 from stats_controls import FluentSegmentedControl, SummaryToggleButton
 import stats_tokens as tokens
@@ -28,7 +29,7 @@ def series_color(group):
 
 
 def number(value):
-    return '—' if value is None else f'{value:,.2f}'.rstrip('0').rstrip('.')
+    return format_number(value)
 
 
 class CityTile(QFrame):

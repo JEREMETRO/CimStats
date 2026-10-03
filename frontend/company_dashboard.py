@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLay
 from qfluentwidgets import CaptionLabel, ComboBox as FluentComboBox, FluentIcon, IconWidget
 
 from statistics_model import summarize_buckets
+from display_rules import format_number
 from stats_charts import ChartPanel, nice_axis
 from stats_controls import SummaryToggleButton
 from stats_text import label
@@ -27,10 +28,7 @@ DEFAULT_SLOTS = ('cashflow', 'company-value', 'popularity', 'monthly-ticket')
 
 
 def _display(value) -> str:
-    if value is None:
-        return label('missing')
-    text = f'{value:,.0f}' if value == value.to_integral_value() else f'{value:,.2f}'.rstrip('0').rstrip('.')
-    return text
+    return format_number(value)
 
 
 from stats_elevation import attach_card_elevation

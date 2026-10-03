@@ -94,7 +94,7 @@ def test_summary_reports_simulation_scope_and_missing_instead_of_zero():
     snap.metrics[4].complete = False
     values = exports().build_share_summary(snap)
     assert '人口：0' in values and '线路数：0 条' in values
-    assert '周收入：120.250001 货币（部分观测）' in values
+    assert '周收入：120.25 货币（部分观测）' in values
     assert '平均间隔：—' in values
 
     snap.mode = '综合'
@@ -129,7 +129,7 @@ def test_xlsx_keeps_all_mode_rows_total_zero_and_missing_share_distinct(tmp_path
     assert rows[5][1:3] == (0, 0)
     assert rows[6][1:3] == (None, None)
     assert rows[7][1] == 50
-    assert wb['班次分类']['C2'].number_format == '0.0%'
+    assert wb['班次分类']['C2'].number_format == '0.##%'
 
 
 def test_alert_export_preserves_company_values_both_windows_and_original_reason(tmp_path):

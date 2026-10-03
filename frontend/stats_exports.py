@@ -1,4 +1,4 @@
-"""Exports of the exact dashboard snapshot and its rendered board."""
+"""Exports of the dashboard snapshot with shared presentation precision."""
 
 from itertools import zip_longest
 from pathlib import Path
@@ -9,13 +9,13 @@ from PySide6.QtGui import QPixmap, QRegion
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
 from shiboken6 import isValid
 
-from display_rules import store_text_literally
+from display_rules import store_text_literally, workbook_number, number_places
 from statistics_model import BOARDS, summarize_buckets
 from stats_text import group_label, label
 
 
-def _number(value):
-    return float(value) if value is not None else None
+def _number(value, metric=None):
+    return workbook_number(value, number_places(metric))
 
 
 def _series_rows(metric_name, result, companies, layer):
@@ -27,18 +27,18 @@ def _series_rows(metric_name, result, companies, layer):
                 companies.get(company, company) if company else '',
                 group_label(group), layer, result.metric.unit]
         yield base + [label('summary'), result.current_window[0], result.current_window[1],
-                      _number(summarize_buckets(current, result.metric)) if current else None,
+                      _number(summarize_buckets(current, result.metric), metric_name) if current else None,
                       all(bucket.complete for bucket in current) if current else False,
                       result.comparison_window[0] if result.comparison_window else None,
                       result.comparison_window[1] if result.comparison_window else None,
-                      _number(summarize_buckets(compared, result.metric)) if compared else None,
+                      _number(summarize_buckets(compared, result.metric), metric_name) if compared else None,
                       all(bucket.complete for bucket in compared) if compared else False]
         for a, b in zip_longest(current, compared):
             yield base + [label('day') if result.query.grain == 'day' else label(result.query.grain),
                           a.start if a else None, a.end if a else None,
-                          _number(a.value) if a else None, a.complete if a else False,
+                          _number(a.value, metric_name) if a else None, a.complete if a else False,
                           b.start if b else None, b.end if b else None,
-                          _number(b.value) if b else None, b.complete if b else False]
+                          _number(b.value, metric_name) if b else None, b.complete if b else False]
 
 
 def export_xlsx(snapshot, path, companies, network_snapshot=None, *, company_mode=None,
@@ -87,11 +87,11 @@ def export_xlsx(snapshot, path, companies, network_snapshot=None, *, company_mod
                         *comparison, company_id,
                         network_snapshot.companies.get(company_id, summary.title)
                         if company_id else summary.title,
-                        value.title, _number(value.value), value.unit,
+                        value.title, _number(value.value, value.metric_id), value.unit,
                         value.complete, value.reason]
                 if value.details:
                     for category, amount in value.details:
-                        network.append(base + [category, _number(amount), value.comparison.text, value.comparison.tooltip, value.context])
+                        network.append(base + [category, _number(amount, value.metric_id), value.comparison.text, value.comparison.tooltip, value.context])
                 else:
                     network.append(base + [None, None, value.comparison.text, value.comparison.tooltip, value.context])
         network.freeze_panes = 'A2'
@@ -149,7 +149,7 @@ def export_city_xlsx(snapshot, path, state):
                     identity = (row.metric, row.group, row.time, row.value, row.divider)
                     if identity not in seen:
                         seen.add(identity)
-                        raw_sheet.append([row.metric, row.group, row.time, row.value, row.divider, row.current,
+                        raw_sheet.append([row.metric, row.group, row.time, _number(row.value), _number(row.divider), row.current,
                                           row.raw.get('分组来源', '原始城市分类')])
     for sheet in workbook:
         sheet.freeze_panes = 'A2'

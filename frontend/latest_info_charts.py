@@ -12,7 +12,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QPainter
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolTip,
                               QStackedWidget, QVBoxLayout, QWidget)
 from qfluentwidgets import DropDownPushButton, FluentIcon, RoundMenu, TransparentPushButton, TransparentToolButton
-from display_rules import display_mode
+from display_rules import display_mode, format_number
 from latest_info_model import ModeCount
 from stats_charts import ChartPanel
 from stats_controls import FluentSegmentedControl
@@ -33,11 +33,7 @@ def numeric(value):
 
 
 def shown(value):
-    number = numeric(value)
-    if number is None:
-        return '—'
-    return (f'{number:,.0f}' if number == number.to_integral_value()
-            else f'{number:,.2f}'.rstrip('0').rstrip('.'))
+    return format_number(numeric(value))
 
 
 def font(size=12, bold=False):
@@ -456,7 +452,7 @@ class ModeRing(QWidget):
 
     def mouseMoveEvent(self, event):
         sector = self._hit(event.position())
-        self.setToolTip(f'{self.display_labels.get(sector[2], sector[2])} · {shown(sector[3])} · {sector[3] / self.total * 100:.1f}%' if sector else '线路占比')
+        self.setToolTip(f'{self.display_labels.get(sector[2], sector[2])} · {shown(sector[3])} · {format_number(sector[3] / self.total * 100, 1, fixed=True)}%' if sector else '线路占比')
         super().mouseMoveEvent(event)
 
     def touch_inspect(self, global_point):
@@ -515,7 +511,7 @@ class ModeRow(QFrame):
         self.number.setFixedWidth(max(64, self.number.fontMetrics().horizontalAdvance(self.number.text()) + 2))
         self.number.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.number)
-        percent = f'{value / denominator * 100:.1f}%' if value is not None and value >= 0 and denominator and denominator > 0 else '—'
+        percent = f'{format_number(value / denominator * 100, 1, fixed=True)}%' if value is not None and value >= 0 and denominator and denominator > 0 else '—'
         self.share = label(percent, parent=self)
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.share.setFixedWidth(percent_width or self.share.fontMetrics().horizontalAdvance(percent) + 2)
@@ -572,7 +568,7 @@ class ShareRow(QFrame):
         self.number.setFixedWidth(max(64, self.number.fontMetrics().horizontalAdvance(self.number.text()) + 2))
         self.number.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.number)
-        self.share = label(f'{entry.value / total * 100:.1f}%' if entry.value is not None and total and total > 0 else '—', parent=self)
+        self.share = label(f'{format_number(entry.value / total * 100, 1, fixed=True)}%' if entry.value is not None and total and total > 0 else '—', parent=self)
         self.share.setFixedWidth(self.share.fontMetrics().horizontalAdvance(self.share.text()) + 2)
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.share)
@@ -754,7 +750,7 @@ class StructureAnalysis(CategoryCard):
         empty_layout(self.mode_rows)
         self._mode_widgets = []
         denominator = self._total if complete_distribution(counts, self._total) else None
-        percentages = [f'{numeric(count.value) / denominator * 100:.1f}%'
+        percentages = [f'{format_number(numeric(count.value) / denominator * 100, 1, fixed=True)}%'
                        if numeric(count.value) is not None and numeric(count.value) >= 0 and denominator and denominator > 0
                        else '—' for count in counts]
         percent_width = max((self.ring.center_caption.fontMetrics().horizontalAdvance(text) + 2

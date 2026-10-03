@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 import json
-import shutil
 import subprocess
 import sys
 import uuid
 import time
+from zipfile import BadZipFile
 import psutil
 from pathlib import Path
 from shiboken6 import isValid
@@ -26,6 +26,7 @@ if str(SRC) not in sys.path:
 if str(PROJECT) not in sys.path:
     sys.path.insert(sys.path.index(str(SRC)) + 1, str(PROJECT))
 from report_model import MODES, load_session
+from display_rules import export_precision_workbook
 from statistics_page import StatisticsPage
 from stats_style import initialize_theme
 from stats_tokens import FONT_FAMILY, FONT_SIZE_BODY, NAV_WIDTH_EXPANDED, PAGE_BG, TEXT_PRIMARY
@@ -1031,9 +1032,9 @@ class MainWindow(QMainWindow):
                 or self.data.get('outputs', {}).get(kind) != source or not Path(source).is_file()):
             return
         try:
-            shutil.copy2(source, target)
+            export_precision_workbook(source, target)
             self._notify('已导出', Path(target).name)
-        except OSError as exc:
+        except (OSError, ValueError, BadZipFile) as exc:
             QMessageBox.critical(self, '导出失败', str(exc))
 
 

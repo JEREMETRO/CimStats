@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLay
 from qfluentwidgets import FluentIcon, IconWidget
 
 from network_model import NetworkOptions, NetworkSnapshot, NetworkSummary, NetworkValue
+from display_rules import format_number, number_places
 from stats_charts import nice_axis
 from stats_controls import FluentSegmentedControl, SummaryToggleButton
 from card_comparison_label import ComparisonLabel
@@ -36,12 +37,8 @@ VALUE_POSITIONS = {'linecount': 0, 'depotcount': 1, 'stopcount': 1,
 MODE_LABELS = {'line': '趋势', 'bar': '分布', 'trend-bar': '趋势', 'pie': '比例'}
 
 
-def _number(value: Decimal | None) -> str:
-    if value is None:
-        return '—'
-    if value == value.to_integral_value():
-        return f'{value:,.0f}'
-    return f'{value:,.2f}'.rstrip('0').rstrip('.')
+def _number(value: Decimal | None, metric=None) -> str:
+    return format_number(value, number_places(metric))
 
 
 def _clear_layout(layout):
@@ -109,7 +106,7 @@ class NetworkValueTile(QFrame):
         number_row = QHBoxLayout()
         number_row.setContentsMargins(0, 0, 0, 0)
         number_row.setSpacing(4)
-        self.number = QLabel(_number(value.value), self)
+        self.number = QLabel(_number(value.value, value.metric_id), self)
         self.number.setStyleSheet(f'color: {TEXT_PRIMARY}; {emphasis_css(FONT_SIZE_KPI)}')
         apply_emphasis_font(self.number, FONT_SIZE_KPI)
         self.number.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -137,7 +134,7 @@ class NetworkValueTile(QFrame):
             reason.setWordWrap(True)
             reason.setStyleSheet(f'color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}px;')
             box.addWidget(reason)
-        detail_text = '；'.join(f'{name}: {_number(amount)}' for name, amount in value.details)
+        detail_text = '；'.join(f'{name}: {_number(amount, value.metric_id)}' for name, amount in value.details)
         self.setToolTip('；'.join(dict.fromkeys(part for part in
             (value.reason, detail_text, value.comparison.tooltip) if part)))
 

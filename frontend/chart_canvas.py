@@ -17,6 +17,7 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QLinearGradient
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 import stats_tokens as tokens
+from display_rules import format_number
 from stats_typography import emphasis_font
 
 KINDS = ('line', 'bar', 'hbar', 'donut')
@@ -60,20 +61,16 @@ class ChartData:
     center_text: str = ''
     center_caption: str = ''
     empty_text: str = '暂无可用数据'
+    decimal_places: int = 2
 
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(self.kind)
 
 
-def format_value(value) -> str:
-    """Exact, grouped display of a raw value; None is shown as a dash."""
-    if value is None:
-        return '—'
-    number = Decimal(str(value)) if not isinstance(value, Decimal) else value
-    if number == number.to_integral_value():
-        return f'{number:,.0f}'
-    return f'{number:,.2f}'.rstrip('0').rstrip('.')
+def format_value(value, places=2) -> str:
+    """Grouped, truncated presentation; source values remain unchanged."""
+    return format_number(value, places)
 
 
 def value_scale(magnitude: float) -> tuple[int, str]:
@@ -123,11 +120,11 @@ def auto_axis(values, *, zero: bool, max_ticks: int = 6) -> AxisSpec:
     return AxisSpec(lower, upper, step, scale, suffix)
 
 
-def _tick_text(value: float, step: float) -> str:
-    places = min(4, max(0, -Decimal(f'{step:.10g}').normalize().as_tuple().exponent))
+def _tick_text(value: float, step: float, max_places=2) -> str:
+    places = min(max_places, max(0, -Decimal(f'{step:.10g}').normalize().as_tuple().exponent))
     if abs(value) < step * 1e-6:
         value = 0.
-    return f'{value:,.{places}f}'
+    return format_number(value, places, fixed=True)
 
 
 def _alpha(color: QColor, alpha: float) -> QColor:
@@ -365,7 +362,7 @@ class ChartCanvas(QWidget):
         max_ticks = max(3, min(7, int((bottom - top) / 34) + 1))
         self.axis = self._resolve_axis(max_ticks)
         ticks = self._ticks()
-        tick_labels = [_tick_text(value, self.axis.step) for value in ticks]
+        tick_labels = [_tick_text(value, self.axis.step, self.data.decimal_places) for value in ticks]
         gutter = max(metrics.horizontalAdvance(text) for text in tick_labels) + 10
         self._plot = QRectF(rect.left() + gutter, top, max(10., rect.width() - gutter), max(10., bottom - top))
         plot = self._plot
@@ -481,7 +478,7 @@ class ChartCanvas(QWidget):
                     if value:
                         pieces.append((rect, color, value > 0))
                     if self.detailed and len(members) > 1:
-                        labels.append(dict(text=format_value(raw_value), x=rect.center().x(),
+                        labels.append(dict(text=format_value(raw_value, self.data.decimal_places), x=rect.center().x(),
                                            y=rect.center().y(), above=True, inside_rect=rect,
                                            color=QColor('white') if color.lightnessF() < .55 and not item.faded
                                            else QColor(tokens.TEXT_PRIMARY),
@@ -514,7 +511,7 @@ class ChartCanvas(QWidget):
                                    if all(value is not None for value in raw_values) else None)
                     above = positive >= -negative
                     anchor = self._y(positive if above else negative)
-                    labels.append(dict(text=format_value(total_value), x=x + width / 2,
+                    labels.append(dict(text=format_value(total_value, self.data.decimal_places), x=x + width / 2,
                                        y=anchor, above=above,
                                        total=True, bar_width=width,
                                        slot_width=self._plot.width() / max(1, last - first) / max(1, len(stacks))))
@@ -573,7 +570,7 @@ class ChartCanvas(QWidget):
                     for point in points:
                         painter.drawEllipse(point, radius, radius)
                 for index, point in segment:
-                    labels.append(dict(text=format_value(item.values[index]), x=point.x(), y=point.y(),
+                    labels.append(dict(text=format_value(item.values[index], self.data.decimal_places), x=point.x(), y=point.y(),
                                        above=True, slot_width=self._plot.width() / max(1, last - first)))
         if highlight is not None and first <= highlight < last:
             for item in visible:
@@ -646,7 +643,7 @@ class ChartCanvas(QWidget):
             color = QColor(item.colors[index]) if item.colors else QColor(item.color)
             note = item.notes[index] if item.notes and index < len(item.notes) else ''
             rows.append((_alpha(color, COMPARISON_ALPHA) if item.faded else color, item.name,
-                         f'{format_value(value)} {self.data.unit}'.strip(), note))
+                         f'{format_value(value, self.data.decimal_places)} {self.data.unit}'.strip(), note))
         return rows
 
     def _paint_slot_tooltip(self, painter, index):
@@ -715,7 +712,7 @@ class ChartCanvas(QWidget):
         value_font = QFont(tokens.FONT_FAMILY)
         value_font.setPixelSize(13 if self.detailed else 12)
         value_metrics = self._metrics(value_font)
-        value_width = max((value_metrics.horizontalAdvance(format_value(value)) for value in values), default=0) + 10
+        value_width = max((value_metrics.horizontalAdvance(format_value(value, self.data.decimal_places)) for value in values), default=0) + 10
         plot_width = max(20., rect.width() - label_width - value_width)
         max_ticks = max(2, min(6, int(plot_width / 70) + 1))
         self.axis = self.axis_override or auto_axis(values, zero=True, max_ticks=max_ticks)
@@ -732,7 +729,7 @@ class ChartCanvas(QWidget):
             painter.setPen(QPen(QColor(tokens.GRID_COLOR), 1))
             painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
             painter.setPen(QColor(tokens.TEXT_SECONDARY))
-            text = _tick_text(value, self.axis.step)
+            text = _tick_text(value, self.axis.step, self.data.decimal_places)
             width = metrics.horizontalAdvance(text) + 4
             painter.drawText(QRectF(x - width / 2, plot.bottom() + 6, width, line_height),
                              Qt.AlignmentFlag.AlignCenter, text)
@@ -772,7 +769,7 @@ class ChartCanvas(QWidget):
                 if self.detailed and self.show_values:
                     painter.setFont(value_font)
                     painter.setPen(QColor(tokens.TEXT_SECONDARY))
-                    text = format_value(value)
+                    text = format_value(value, self.data.decimal_places)
                     painter.drawText(QRectF(box.right() + 4 if end >= baseline else box.left() - value_width,
                                             box.center().y() - value_metrics.height() / 2,
                                             value_width, value_metrics.height()),
@@ -787,7 +784,7 @@ class ChartCanvas(QWidget):
         item = next((entry for entry in data.series), None)
         metrics = self._metrics()
         rect = QRectF(self.rect()).adjusted(4, 4, -4, -4)
-        entries = [(key, name, float(value), _alpha(color, COMPARISON_ALPHA) if item.faded else QColor(color))
+        entries = [(key, name, Decimal(str(value)), _alpha(color, COMPARISON_ALPHA) if item.faded else QColor(color))
                    for key, name, value, color in zip(
                        item.keys or data.labels, data.labels, item.values,
                        item.colors or [item.color] * len(data.labels))
@@ -816,7 +813,7 @@ class ChartCanvas(QWidget):
         inner = outer * .62
         angle = 90.
         for key, name, value, color in entries:
-            span = 360. * value / total
+            span = 360. * float(value / total)
             self._slices.append(dict(key=key, name=name, value=value, color=color, start=angle,
                                      span=span, center=center, outer=outer, inner=inner,
                                      percent=100 * value / total))
@@ -862,8 +859,8 @@ class ChartCanvas(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(_alpha(part['color'], .35) if hidden else part['color'])
             painter.drawRoundedRect(QRectF(x, y + line / 2 - 4, 8, 8), 2, 2)
-            percent = f"{part['percent']:.1f}%"
-            value_text = f"{format_value(round(part['value'], 2))}"
+            percent = format_number(part['percent'], 1, fixed=True) + '%'
+            value_text = f"{format_value(part['value'], data.decimal_places)}"
             right_width = metrics.horizontalAdvance(percent) + 8 if self.detailed else 0
             value_space = metrics.horizontalAdvance(value_text) + 12 if self.detailed else 0
             painter.setPen(QColor(tokens.TEXT_DISABLED if hidden else tokens.TEXT_PRIMARY))
@@ -884,8 +881,8 @@ class ChartCanvas(QWidget):
         hovered = next((part for part in self._slices if part['key'] == self._hover_slice), None)
         if hovered is not None:
             self._paint_tooltip(painter, hovered['name'], [(
-                hovered['color'], f"{hovered['percent']:.1f}%",
-                f"{format_value(round(hovered['value'], 2))} {data.unit}".strip(), '')])
+                hovered['color'], format_number(hovered['percent'], 1, fixed=True) + '%',
+                f"{format_value(hovered['value'], data.decimal_places)} {data.unit}".strip(), '')])
 
     # ------------------------------------------------------------- pointer
     def touch_pan(self, global_start, global_point):

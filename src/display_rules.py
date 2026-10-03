@@ -1,5 +1,69 @@
 """Shared presentation rules for parser, desktop, and workbook output."""
 import re
+from decimal import Decimal, ROUND_DOWN, localcontext
+
+
+def number_places(metric=None):
+    return 1 if metric == 'vehicles-running' else 2
+
+
+def truncated_number(value, places=2):
+    """Truncate presentation values toward zero without changing source data."""
+    if value is None:
+        return None
+    number = value if isinstance(value, Decimal) else Decimal(str(value))
+    if not number.is_finite():
+        return None
+    with localcontext() as context:
+        context.prec = max(context.prec, len(number.as_tuple().digits), number.adjusted() + places + 1)
+        result = number.quantize(Decimal(1).scaleb(-places), rounding=ROUND_DOWN)
+    return result.copy_abs() if result.is_zero() else result
+
+
+def format_number(value, places=2, *, grouped=True, fixed=False):
+    number = truncated_number(value, places)
+    if number is None:
+        return '—'
+    text = format(number, (',' if grouped else '') + f'.{places}f')
+    if not fixed and '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
+def workbook_number(value, places=2):
+    number = truncated_number(value, places)
+    if number is None:
+        return None
+    return int(number) if number == number.to_integral_value() else float(number)
+
+
+def export_precision_workbook(source, target):
+    """Export a cached workbook with presentation precision, preserving its source."""
+    from pathlib import Path
+    from openpyxl import load_workbook
+    source, target = Path(source), Path(target)
+    if source.resolve() == target.resolve() or (target.exists() and source.samefile(target)):
+        raise ValueError('请选择缓存工作簿以外的导出位置')
+    workbook = load_workbook(source)
+    try:
+        for sheet in workbook:
+            vehicle_columns = set()
+            for row in sheet:
+                for cell in row:
+                    # Sections can repeat headers; names, dates, IDs and formulas
+                    # retain their original types and contents.
+                    if isinstance(cell.value, str) and '平均运行车辆' in cell.value:
+                        vehicle_columns.add(cell.column)
+                    if isinstance(cell.value, (int, float, Decimal)) and not isinstance(cell.value, bool):
+                        places = 1 if cell.column in vehicle_columns else 2
+                        if '%' in cell.number_format:
+                            cell.value = float(truncated_number(Decimal(str(cell.value)) * 100, places) / 100)
+                            cell.number_format = '0.##%'
+                        else:
+                            cell.value = workbook_number(cell.value, places)
+        workbook.save(target)
+    finally:
+        workbook.close()
 
 MODE_NAMES = {
     "bus": "公交", "trolley": "无轨电车", "trolleybus": "无轨电车",

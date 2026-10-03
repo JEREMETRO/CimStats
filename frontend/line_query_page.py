@@ -2,6 +2,8 @@
 from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent
 from PySide6.QtGui import QAction, QPainter, QFont, QColor, QFontMetrics
 import re
+from decimal import Decimal
+from display_rules import format_number
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QScrollArea, QSizePolicy, QHeaderView, QTableWidget, QFrame)
 from qfluentwidgets import (CardWidget, CheckableMenu, DropDownPushButton,
@@ -22,10 +24,8 @@ QUERY_COLUMNS = frozenset(range(len(HEADERS))) - {4}
 def shown(value, unit=''):
     if value is None or value == '':
         return '—'
-    if isinstance(value, int):
-        text = f'{value:,}'
-    elif isinstance(value, float):
-        text = f'{value:,.2f}'
+    if isinstance(value, (int, float, Decimal)):
+        text = format_number(value)
     else:
         text = str(value)
     return text + ((' ' + unit) if unit else '')
