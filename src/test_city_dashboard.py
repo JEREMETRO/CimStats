@@ -41,9 +41,11 @@ def test_city_hover_preserves_full_population_and_density_peak_time():
     widget.set_snapshot(build([r('population', 'A', 0, 123456),
                                r('traffic-density', 'Road', 1, 91, 100),
                                r('traffic-density', 'Track', 2, 0, 100)]))
+    widget.resize(960, 680); widget.show(); QApplication.processEvents(); widget.grab()
     assert '123,456 人' in widget.tiles['population'].toolTip()
     density = widget.tiles['traffic-density'].toolTip()
-    for text in ('道路峰值：91 %', '轨道峰值：0 %', '2024-01-02 01:00',
+    assert '91 %' not in density and '0 %' not in density
+    for text in ('道路峰值：', '轨道峰值：', '2024-01-02 01:00',
                  '2024-01-02 02:00', '统计时间内最高小时交通密度'):
         assert text in density
     bucket = widget.panels['population'].result.series[('', '总计')][1]

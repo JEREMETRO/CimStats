@@ -556,6 +556,8 @@ class ModeRow(QFrame):
         self.share.hide()
         self.setToolTip('')
 
+        self.setAccessibleName(f'{count.mode} · 点击查看线路排行 {self.number.text()} {self.share.text()}')
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.mode_requested.emit(self.mode)

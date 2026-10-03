@@ -31,6 +31,32 @@ def sequence(widget, device):
     return QTest.touchEvent(widget, device, False)
 
 
+def test_touch_bar_inspection_selects_one_stack_and_cancel_clears_it(touch):
+    app, device = touch
+    chart = ChartCanvas(); chart.resize(400, 190)
+    chart.set_data(ChartData('bar', ['x'], [
+        Series('bus', '本期 · 公交', QColor('blue'), [10], stack='current'),
+        Series('tram', '本期 · 电车', QColor('orange'), [5], stack='current'),
+        Series('previous', '环比 · 公交', QColor('blue'), [20], stack='previous')]))
+    chart.show(); app.processEvents(); chart.grab()
+    stacks, width, gap, total = chart._stack_layout()
+    clicks = []; chart.slot_clicked.connect(clicks.append)
+    try:
+        for position, stack in enumerate(stacks):
+            point = QPoint(round(chart._slot_center(0) - total / 2 + position * (width + gap) + width / 2),
+                           round(chart._y(3)))
+            events = sequence(chart, device)
+            events.press(0, point, chart).commit(); chart.grab()
+            assert chart._hover == 0 and chart._hover_stack == stack
+            assert len(chart._tooltip_rows(0, chart._hover_stack)) == (2 if position == 0 else 1)
+            QApplication.sendEvent(chart, QTouchEvent(QEvent.Type.TouchCancel, device))
+            events.release(0, point, chart).commit()
+            assert chart._hover is None and chart._hover_stack is None
+        assert clicks == []
+    finally:
+        chart.close()
+
+
 def test_swipe_starting_on_child_scrolls_without_activation(touch):
     app, device = touch
     scroll = StatisticsScrollArea()

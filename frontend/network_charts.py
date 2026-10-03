@@ -316,17 +316,22 @@ class NetworkChartPanel(ChartPanel):
                 key = company
             else:
                 key = group
-            values, notes = [None] * count, [''] * count
+            values, notes, titles = [None] * count, [''] * count, [''] * count
             for index, bucket in enumerate(buckets[:count]):
                 if bucket.value is not None:
                     values[index] = bucket.value
                     notes[index] = self._status_note(bucket, previous)
+                    titles[index] = self._time_title(bucket.start)
+                    if stacked and previous:
+                        notes[index] = ' · '.join(part for part in (
+                            '数据不完整' if not bucket.complete else '',
+                            '部分时段' if getattr(bucket, 'partial_period', False) else '') if part)
             name = group_label(category) if len(categories) > 1 else self._group_name(group)
             if len(categories) > 1 and len(groups) > 1:
                 name = f'{self._group_name(group)} · {group_label(category)}'
             color = self._bar_color(company, category, categories) if stacked else self._color(company, category, categories)
             series.append(Series(key=key, name=name, color=color,
-                                 values=values, notes=notes, stack=str(group), faded=previous,
+                                 values=values, notes=notes, titles=titles, stack=str(group), faded=previous,
                                  dashed=(not stacked) and (previous or (len(categories) > 1 and groups.index(group) > 0))))
         self._legend_keys = categories if len(categories) > 1 else (
             list(dict.fromkeys(item.key for item in series)))

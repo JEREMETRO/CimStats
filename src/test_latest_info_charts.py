@@ -424,7 +424,8 @@ def test_ranking_has_ten_real_tracks_visible_mode_identity_exact_value_and_key(p
     assert len(rows) == 10 and all(inside(panel, row) for row in rows)
     assert all(row.track.width() >= 80 for row in rows)
     assert all(row.line.mode in row.name.text() for row in rows)
-    assert all(row.number.isHidden() and row.number.text() in row.track.toolTip() for row in rows)
+    assert all(row.number.isHidden() and row.number.text() in row.accessibleName() for row in rows)
+    assert all(row.track.toolTip() == '' for row in rows)  # Final approved cancellation stays in force.
     emitted = []
     page.line_requested.connect(emitted.append)
     rows[0].action.click()
@@ -624,7 +625,7 @@ def test_million_total_and_actual_other_count_fit_in_line_share(page, qt_applica
     assert inside(panel, other) and other.number.isHidden() and other.share.isHidden()
     assert other.name.text() == other.entry.name and other.name.isVisible()
     assert other.name.contentsRect().width() >= other.name.fontMetrics().horizontalAdvance('其他线路')
-    assert other.number.text() in other.toolTip()
+    assert other.toolTip() == '' and other.number.text() in other.accessibleName()
 
 
 @pytest.mark.parametrize('value', [Decimal('123456789012'), Decimal('123456789012345678901234567')])

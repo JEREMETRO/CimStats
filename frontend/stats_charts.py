@@ -440,15 +440,21 @@ class ChartPanel(QFrame):
             cursor = period_bounds(cursor, grain)[1]
         return slots
 
-    def _bucket_series(self, company, group, buckets, previous, key, color, count, name):
+    def _bucket_series(self, company, group, buckets, previous, key, color, count, name, *, bar=False):
         values = [None] * count
         notes = [''] * count
+        titles = [''] * count
         for index, bucket in enumerate(buckets[:count]):
             if bucket is not None and bucket.value is not None:
                 values[index] = bucket.value
                 notes[index] = self._point_note(company, group, bucket, previous)
+                titles[index] = self._time_title(bucket.start)
+                if bar and previous and getattr(bucket, 'complete', True):
+                    notes[index] = ''
+                elif bar and previous:
+                    notes[index] = '数据不完整'
         options = dict(self._series_options(company, group, previous))
-        return Series(key=key, name=name, color=QColor(color), values=values, notes=notes,
+        return Series(key=key, name=name, color=QColor(color), values=values, notes=notes, titles=titles,
                       stack=f'{key}|{int(previous)}', dashed=previous or options.pop('dashed', False),
                       faded=previous, **options)
 
@@ -465,10 +471,10 @@ class ChartPanel(QFrame):
                 self._company_name(owner) or group_label(group))
             comparison = self.result.comparison.get((owner, group), [])
             series.append(self._bucket_series(owner, group, buckets, False, key, color, len(dates),
-                                              f'{base} · {label("current")}' if comparison else base))
+                                              f'{base} · {label("current")}' if comparison else base, bar=kind == 'bar'))
             if comparison:
                 series.append(self._bucket_series(owner, group, comparison, True, key, color, len(dates),
-                                                  f'{base} · {self._comparison_name()}'))
+                                                  f'{base} · {self._comparison_name()}', bar=kind == 'bar'))
         if kind == 'bar':
             for item in series:
                 item.dashed = False

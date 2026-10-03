@@ -570,7 +570,7 @@ def test_top10_and_all_modes_are_visible(page, qt_application):
     assert '21.9%' in label_texts(child(modes, 'mode-row-0'))
 
 
-def test_ranking_values_and_mode_percentages_are_hover_values_without_labels(page, qt_application):
+def test_ranking_values_and_mode_percentages_remain_accessible_without_repeated_tips_or_labels(page, qt_application):
     from PySide6.QtWidgets import QLabel
     data = snapshot()
     page.set_session(session())
@@ -580,12 +580,14 @@ def test_ranking_values_and_mode_percentages_are_hover_values_without_labels(pag
     for i, line in enumerate(data.passenger_top10):
         row = child(page, f'ranking-row-{i}')
         value = row.number
-        assert value.isHidden() and value.text() in row.track.toolTip()
+        assert value.isHidden() and value.text() in row.accessibleName()
+        assert row.track.toolTip() == ''
     for i, entry in enumerate(data.departure_modes):
         row = child(page, f'mode-row-{i}')
         for value in row.findChildren(QLabel):
             if value.text() in (f'{entry.value} 班', f'{Decimal(entry.value) / 155 * 100:.1f}%'):
-                assert value.isHidden() and value.text() in row.toolTip()
+                assert value.isHidden() and value.text() in row.accessibleName()
+        assert row.toolTip() == ''
     assert all(row.height() >= row.name.fontMetrics().height() for row in page.passengers.visible_ranking_rows())
 
 
@@ -621,7 +623,18 @@ def test_departure_donut_is_left_of_complete_six_mode_list(page, qt_application)
         name = next(widget for widget in row.findChildren(QLabel) if widget.text() == entry.mode)
         assert name.contentsRect().width() >= name.fontMetrics().horizontalAdvance(entry.mode)
         assert row.number.text() == f'{entry.value} 班'
-        assert expected_shares[i] in row.toolTip()
+        assert row.toolTip() == '' and expected_shares[i] in row.accessibleName()
+    # Values remain on the actual sector hover, not on the cancelled row tip.
+    from math import cos, radians, sin
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    start, end, mode, value = ring.sectors()[0]
+    center, radius = ring.geometry_for_hit()
+    angle = radians((start + end) / 2 - 90)
+    point = QPointF(center.x() + cos(angle) * radius * .9, center.y() + sin(angle) * radius * .9)
+    qt_application.sendEvent(ring, QMouseEvent(QEvent.Type.MouseMove, point, ring.mapToGlobal(point.toPoint()),
+        Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+    assert mode in ring.toolTip() and f'{value} 班' in ring.toolTip()
 
 
 def test_donut_nonpositive_and_missing_modes_do_not_create_clickable_sectors(page, qt_application):

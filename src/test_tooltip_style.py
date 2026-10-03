@@ -192,3 +192,31 @@ def test_navigation_menu_tip_tracks_expanded_and_collapsed_states(tmp_path, monk
         assert panel.menuButton.toolTip() == '展开导航'
     finally:
         window.close()
+
+
+@pytest.mark.parametrize('kind', ['normal', 'item-view'])
+def test_fluent_visible_short_long_short_reuse_has_no_clipping(kind):
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtTest import QTest
+    from qfluentwidgets import ToolTip
+    from qfluentwidgets.components.widgets.tool_tip import ItemViewToolTip
+    application = app(); initialize_theme(application)
+    tip = (ToolTip if kind == 'normal' else ItemViewToolTip)('短提示')
+    tip.show(); QTest.qWait(30)
+    short_size = tip.size()
+    try:
+        for text in ('平峰（05:30-07:30、09:30-17:00、19:30-24:00）平均间隔；'
+                     '晚高峰（17:00-19:30）平均间隔；分时段运营线路的完整运营时段说明', '短提示'):
+            tip.setText(text); QTest.qWait(30)
+            assert tip.isVisible()
+            assert tip.label.font().pixelSize() == 12 and tip.label.font().weight() == QFont.Weight.Normal
+            needed = tip.label.fontMetrics().boundingRect(
+                QRect(0, 0, tip.label.width(), 10000), Qt.TextFlag.TextWordWrap, text).height()
+            assert tip.label.height() >= needed
+            assert tip.label.width() <= 300
+            pixel = tip.container.grab().toImage().pixelColor(5, 5)
+            assert pixel.name() == '#ffffff' and pixel.alpha() == 255
+        assert tip.size() == short_size
+    finally:
+        tip.close()

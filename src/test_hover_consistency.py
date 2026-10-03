@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'frontend'))
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, QEvent
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QLabel, QToolTip
 from chart_canvas import ChartCanvas, ChartData, Series
@@ -44,6 +44,7 @@ def test_percentage_donut_draws_one_precise_value_and_no_redundant_hover_share()
     assert '21.4%' not in painter.texts
     assert '21.42' not in painter.texts
     widget.detailed = True
+    widget._slices = []  # paintEvent clears the geometry before each real paint.
     painter = RecordingPainter()
     widget._paint_donut(painter)
     assert painter.texts.count('21.42 %') == 2  # Detailed legend and hover, once each.
@@ -74,6 +75,29 @@ def test_city_card_preserves_missing_reason_and_date_once():
     assert '2024-01-01 00:00' in tile.toolTip()
     assert '已记录部分；存在部分周期、缺测或未完成小时' not in tile.toolTip()
     tile.close()
+
+
+def test_city_card_does_not_repeat_a_fully_visible_value_in_another_unit():
+    app()
+    tile = CityTile('人口', FluentIcon.PEOPLE, None)
+    tile.resize(260, 150)
+    tile.set_value(CityValue('人口', Decimal(120000), '人', datetime(2024, 1, 1), True))
+    tile.show(); QApplication.processEvents(); tile.grab()
+    assert '120,000' not in tile.toolTip() and '12 万人' not in tile.toolTip()
+    assert '2024-01-01 00:00' in tile.toolTip()
+    value_label = tile._baseline_pairs[0][0]
+    value_label.setFixedWidth(8); QApplication.processEvents(); tile.grab()
+    assert '120,000 人' in tile.toolTip()
+    value_label.setFixedWidth(value_label.fontMetrics().horizontalAdvance(value_label.text()) + 2)
+    QApplication.processEvents(); tile.grab()
+    assert '120,000' not in tile.toolTip()
+    tile.set_value(CityValue('人口', Decimal(123456), '人', datetime(2024, 1, 1), True))
+    QApplication.processEvents(); tile.grab()
+    assert '123,456 人' in tile.toolTip()  # The rounded 万人 display does not expose this exact count.
+    tile.close()
+    tile.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QApplication.processEvents()
 
 
 def test_network_company_identity_matches_statistics_format():

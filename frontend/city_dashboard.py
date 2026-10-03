@@ -59,15 +59,16 @@ class CityTile(QFrame):
         box.addWidget(self.value_host, 1)
         self.model = None
         self._baseline_pairs = []
+        self._hover_fields = []
 
     def set_value(self, model: CityValue):
         self.model = model
         self._baseline_pairs = []
+        self._hover_fields = []
         while self.values.count():
             item = self.values.takeAt(0)
             item.widget().hide()
             item.widget().deleteLater()
-        tooltip = []
         for detail in model.details or (model,):
             row = QWidget(self)
             layout = QHBoxLayout(row)
@@ -101,8 +102,24 @@ class CityTile(QFrame):
             if model.title != '交通方式分担率' or detail.title == '公共交通':
                 comparison = ComparisonLabel(detail.comparison, self.value_host)
                 self.values.addWidget(comparison)
+            self._hover_fields.append((row, text, suffix, detail, value))
+            text.setAccessibleName(f'{number(detail.value)} {detail.unit}'.strip())
+        self._update_hover_fields()
+
+    def _update_hover_fields(self):
+        if self.model is None:
+            return
+        tooltip = []
+        for row, text, suffix, detail, shown_value in self._hover_fields:
             stamp = detail.observed.strftime('%Y-%m-%d %H:%M') if detail.observed else '无有效观测'
-            parts = [f'{detail.title}：{number(detail.value)} {detail.unit}'.strip(), stamp]
+            parts = [f'{detail.title}：{stamp}' if self.model.details else stamp]
+            clipped = any(label.fontMetrics().horizontalAdvance(label.text()) > label.contentsRect().width()
+                          for label in (text, suffix))
+            exact_count_hidden = (self.model.title == '人口' and detail.value is not None
+                                  and abs(detail.value) >= 10000
+                                  and Decimal(number(shown_value).replace(',', '')) * 10000 != detail.value)
+            if clipped or exact_count_hidden:
+                parts.insert(0, f'{detail.title}：{number(detail.value)} {detail.unit}'.strip())
             if detail.reason:
                 parts.append(detail.reason)
             if not detail.complete:
@@ -110,8 +127,8 @@ class CityTile(QFrame):
             tip = '；'.join(parts)
             row.setToolTip(tip)
             tooltip.append(tip)
-        if model.reason and model.reason not in '\n'.join(tooltip):
-            tooltip.append(model.reason)
+        if self.model.reason and self.model.reason not in '\n'.join(tooltip):
+            tooltip.append(self.model.reason)
         self.setToolTip('\n'.join(tooltip))
 
     def _update_unit_baselines(self):
@@ -124,6 +141,9 @@ class CityTile(QFrame):
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange,
                             QEvent.Type.DevicePixelRatioChange):
             self._update_unit_baselines()
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show, QEvent.Type.FontChange,
+                            QEvent.Type.ApplicationFontChange, QEvent.Type.DevicePixelRatioChange):
+            self._update_hover_fields()
         return super().eventFilter(watched, event)
 
 

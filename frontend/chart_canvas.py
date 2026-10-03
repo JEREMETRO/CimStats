@@ -12,8 +12,8 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from math import atan2, ceil, cos, degrees, floor, hypot, log10, radians, sin
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath,
-                           QPen)
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QIcon, QLinearGradient, QPainter, QPainterPath,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 import stats_tokens as tokens
@@ -48,6 +48,7 @@ class Series:
     colors: list | None = None       # per-slot colours (hbar categories, donut slices)
     notes: list | None = None        # per-slot extra tooltip text
     keys: list | None = None         # per-slot identity (donut slices)
+    titles: list | None = None       # actual bucket dates, including comparison periods
 
 
 @dataclass
@@ -176,6 +177,28 @@ def _value_font(text, width, height, total=False):
     return font
 
 
+class _ChartTip(QWidget):
+    """Overflow surface: owned by the canvas, outside its clipping rectangle."""
+
+    def __init__(self, canvas):
+        super().__init__(canvas, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint | Qt.WindowType.WindowTransparentForInput
+                         | Qt.WindowType.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        blank = QPixmap(1, 1)
+        blank.fill(Qt.GlobalColor.transparent)
+        self.setWindowIcon(QIcon(blank))
+        self.canvas = canvas
+        self.content_layout = None
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.canvas._draw_tooltip(painter, QRectF(self.rect()).adjusted(1, 1, -1, -1), self.content_layout)
+
+
 class ChartCanvas(QWidget):
     """Render one :class:`ChartData` with hover, linked crosshair and zoom."""
 
@@ -195,6 +218,9 @@ class ChartCanvas(QWidget):
         self._window: tuple[int, int] | None = None
         self._hover: int | None = None
         self._hover_slice: str | None = None
+        self._hover_stack: str | None = None
+        self._bar_hits = []
+        self._overflow_tip = None
         self._linked: int | None = None
         self._pointer = QPointF()
         self._drag_origin: tuple[float, tuple[int, int]] | None = None
@@ -213,6 +239,7 @@ class ChartCanvas(QWidget):
 
     # ------------------------------------------------------------------ API
     def set_data(self, data: ChartData | None) -> None:
+        self.touch_cancel(clear_inspection=True)
         self.data = data
         self._window = None
         self._hover = self._linked = None
@@ -221,6 +248,7 @@ class ChartCanvas(QWidget):
         self.update()
 
     def set_hidden(self, keys) -> None:
+        self.touch_cancel(clear_inspection=True)
         self.hidden = set(keys)
         self.update()
 
@@ -244,6 +272,10 @@ class ChartCanvas(QWidget):
         return max(0, first), min(count, last)
 
     def set_window(self, first: int, last: int) -> None:
+        if self._hover is not None:
+            self.hover_changed.emit(None)
+        self._hover = self._hover_stack = None
+        self._hide_overflow_tip()
         count = self.slot_count()
         length = max(2, min(count, last - first))
         first = max(0, min(first, count - length))
@@ -350,6 +382,7 @@ class ChartCanvas(QWidget):
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setFont(self._font)
         self._slices = []
+        self._bar_hits = []
         data = self.data
         if data is None or not self.has_values():
             painter.setPen(QColor(tokens.TEXT_SECONDARY))
@@ -504,6 +537,7 @@ class ChartCanvas(QWidget):
                     outline = QRectF(side[0][0])
                     for rect, _ in side[1:]:
                         outline = outline.united(rect)
+                    self._bar_hits.append((index, stack, _bar_path(outline)))
                     painter.save()
                     painter.setClipPath(_bar_path(outline), Qt.ClipOperation.IntersectClip)
                     for rect, color in side:
@@ -520,6 +554,9 @@ class ChartCanvas(QWidget):
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(color)
                     painter.drawEllipse(center, min(3., lane / 2), 3.)
+                    hit = QPainterPath()
+                    hit.addEllipse(center, min(3., lane / 2), 3.)
+                    self._bar_hits.append((index, stack, hit))
                 if any(value is not None for value in raw_values):
                     total_value = (sum((Decimal(str(value)) for value in raw_values), Decimal(0))
                                    if all(value is not None for value in raw_values) else None)
@@ -648,9 +685,11 @@ class ChartCanvas(QWidget):
             painter.drawText(box, Qt.AlignmentFlag.AlignCenter, label['text'])
         painter.restore()
 
-    def _tooltip_rows(self, index):
+    def _tooltip_rows(self, index, stack=None):
         rows = []
         for item in self.visible_series():
+            if stack is not None and (item.stack or item.key) != stack:
+                continue
             value = item.values[index] if index < len(item.values) else None
             if value is None:
                 continue
@@ -663,26 +702,76 @@ class ChartCanvas(QWidget):
     def _paint_slot_tooltip(self, painter, index):
         data = self.data
         title = (data.titles[index] if data.titles and index < len(data.titles) else str(data.labels[index]))
-        self._paint_tooltip(painter, title, self._tooltip_rows(index))
+        stack = self._hover_stack if data.kind == 'bar' else None
+        if stack is not None:
+            member = next((item for item in self.visible_series()
+                           if (item.stack or item.key) == stack and item.titles
+                           and index < len(item.titles) and item.titles[index]), None)
+            if member is not None:
+                title = member.titles[index]
+        self._paint_tooltip(painter, title, self._tooltip_rows(index, stack))
 
     def _paint_tooltip(self, painter, title, rows):
         if not rows:
+            self._hide_overflow_tip()
             return
-        tip_font = tooltip_font()
-        metrics = strong = self._metrics(tip_font)
-        line = metrics.height() + 4
-        name_width = max(metrics.horizontalAdvance(name) for _, name, _, _ in rows)
-        value_width = max(strong.horizontalAdvance(value) for _, _, value, _ in rows)
-        note_width = max((metrics.horizontalAdvance(note) for *_, note in rows if note), default=0)
-        width = max(strong.horizontalAdvance(title), 18 + name_width + 16 + value_width, note_width + 18) + 24
-        height = 12 + line + len(rows) * line + sum(line for *_, note in rows if note) + 6
-        width = min(width, self.width() - 8)
+        layout = self._tooltip_layout(title, rows)
+        width, height = layout[:2]
+        if height + 8 > self.height() or width + 8 > self.width():
+            if self._overflow_tip is None:
+                self._overflow_tip = _ChartTip(self)
+            tip = self._overflow_tip
+            tip.content_layout = layout
+            tip.resize(ceil(width + 2), ceil(height + 2))
+            anchor = self.mapToGlobal(self._pointer.toPoint())
+            bounds = self.screen().availableGeometry()
+            x = anchor.x() + 16
+            if x + tip.width() > bounds.right():
+                x = anchor.x() - tip.width() - 16
+            y = anchor.y() - tip.height() // 2
+            tip.move(max(bounds.left(), min(x, bounds.right() - tip.width())),
+                     max(bounds.top(), min(y, bounds.bottom() - tip.height())))
+            tip.show(); tip.update()
+            return
+        self._hide_overflow_tip()
         x = self._pointer.x() + 16
         if x + width > self.width() - 4:
             x = self._pointer.x() - width - 16
         x = max(4., x)
         y = min(max(4., self._pointer.y() - height / 2), max(4., self.height() - height - 4))
         box = QRectF(x, y, width, height)
+        self._draw_tooltip(painter, box, layout)
+
+    def _tooltip_layout(self, title, rows):
+        metrics = self._metrics(tooltip_font())
+        line = metrics.height() + 4
+        name_width = max(metrics.horizontalAdvance(name) for _, name, _, _ in rows)
+        value_width = max(metrics.horizontalAdvance(value) for _, _, value, _ in rows)
+        width = min(320., max(metrics.horizontalAdvance(title) + 24,
+                             name_width + value_width + 54,
+                             max((metrics.horizontalAdvance(note) + 38 for *_, note in rows), default=0)))
+        # Reserve enough room for numbers and units; long identities wrap.
+        value_width = min(value_width, (width - 54) * .55)
+        name_width = max(1., width - 54 - value_width)
+        flags = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+        def height(text, space):
+            return max(line, metrics.boundingRect(QRectF(0, 0, space, 10000), flags, text).height() + 4)
+        title_height = height(title, width - 24)
+        blocks, seen = [], set()
+        for color, name, value, note in rows:
+            note = note if note not in seen else ''
+            seen.add(note)
+            blocks.append((color, name, value, note,
+                           max(height(name, name_width), height(value, value_width)),
+                           height(note, width - 38) if note else 0))
+        return (width, 16 + title_height + sum(row[4] + row[5] for row in blocks),
+                title, title_height, name_width, value_width, blocks)
+
+    def _draw_tooltip(self, painter, box, layout):
+        width, height, title, title_height, name_width, value_width, blocks = layout
+        x, y = box.x(), box.y()
+        tip_font = tooltip_font()
+        flags = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere | Qt.AlignmentFlag.AlignVCenter
         painter.save()
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(0, 0, 0, 18))
@@ -693,28 +782,30 @@ class ChartCanvas(QWidget):
         painter.setFont(tip_font)
         painter.setPen(QColor(tokens.TOOLTIP_TEXT))
         cursor = y + 8
-        painter.drawText(QRectF(x + 12, cursor, width - 24, line), Qt.AlignmentFlag.AlignVCenter, title)
-        cursor += line
-        for color, name, value, note in rows:
+        painter.drawText(QRectF(x + 12, cursor, width - 24, title_height), flags, title)
+        cursor += title_height
+        for color, name, value, note, row_height, note_height in blocks:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
-            painter.drawRoundedRect(QRectF(x + 12, cursor + line / 2 - 4, 8, 8), 2, 2)
+            painter.drawRoundedRect(QRectF(x + 12, cursor + row_height / 2 - 4, 8, 8), 2, 2)
             painter.setFont(tip_font)
             painter.setPen(QColor(tokens.TOOLTIP_TEXT))
-            painter.drawText(QRectF(x + 26, cursor, width - 38, line), Qt.AlignmentFlag.AlignVCenter,
-                             metrics.elidedText(name, Qt.TextElideMode.ElideRight, width - 46 - value_width))
+            painter.drawText(QRectF(x + 26, cursor, name_width, row_height), flags, name)
             painter.setFont(tip_font)
             painter.setPen(QColor(tokens.TOOLTIP_TEXT))
-            painter.drawText(QRectF(x + 12, cursor, width - 24, line),
-                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, value)
-            cursor += line
+            painter.drawText(QRectF(x + width - 12 - value_width, cursor, value_width, row_height),
+                             flags | Qt.AlignmentFlag.AlignRight, value)
+            cursor += row_height
             if note:
                 painter.setFont(tip_font)
                 painter.setPen(QColor(tokens.TOOLTIP_TEXT))
-                painter.drawText(QRectF(x + 26, cursor, width - 38, line), Qt.AlignmentFlag.AlignVCenter,
-                                 metrics.elidedText(note, Qt.TextElideMode.ElideRight, width - 38))
-                cursor += line
+                painter.drawText(QRectF(x + 26, cursor, width - 38, note_height), flags, note)
+                cursor += note_height
         painter.restore()
+
+    def _hide_overflow_tip(self):
+        if self._overflow_tip is not None:
+            self._overflow_tip.hide()
 
     def _paint_hbar(self, painter):
         data = self.data
@@ -923,6 +1014,8 @@ class ChartCanvas(QWidget):
         if clear_inspection:
             changed = self._hover is not None
             self._hover = self._hover_slice = None
+            self._hover_stack = None
+            self._hide_overflow_tip()
             self.update()
             if changed and self.data is not None and self.data.kind in ('line', 'bar'):
                 self.hover_changed.emit(None)
@@ -968,23 +1061,42 @@ class ChartCanvas(QWidget):
                 self.setCursor(Qt.CursorShape.PointingHandCursor if key else Qt.CursorShape.ArrowCursor)
             self.update()
             return
-        index = self._row_at(self._pointer) if data.kind == 'hbar' else self._slot_at(self._pointer.x())
-        if index is not None and not self._tooltip_rows(index):
+        stack = None
+        if data.kind == 'bar':
+            hit = next(((index, key) for index, key, path in reversed(self._bar_hits)
+                        if path.contains(self._pointer)), None) if self._plot.contains(self._pointer) else None
+            index, stack = hit if hit is not None else (None, None)
+        else:
+            index = self._row_at(self._pointer) if data.kind == 'hbar' else self._slot_at(self._pointer.x())
+        if index is not None and not self._tooltip_rows(index, stack):
             index = None
         changed = index != self._hover
         self._hover = index
+        self._hover_stack = stack
+        if index is None:
+            self._hide_overflow_tip()
         self.update()
         if changed and data.kind != 'hbar':
             self.hover_changed.emit(index)
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
+        self._hide_overflow_tip()
+        self._hover_stack = None
         if self._hover is not None or self._hover_slice is not None:
             self._hover = None
             self._hover_slice = None
             self.update()
             if self.data is not None and self.data.kind in ('line', 'bar'):
                 self.hover_changed.emit(None)
+
+    def hideEvent(self, event):
+        self.touch_cancel(clear_inspection=True)
+        super().hideEvent(event)
+
+    def resizeEvent(self, event):
+        self.touch_cancel(clear_inspection=True)
+        super().resizeEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton or self.data is None:

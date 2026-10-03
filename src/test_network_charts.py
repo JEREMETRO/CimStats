@@ -147,7 +147,8 @@ def test_period_columns_keep_extra_comparison_slots_and_true_dates():
     assert len(data_chart.labels) == 4
     previous = [item for item in data_chart.series if item.faded]
     assert previous and all(item.stack == 'comparison' for item in previous)
-    assert '上周同期 2024-02-17' in previous[0].notes[1]
+    assert '2024-02-17' in previous[0].titles[1]
+    assert previous[0].notes[1] == ''  # The selected bar heading carries its real date once.
     panel.deleteLater()
 
 
