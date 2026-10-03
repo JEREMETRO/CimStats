@@ -121,7 +121,7 @@ def test_formal_release_download_matches_version_and_retains_010_history():
 
 
 def test_formal_010_release_leads_with_contributor_credit():
-    notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('## CimStats 0.1.0', 1)[0]
+    notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8').split('## 0.1.0 - 2026-10-03', 1)[1].split('## CimStats 0.1.0', 1)[0]
     policy = (ROOT / 'docs/RELEASE.md').read_text(encoding='utf-8')
     assert 'https://github.com/Trilleo' in notes
     assert 'https://github.com/JEREMETRO/CimStats/pull/1' in notes
