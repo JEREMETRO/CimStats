@@ -28,8 +28,8 @@ def visual_window(qt_application,monkeypatch,tmp_path):
     w.on_completed(data)
     w.show();w.navigate(1)
     QTest.qWait(200)
-    # Measured 100% native DWM visible frame: 4px horizontal border and 60px
-    # title/bottom. Offscreen frame margins are smaller and cannot prove this budget.
+    # The custom 32px title bar is inside this client size; native rendering
+    # checks the same content budget, rather than old external DWM margins.
     w.resize(1436,900)
     QTest.qWait(100)
     assert hasattr(w,'lines_page')
@@ -59,7 +59,12 @@ def test_actual_whole_shell_has_capacity_without_scroll(visual_window,count,qt_a
     assert {'line_workbook', 'company_workbook'} <= w.header.export_actions.keys()
     assert p.mapTo(w.content_host, QPoint(0, p.height())).y() == w.content_host.height()
     assert w.line_table.font().pixelSize()==14
-    assert p.height()>=818 and p.detail.height()==348 and panel.height()>=458
+    from window_chrome import TITLE_BAR_HEIGHT
+    margins = w.pages.parentWidget().layout().contentsMargins()
+    assert p.height() == w.height() - TITLE_BAR_HEIGHT - HEADER_HEIGHT - margins.top() - margins.bottom()
+    assert p.detail.height()==348
+    assert panel.height() == p.height() - p.detail.height() - p.right_host.layout().spacing()
+    assert matrix.height()>=14*22 and matrix.row_height>=22
     assert len(w.fact_cards)==9 and all(c.isVisible() for c in w.fact_cards)
     assert all(c.height()==86 for c in w.fact_cards)
     if count:

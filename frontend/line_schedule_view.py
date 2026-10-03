@@ -336,8 +336,8 @@ class SchedulePanel(QFrame):
         self.setMinimumHeight(426)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(tokens.CARD_PADDING, tokens.CARD_PADDING,
-                                       tokens.CARD_PADDING, tokens.CARD_PADDING)
+        self._layout.setContentsMargins(tokens.CARD_PADDING, tokens.SPACE_SM,
+                                       tokens.CARD_PADDING, tokens.SPACE_SM)
         self._layout.setSpacing(tokens.CONTROL_GAP)
         heading = QHBoxLayout()
         self._heading_layout = heading
@@ -543,7 +543,7 @@ class SchedulePanel(QFrame):
         self.title_label.setStyleSheet(f'{emphasis_css(title_size)}color: {tokens.TEXT_PRIMARY};')
         apply_emphasis_font(self.title_label, title_size)
         padding = 20 if expanded else tokens.CARD_PADDING
-        self._layout.setContentsMargins(padding, padding, padding, padding)
+        self._layout.setContentsMargins(padding, tokens.SPACE_SM, padding, tokens.SPACE_SM)
         self._layout.setSpacing(12 if expanded else tokens.CONTROL_GAP)
         self._fit_footer()
         self.matrix.set_expanded(expanded)
