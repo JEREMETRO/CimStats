@@ -43,6 +43,25 @@ class FakePanel(QWidget):
         self.setFixedHeight(height)
 
 
+def test_vehicle_switch_keeps_one_title_and_does_not_render_internal_context():
+    from decimal import Decimal
+    from PySide6.QtWidgets import QLabel
+    from network_dashboard import NetworkValueTile
+    from network_model import NetworkValue
+    QApplication.instance() or QApplication([])
+    for selected in ('average', 'maximum'):
+        value = NetworkValue('vehicles-running', '最大车辆需求数', '辆', Decimal(459),
+                             context='存档当前线路需求，非历史峰值')
+        tile = NetworkValueTile(2, value, NetworkOptions(vehicle=selected), '#1677FF')
+        tile.resize(230, 120)
+        tile.show()
+        QApplication.instance().processEvents()
+        assert tile.metric_title.text() == '车辆'
+        assert tile.number.text() == '459'
+        assert not any('存档当前' in label.text() for label in tile.findChildren(QLabel))
+        tile.close()
+
+
 def test_network_tile_retains_missing_reason_and_parts_without_repeating_comparison():
     from decimal import Decimal
     from card_comparisons import change
@@ -84,7 +103,7 @@ def test_three_modes_render_visible_summary_and_charts(tmp_path, monkeypatch):
         assert len(view.summary_cards) == summaries
         assert all(len(card.tiles) == tiles for card in view.summary_cards)
         assert len(view.chart_panels) == charts
-        assert view.summary_cards[0].tiles[2].metric_title.text() == '运行车辆'
+        assert view.summary_cards[0].tiles[2].metric_title.text() == '车辆'
         if mode == 'overall':
             assert (None, 'coverage') not in view.chart_panels
             view.reflow(1300)
@@ -106,7 +125,7 @@ def test_single_company_overall_keeps_six_readable_tiles_on_one_wide_row(tmp_pat
     assert all(card.tile_grid.itemAtPosition(0, index) is not None for index in range(6))
     assert card.tile_grid.itemAtPosition(1, 0) is None
     vehicle = card.tiles[2]
-    assert vehicle.metric_title.text() == '运行车辆'
+    assert vehicle.metric_title.text() == '车辆'
     assert vehicle.option_control.width() <= 120
     view.reflow(1154)
     assert all(card.tile_grid.itemAtPosition(0, index) is not None for index in range(6))
@@ -114,7 +133,7 @@ def test_single_company_overall_keeps_six_readable_tiles_on_one_wide_row(tmp_pat
     assert vehicle.metric_title.text() == '车辆'
     view.reflow(920)
     assert card.tile_grid.itemAtPosition(1, 0) is not None
-    assert vehicle.metric_title.text() == '运行车辆'
+    assert vehicle.metric_title.text() == '车辆'
     view.close()
 
 

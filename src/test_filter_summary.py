@@ -43,11 +43,11 @@ def test_custom_hour_range_keeps_exclusive_end_and_cross_year_dates():
     assert summary_window((datetime(2013,5,13,8),datetime(2013,5,13,10)))=='2013-05-13 08:00—10:00（结束不含）'
 
 
-def test_network_baseline_uses_group_header_and_is_hidden_in_period(tmp_path, monkeypatch):
+def test_network_never_adds_baseline_header_even_when_comparison_is_available(tmp_path, monkeypatch):
     from dataclasses import replace
     from card_comparisons import CardComparison
     from test_network_dashboard import _fixture, _view
-    from filter_summary import card_baseline_text
+    from PySide6.QtWidgets import QLabel
     for mode in ('overall', 'period'):
         snapshot = _fixture(mode)
         summary = snapshot.summaries[0]
@@ -55,8 +55,25 @@ def test_network_baseline_uses_group_header_and_is_hidden_in_period(tmp_path, mo
             comparison=CardComparison(text='较上周 +1%', available=True)), *summary.values[1:]))
         snapshot = replace(snapshot, summaries=(summary, *snapshot.summaries[1:]))
         view, _ = _view(snapshot, tmp_path, monkeypatch)
-        context = view.summary_cards[0].baseline_context
-        assert context.isHidden() == (mode == 'period')
-        if mode == 'overall':
-            assert context.text() == card_baseline_text(snapshot.filters)
+        assert not hasattr(view.summary_cards[0], 'baseline_context')
+        assert not any('卡片基准' in label.text() for label in view.findChildren(QLabel))
         view.close()
+
+
+def test_company_and_city_headers_do_not_add_internal_baseline_information():
+    from PySide6.QtWidgets import QLabel
+    from test_stats_fluent_page import _loaded_page
+    from city_dashboard import CityDashboard
+    from test_city_model import build, r
+    page = _loaded_page()
+    assert page.company_dashboard.groups
+    for group in page.company_dashboard.groups.values():
+        assert not hasattr(group, 'baseline_context')
+    city = CityDashboard()
+    city.set_snapshot(build([r('population', '', 0, 100), r('population', '', 1, 120)]))
+    assert not hasattr(city, 'baseline_context')
+    for widget in (page.company_dashboard, city):
+        assert not any('卡片基准' in label.text() for label in widget.findChildren(QLabel))
+    city.close()
+    page.stop_workers()
+    page.close()

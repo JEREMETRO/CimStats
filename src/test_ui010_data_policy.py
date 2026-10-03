@@ -97,9 +97,9 @@ def test_demand_sums_selected_lines_and_preserves_average_charts(ids, expected):
     average = build_network_snapshot(source, NetworkOptions(), NAMES)
     maximum = build_network_snapshot(source, NetworkOptions(vehicle='maximum'), NAMES, lines=lines)
     demand = value(maximum.summaries[0], 2)
-    assert demand.title == '最大车辆需求数'
+    assert demand.title == '车辆' == value(average.summaries[0], 2).title
     assert demand.value == Decimal(expected) and demand.complete
-    assert demand.context == '存档当前线路需求，非历史峰值'
+    assert not demand.context
     assert not demand.comparison.text
     assert chart(maximum, 'vehicles-running') == chart(average, 'vehicles-running')
 
@@ -217,9 +217,9 @@ def test_demand_export_matches_selected_snapshot_and_context(tmp_path):
     path = tmp_path / 'demand.xlsx'
     export_xlsx(source, path, NAMES, network)
     rows = list(load_workbook(path, data_only=True)['网络摘要'].values)
-    row = next(row for row in rows[1:] if row[7] == '最大车辆需求数')
+    row = next(row for row in rows[1:] if row[7] == '车辆')
     assert row[8] == 7 and row[9] == '辆'
-    assert row[16] == value(network.summaries[0], 2).context
+    assert not row[16] and not value(network.summaries[0], 2).context
 
 
 def test_home_custom_charts_omit_numeric_labels_preserve_values_and_drillthrough(monkeypatch):
@@ -246,7 +246,7 @@ def test_home_custom_charts_omit_numeric_labels_preserve_values_and_drillthrough
             assert panel.total_label.isHidden()
             for row in panel.visible_mode_rows():
                 assert row.number.isHidden() and row.share.isHidden()
-                assert row.number.text() in row.toolTip() and row.share.text() in row.toolTip()
+                assert row.toolTip() == ''
             painted.clear()
             panel.grab()
             assert panel.ring.center_total.text() not in painted
@@ -255,7 +255,7 @@ def test_home_custom_charts_omit_numeric_labels_preserve_values_and_drillthrough
             panel.show_ranking()
             rows = panel.visible_ranking_rows()
             assert rows and all(row.number.isHidden() for row in rows)
-            assert all(row.number.text() in row.track.toolTip() for row in rows)
+            assert all(row.track.toolTip() == '' and row.number.text() in row.accessibleName() for row in rows)
             painted.clear()
             panel.grab()
             assert all(row.number.text() not in painted for row in rows)

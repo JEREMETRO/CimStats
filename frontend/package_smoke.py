@@ -95,7 +95,10 @@ def _exercise(win, desktop_app, args):
             widget.window().raise_()
             widget.window().activateWindow()
             settle(80)
-            if widget.window().isActiveWindow():
+            import ctypes
+            foreground = ctypes.windll.user32.GetForegroundWindow
+            foreground.restype = ctypes.c_void_p
+            if widget.window().isActiveWindow() and foreground() == int(widget.window().winId()):
                 position = widget.mapToGlobal(QPoint(0, 0))
                 composited = args.output / (name + '-composited.png')
                 widget.screen().grabWindow(0, position.x(), position.y(),
@@ -162,7 +165,7 @@ def _exercise(win, desktop_app, args):
     page._network_options_changed(replace(page.network_options, vehicle='maximum'))
     wait_until(lambda: page.network_snapshot is not None)
     demand = next(v for v in page.network_snapshot.summaries[0].values if v.metric_id == 'vehicles-running')
-    assert demand.complete and demand.context
+    assert demand.complete and not demand.context and demand.title == '车辆'
     assert next(c for c in page.network_snapshot.charts if c.key == 'vehicles-running') == average_chart
     capture('demand-with-average-trend')
     company = next(p for p in page.company_dashboard.findChildren(ChartPanel) if p.result is not None and p.chart_views)

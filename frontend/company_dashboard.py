@@ -21,8 +21,6 @@ from stats_view_model import company_result
 from card_comparisons import company_comparison, CardComparison
 from card_comparison_label import ComparisonLabel
 from ui_kit import elision_tooltip
-from app_shell import ElidedText
-from filter_summary import card_baseline_text
 
 
 KPI_KEYS = ('cashflow', 'company-value', 'monthly-ticket', 'satisfaction-speed',
@@ -150,9 +148,6 @@ class CompanyGroup(QFrame):
         apply_emphasis_font(self.name_label, FONT_SIZE_BODY)
         header.addWidget(dot)
         header.addWidget(self.name_label, 1)
-        self.baseline_context = ElidedText('', self.summary_card, size=12)
-        header.addWidget(self.baseline_context, 1)
-        self.baseline_context.hide()
         self.summary_button = SummaryToggleButton(self.summary_card)
         self.summary_button.setFixedSize(24, 24)
         self.summary_button.clicked.connect(lambda: self.summary_toggled.emit(not self.summary_button.collapsed))
@@ -310,9 +305,6 @@ class CompanyDashboard(QWidget):
                 tile.title.setText(label(metric_key))
                 tile.set_result(snapshot.results.get(metric_key), company_id)
                 tile.comparison_label.set_comparison(company_comparison(snapshot, mode, metric_key, company_id, names))
-            if mode == 'default' and any(tile.comparison_label.comparison.available for tile in group.kpis.values()):
-                group.baseline_context.setText(card_baseline_text(snapshot.filters))
-                group.baseline_context.show()
             if mode != 'companies':
                 for index, slot in enumerate(slots):
                     key = satisfaction if slot == 'satisfaction-speed' else slot

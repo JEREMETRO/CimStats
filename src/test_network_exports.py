@@ -22,6 +22,6 @@ def test_network_summary_export_keeps_detail_sheets_and_unavailable_reason(tmp_p
     rows = list(sheet.values)
     assert rows[0][0] == '分析模式'
     assert '指标口径' not in rows[0]
-    assert any(row[7] == '最大车辆需求数' and row[11] and row[16] for row in rows[1:])
+    assert any(row[7] == '车辆' and row[11] and not row[16] for row in rows[1:])
     assert all(row[0] == '总体' for row in rows[1:])
     assert all(row[1] is not None and row[2] is not None for row in rows[1:])

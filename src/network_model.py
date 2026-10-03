@@ -19,7 +19,6 @@ SELECTED_KEY = '__selected__'
 NO_HISTORY = '暂无数据'
 NO_COMPANY = '未选择公司'
 NO_DEMAND = '车辆需求数据不完整'
-DEMAND_CONTEXT = '存档当前线路需求，非历史峰值'
 
 
 @dataclass(frozen=True)
@@ -351,9 +350,9 @@ def _vehicle_demand(ids: tuple[str, ...], lines) -> NetworkValue:
                 reason = NO_DEMAND
                 break
             total += amount
-    return NetworkValue('vehicles-running', '最大车辆需求数', '辆',
+    return NetworkValue('vehicles-running', '车辆', '辆',
                         None if reason else total, complete=not reason,
-                        reason=reason, comparison=CardComparison(text=''), context=DEMAND_CONTEXT)
+                        reason=reason, comparison=CardComparison(text=''))
 
 
 def _summary(snapshot: DashboardResult, ids: tuple[str, ...],
@@ -375,7 +374,7 @@ def _summary(snapshot: DashboardResult, ids: tuple[str, ...],
         _numeric_value('linecount', line_count.metric.label, line_count),
         _numeric_value(options.facility, facility.metric.label, facility),
         (_vehicle_demand(ids, lines) if options.vehicle == 'maximum'
-         else _numeric_value('vehicles-running', vehicles.metric.label, vehicles)),
+         else _numeric_value('vehicles-running', '车辆', vehicles)),
         (NetworkValue('coverage', coverage.metric.label, coverage.metric.unit,
                       None, reason=NO_HISTORY)
          if options.mode == 'overall' and len(ids) > 1 else

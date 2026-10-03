@@ -15,8 +15,6 @@ import stats_tokens as tokens
 from stats_motion import SurfaceMotion, CollapseMotion
 from stats_elevation import attach_card_elevation
 from card_comparison_label import ComparisonLabel
-from app_shell import ElidedText
-from filter_summary import card_baseline_text
 
 MODE_COLORS = {'步行': '#1677FF', '公共交通': '#159A79', '私家车': '#F5A653'}
 SERIES_COLORS = {**MODE_COLORS, '平均': '#1677FF', 'WhiteCollar': '#F5A653',
@@ -224,9 +222,6 @@ class CityDashboard(QWidget):
         self.city_title.setStyleSheet(f'{emphasis_css(14)}color:{tokens.TEXT_PRIMARY};')
         apply_emphasis_font(self.city_title, 14)
         header.addWidget(self.city_title, 1)
-        self.baseline_context = ElidedText('', self.summary, size=12)
-        header.addWidget(self.baseline_context, 1)
-        self.baseline_context.hide()
         self.summary_button = SummaryToggleButton(self.summary)
         self.summary_button.clicked.connect(lambda: self.set_summary_collapsed(not self.summary_collapsed))
         header.addWidget(self.summary_button)
@@ -316,10 +311,6 @@ class CityDashboard(QWidget):
         panel.motion.reveal()
 
     def set_snapshot(self, snapshot):
-        available = any(detail.comparison.available for value in snapshot.kpis.values()
-                        for detail in value.details or (value,))
-        self.baseline_context.setText(card_baseline_text(snapshot.filters) if available else '')
-        self.baseline_context.setVisible(available)
         self.snapshot = snapshot
         for key, tile in self.tiles.items():
             tile.set_value(snapshot.kpis[key])
@@ -338,7 +329,6 @@ class CityDashboard(QWidget):
 
     def clear(self):
         self.snapshot = None
-        self.baseline_context.hide()
         for tile in self.tiles.values():
             tile.set_value(CityValue(tile.title.text()))
         for panel in self.panels.values():

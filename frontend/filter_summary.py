@@ -3,7 +3,6 @@ from datetime import timedelta
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QLabel
-from card_comparisons import baseline_window, baseline_label
 
 
 def summary_window(window):
@@ -19,10 +18,6 @@ def summary_window(window):
         return value.time().isoformat(timespec='auto' if precise else 'minutes')
     finish = clock(end) if start.date() == end.date() else f'{end:%Y-%m-%d} {clock(end)}'
     return f'{start:%Y-%m-%d} {clock(start)}—{finish}（结束不含）'
-
-
-def card_baseline_text(filters):
-    return f'卡片基准：{baseline_label(filters.start, filters.end).removeprefix("较")} {summary_window(baseline_window(filters.start, filters.end))}'
 
 
 class CompactFilterSummary(QLabel):
