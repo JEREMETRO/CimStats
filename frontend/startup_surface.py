@@ -5,7 +5,7 @@ business imports, with the same background and logo coordinates as the welcome.
 """
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication, QWidget
@@ -37,6 +37,21 @@ class StartupSurface(QWidget):
         if not self.renderer.isValid():
             raise ValueError('Startup icon is missing or invalid')
         self.logo_offset = 0.
+        if parent is not None:
+            parent.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if (watched is self.parentWidget() and not watched.isWindow()
+                and event.type() == QEvent.Type.Resize):
+            self.setGeometry(watched.rect())
+        return False
+
+    def event(self, event):
+        if (event.type() == QEvent.Type.ParentChange and self.parentWidget() is not None
+                and not self.parentWidget().isWindow()):
+            self.parentWidget().installEventFilter(self)
+            self.setGeometry(self.parentWidget().rect())
+        return super().event(event)
 
     def logo_rect(self):
         center = QPointF(self.rect().center())

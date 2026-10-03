@@ -238,7 +238,7 @@ def _history(data, now, companies, cancelled):
         if row.get('公司标识') or row.get('玩家ID') or row.get('公司名称'):
             copy['公司标识'] = _owner(row, companies) or '__unresolved__'
         normalized.append(copy)
-    return HistoryStore(normalized, now)
+    return HistoryStore(normalized, now, cancelled=cancelled)
 
 
 def _transfer_value(store, ids, start, end, cancelled):

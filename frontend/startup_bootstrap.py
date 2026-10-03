@@ -81,17 +81,27 @@ def main(launcher: Path, *, root: Path | None = None, window_factory=None,
             if initialize is None:
                 ready()
                 return
-            try:
-                record('desktop_import_started')
-                initialize()
+            def loaded():
                 record('desktop_import_finished', window_id=int(window.winId()))
                 gates.append(FirstFrameGate(window, ready, surface=getattr(window, 'empty_state', None)))
                 window.update()
-            except BaseException as exc:
+
+            def failed(exc):
                 record('startup_failed', reason=type(exc).__name__)
                 failure.append(exc)
                 window.close()
                 app.exit(1)
+
+            try:
+                record('desktop_import_started')
+                asynchronous = getattr(window, 'initialize_content_async', None)
+                if asynchronous is not None:
+                    asynchronous(loaded, failed)
+                else:
+                    initialize()
+                    loaded()
+            except BaseException as exc:
+                failed(exc)
 
         gates.append(FirstFrameGate(window, load_content, surface=getattr(window, '_startup_surface', None)))
         record('window_show_requested')

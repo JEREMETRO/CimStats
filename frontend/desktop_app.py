@@ -10,7 +10,7 @@ from zipfile import BadZipFile
 from pathlib import Path
 from shiboken6 import isValid
 
-from PySide6.QtCore import Qt, QSettings, QThread, Signal, QTimer
+from PySide6.QtCore import QEvent, Qt, QSettings, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QIcon
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QStackedWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
@@ -312,6 +312,27 @@ class ParseWorker(QThread):
                 self.failed.emit(str(exc))
 
 
+class StartupImports(QThread):
+    loaded = Signal(object)
+
+    def run(self):
+        try:
+            import importlib
+            # These modules contain no widgets. File access and Python imports
+            # need not freeze the already painted logo or its system window.
+            for name in ('openpyxl', 'report_model', 'statistics_model',
+                         'dashboard_model', 'network_model', 'city_model', 'latest_info_model'):
+                if self.isInterruptionRequested():
+                    return
+                importlib.import_module(name)
+            # This defines/imports classes and enum metadata only. QApplication
+            # theme, fonts and every widget constructor remain on the UI thread.
+            if not self.isInterruptionRequested():
+                _load_ui_dependencies()
+            self.loaded.emit(None)
+        except Exception as exc:
+            self.loaded.emit(exc)
+
 
 
 class MainWindow(FluentMainWindow):
@@ -327,6 +348,8 @@ class MainWindow(FluentMainWindow):
         center_startup_window(self)
         self._content_ready = False
         self._content_initializing = False
+        self.setAcceptDrops(False)
+        QApplication.instance().installEventFilter(self)
         self._startup_surface = StartupSurface(icon_svg_path(BUNDLE_ROOT), self)
         self.setCentralWidget(self._startup_surface)
         if defer_startup is None:
@@ -338,20 +361,73 @@ class MainWindow(FluentMainWindow):
         if self._content_ready or self._content_initializing:
             return
         self._content_initializing = True
+        self._prepare_content()
+        self.build_ui()
+        self._finish_content()
+
+    def _prepare_content(self):
         _load_ui_dependencies()
         initialize_theme(QApplication.instance())
-        self.setAcceptDrops(True)
+        # Run before the app-wide touch synthesizer while construction is partial.
+        QApplication.instance().removeEventFilter(self)
+        QApplication.instance().installEventFilter(self)
         self.settings = QSettings("CIM2SaveStats", "Desktop")
         self.data: dict = {}
         self.worker: ParseWorker | None = None
         self.selected_key = ""
         self._selected_line = None
         self._awaiting_dashboards = False
-        self.build_ui()
+
+    def _finish_content(self):
         self._enable_mica()
         self.check_install()
         self._content_ready = True
+        QApplication.instance().removeEventFilter(self)
+        self.setAcceptDrops(True)
+        if self._startup_surface is not None:
+            self._startup_surface.hide()
+            self._startup_surface.deleteLater()
         self._startup_surface = None
+
+    def initialize_content_async(self, ready, failed):
+        if self._content_ready:
+            ready()
+            return
+        if self._content_initializing:
+            return
+        self._content_initializing = True
+        self._startup_ready, self._startup_failed = ready, failed
+        self._startup_imports = StartupImports(self)
+        self._startup_imports.loaded.connect(self._startup_imports_ready)
+        self._startup_imports.start()
+
+    def _startup_imports_ready(self, error):
+        if getattr(self, '_closing_app', False):
+            return
+        if error is not None:
+            self._startup_failed(error)
+            return
+        self._startup_steps = iter((self._prepare_content, self._build_shell,
+                                   self.build_overview, self.build_lines,
+                                   self._build_statistics, self._finish_ui, self._finish_content))
+        self._startup_next()
+
+    def _startup_next(self):
+        if getattr(self, '_closing_app', False):
+            return
+        try:
+            step = next(self._startup_steps, None)
+            if step is None:
+                self._startup_ready()
+                return
+            step()
+            cover = self._startup_surface
+            if cover is not None:
+                cover.setGeometry(self.centralWidget().rect())
+                cover.raise_()
+            QTimer.singleShot(0, self._startup_next)
+        except Exception as exc:
+            self._startup_failed(exc)
 
     # ------------------------------------------------------------ window
     def _enable_mica(self):
@@ -379,6 +455,14 @@ class MainWindow(FluentMainWindow):
             self.empty_state.open_button.setFocus()
 
     def focusNextPrevChild(self, forward):
+        if not self._content_ready:
+            controls = [button for button in (self.titleBar.minBtn, self.titleBar.maxBtn, self.titleBar.closeBtn)
+                        if button.isVisible() and button.isEnabled()]
+            if controls:
+                current = QApplication.focusWidget()
+                index = controls.index(current) if current in controls else (-1 if forward else 0)
+                controls[(index + (1 if forward else -1)) % len(controls)].setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         # Keep keyboard traversal on the active covering surface without
         # disabling hidden page controls used by asynchronous preparation.
         if hasattr(self, 'empty_state') and self.empty_state.isVisible():
@@ -393,9 +477,34 @@ class MainWindow(FluentMainWindow):
             return True
         return super().focusNextPrevChild(forward)
 
+    def eventFilter(self, watched, event):
+        if not getattr(self, '_content_ready', False) and isinstance(watched, QWidget):
+            central = self.centralWidget()
+            if central is not None and (watched is central or central.isAncestorOf(watched)):
+                if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                                    QEvent.Type.MouseButtonDblClick, QEvent.Type.TouchBegin,
+                                    QEvent.Type.TouchUpdate, QEvent.Type.TouchEnd, QEvent.Type.TouchCancel,
+                                    QEvent.Type.KeyPress, QEvent.Type.KeyRelease, QEvent.Type.ContextMenu,
+                                    QEvent.Type.Wheel):
+                    event.accept()
+                    return True
+        return super().eventFilter(watched, event)
+
     def build_ui(self):
+        self._build_shell()
+        self.build_overview()
+        self.build_lines()
+        self._build_statistics()
+        self._finish_ui()
+
+    def _build_shell(self):
         shell = QWidget()
+        cover = self.takeCentralWidget()
         self.setCentralWidget(shell)
+        if cover is not None:
+            cover.setParent(shell)
+            cover.setGeometry(shell.rect())
+            cover.show()
         outer = QHBoxLayout(shell)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -454,10 +563,11 @@ class MainWindow(FluentMainWindow):
         outer.addWidget(self.content_host, 1)
         self.empty_state = StartupWelcome(shell)
         self.empty_state.open_requested.connect(self.open_dialog)
+        if cover is not None:
+            cover.raise_()
 
-        self.build_overview()
-        self.build_lines()
-        self.statistics_page = StatisticsPage(self.settings)
+    def _build_statistics(self):
+        self.statistics_page = StatisticsPage(self.settings, parent=self.pages)
         self.pages.addWidget(self.statistics_page)
         # The statistics sub-tabs live in the shared header next to the title.
         self.stats_tabs = self.statistics_page.tab_bar
@@ -474,7 +584,8 @@ class MainWindow(FluentMainWindow):
             lambda error: self._notify('导出失败', str(error), error=True))
         self.statistics_page.query_failed.connect(self._dashboard_failed)
 
-        self.loading_overlay = LoadingOverlay(shell, self.cancel_parse)
+    def _finish_ui(self):
+        self.loading_overlay = LoadingOverlay(self.centralWidget(), self.cancel_parse)
         self._progress_predictor = None
         self._parse_stage = 0
         self._parse_stage_text = ''
@@ -603,6 +714,12 @@ class MainWindow(FluentMainWindow):
     def closeEvent(self, event):
         self._closing_app = True
         if not self._content_ready:
+            preloader = getattr(self, '_startup_imports', None)
+            if preloader is not None and preloader.isRunning():
+                preloader.requestInterruption()
+                preloader.finished.connect(self.close)
+                event.ignore()
+                return
             super().closeEvent(event)
             return
         self._ready_timer.stop()
@@ -635,7 +752,7 @@ class MainWindow(FluentMainWindow):
     def build_overview(self):
         from latest_info_page import LatestInfoPage
         from latest_info_controller import LatestInfoController
-        self.latest_info_page = LatestInfoPage(self.settings)
+        self.latest_info_page = LatestInfoPage(self.settings, parent=self.pages)
         self.overview_tab = self.latest_info_page
         self.company_combo = self.latest_info_page.company_combo
         self.mode_combo = self.latest_info_page.mode_combo
@@ -704,12 +821,17 @@ class MainWindow(FluentMainWindow):
         self.status_text = f"已设置程序集目录：{managed}"
 
     def open_dialog(self):
+        if not getattr(self, '_content_ready', True):
+            return
         path, _ = QFileDialog.getOpenFileName(self, "打开 Cities in Motion 2 存档", "",
                                               "Cities in Motion 2 存档 (*.save)")
         if path:
             self.start_parse(Path(path))
 
     def dragEnterEvent(self, event: QDragEnterEvent):
+        if not self._content_ready:
+            event.ignore()
+            return
         if event.mimeData().hasUrls() and any(url.toLocalFile().lower().endswith(".save")
                                               for url in event.mimeData().urls()):
             event.acceptProposedAction()
@@ -722,6 +844,9 @@ class MainWindow(FluentMainWindow):
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event: QDropEvent):
+        if not self._content_ready:
+            event.ignore()
+            return
         self.empty_state.set_drag_active(False)
         for url in event.mimeData().urls():
             path = Path(url.toLocalFile())
@@ -740,8 +865,12 @@ class MainWindow(FluentMainWindow):
         self.lines_page.list_footer.setText('从列表选择线路')
 
     def start_parse(self, path: Path):
+        if not self._content_ready:
+            return
         # Normalize Unicode paths before crossing the Qt/subprocess boundary.
-        path = Path(os.fsdecode(str(path))).expanduser().resolve()
+        # Resolving/stat-ing an online placeholder can involve the cloud provider.
+        # Only normalize text here; file I/O belongs to the cancellable worker.
+        path = Path(os.path.abspath(os.path.expanduser(os.fsdecode(str(path)))))
         running = False
         if self.worker:
             try:
@@ -777,7 +906,7 @@ class MainWindow(FluentMainWindow):
         self.empty_state.set_note('')
         self.header.save_chip.set_context(path.name, '正在读取存档…')
         self.status_text = f"准备解析：{path.name}"
-        self._progress_predictor = ParseProgressEstimator(path.stat().st_size if path.exists() else 0)
+        self._progress_predictor = ParseProgressEstimator(0)
         self._parse_started = time.monotonic()
         self._parse_stage, self._parse_stage_text = 0, '准备读取存档'
         worker = ParseWorker(path, managed, self)
@@ -791,7 +920,8 @@ class MainWindow(FluentMainWindow):
             return self.worker is worker and not getattr(self, '_closing_app', False)
         worker.progress.connect(lambda value, text: self.on_progress(value, text) if current() else None)
         worker.log.connect(lambda text: self.on_parse_log(text) if current() else None)
-        worker.completed.connect(lambda data: self.on_completed(data) if current() else None)
+        worker.completed.connect(lambda data: self.on_completed(data)
+                                 if current() and not worker.cancel_requested else None)
         worker.failed.connect(lambda message: self.on_failed(message) if current() else None)
         worker.finished.connect(lambda: self.worker_finished(worker))
         worker.start()
@@ -835,7 +965,7 @@ class MainWindow(FluentMainWindow):
         if predictor is not None and not cancelling:
             rss = 0
             process = worker.process if worker is not None else None
-            if process is not None:
+            if process is not None and not getattr(predictor, 'actual_progress', False):
                 try:
                     root = psutil.Process(process.pid)
                     rss = sum(p.memory_info().rss for p in [root, *root.children(recursive=True)])

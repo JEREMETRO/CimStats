@@ -39,17 +39,20 @@ class LatestInfoTask(QThread):
     def run(self):
         try:
             cancelled = self.isInterruptionRequested
+            store = self.data.get('_history_store')
             snapshot = build_latest_info(self.data, *self.scope, cancelled=cancelled)
             alerts = None
             if cancelled():
                 raise QueryCancelled()
+            if snapshot.simulation_time is not None:
+                if store is None or store.simulation_time != snapshot.simulation_time:
+                    store = HistoryStore(self.data.get('history', []), snapshot.simulation_time, cancelled=cancelled)
             if self.enabled and snapshot.simulation_time is not None:
                 owners = (snapshot.company_id,) if snapshot.company_id else tuple(key for key, _ in snapshot.companies)
                 filters = default_alert_filters(snapshot.simulation_time, owners)
-                store = HistoryStore(self.data.get('history', []), snapshot.simulation_time)
                 alerts = build_latest_alerts(store, filters, self.thresholds, cancelled=cancelled)
             if not cancelled():
-                self.ready.emit(self.token, (snapshot, alerts))
+                self.ready.emit(self.token, (snapshot, alerts, store))
         except QueryCancelled:
             pass
         except Exception as exc:
@@ -174,10 +177,12 @@ class LatestInfoController(QObject):
     def _receive(self, token, result):
         if token != self.token or self.data is None or self._closing or not isValid(self.page):
             return
-        snapshot, alerts = result
+        snapshot, alerts = result[:2]
         session_key = str(self.data.get('save_key') or self.data.get('session_key') or '')
         if snapshot.session_key != session_key or (snapshot.company_id, snapshot.mode) != self.page.scope():
             return
+        if len(result) > 2 and result[2] is not None:
+            self.data['_history_store'] = result[2]
         self.snapshot, self.alerts_snapshot = snapshot, alerts
         self._snapshot_data = self.data
         self.page.set_snapshot(snapshot)

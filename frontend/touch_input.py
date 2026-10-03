@@ -58,7 +58,9 @@ class TouchInputPolicy(QObject):
 
     @staticmethod
     def _enable(widget):
-        widget.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
+        transparent = any(parent.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                          for parent in _ancestors(widget))
+        widget.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, not transparent)
 
     def _reset(self):
         self._timer.stop()
@@ -179,6 +181,9 @@ class TouchInputPolicy(QObject):
             # Check the hit widget as well as receiver: ignored native touches
             # can propagate to a passive parent before Qt synthesizes its mouse.
             hit = QApplication.widgetAt(point.toPoint())
+            if any(parent.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                   for parent in _ancestors(watched)):
+                return False
             editing = _editor(hit or watched) is not None
             if not editing and (_native(watched) or _native(hit)):
                 return False

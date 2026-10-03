@@ -274,6 +274,7 @@ class CompanyDashboard(QWidget):
         root.addStretch()
 
     def clear(self):
+        self._structure = None
         for grid in (self.group_grid, self.shared_grid):
             while grid.count():
                 item = grid.takeAt(0)
@@ -284,22 +285,38 @@ class CompanyDashboard(QWidget):
         self.shared_panels = {}
         self.notice.clear()
 
+    def clear_data(self):
+        """Discard the old snapshot while retaining controls for the next query."""
+        for group in self.groups.values():
+            for tile in group.kpis.values():
+                tile.set_result(None, group.company_id)
+            for panel in group.panels.values():
+                panel.clear()
+        for panel in self.shared_panels.values():
+            panel.clear()
+
     def render(self, snapshot, company_ids: tuple[str, ...], names: dict[str, str],
                palette: dict[str, str], mode: str, satisfaction: str,
                slots: tuple[str, ...], comparison_label: str = '对比'):
-        self.clear()
+        structure = (tuple((owner, names.get(owner, owner), palette[owner]) for owner in company_ids),
+                     mode == 'companies', tuple(slots), satisfaction)
+        if structure != getattr(self, '_structure', None):
+            self.clear()
+            self._structure = structure
         self._mode, self._slots = mode, slots
         self.notice.setText('请选择公司' if not company_ids else
                             '请选择至少两家公司进行对比' if mode == 'companies' and len(company_ids) < 2 else '')
         self.notice.setVisible(bool(self.notice.text()))
         for company_id in company_ids:
-            group = CompanyGroup(company_id, names.get(company_id, company_id),
-                                 palette[company_id], charts=mode != 'companies',
-                                 satisfaction=satisfaction, parent=self.group_host)
-            self.groups[company_id] = group
-            group.set_summary_collapsed(self._summary_collapsed)
-            group.summary_toggled.connect(self.set_summary_collapsed)
-            group.satisfaction_changed.connect(self.satisfaction_changed)
+            group = self.groups.get(company_id)
+            if group is None:
+                group = CompanyGroup(company_id, names.get(company_id, company_id),
+                                     palette[company_id], charts=mode != 'companies',
+                                     satisfaction=satisfaction, parent=self.group_host)
+                self.groups[company_id] = group
+                group.set_summary_collapsed(self._summary_collapsed)
+                group.summary_toggled.connect(self.set_summary_collapsed)
+                group.satisfaction_changed.connect(self.satisfaction_changed)
             for key, tile in group.kpis.items():
                 metric_key = satisfaction if key == 'satisfaction-speed' else key
                 tile.title.setText(label(metric_key))
@@ -308,9 +325,15 @@ class CompanyDashboard(QWidget):
             if mode != 'companies':
                 for index, slot in enumerate(slots):
                     key = satisfaction if slot == 'satisfaction-speed' else slot
-                    panel = ChartPanel(label(key), modes=False,
+                    panel = group.panels.get(slot)
+                    if panel is None:
+                        panel = ChartPanel(label(key), modes=False,
                                        default_mode='trend-bar' if key == 'cashflow' else 'line',
                                        parent=group.chart_host)
+                        group.panels[slot] = panel
+                        panel.hover_offset_changed.connect(
+                            lambda seconds, current_slot=slot, source=panel:
+                            self._relay_hover(current_slot, source, seconds))
                     panel.set_mode_options(('trend-bar',) if key == 'cashflow' else ('line',))
                     panel.set_mode_labels({'line': '趋势', 'trend-bar': '趋势',
                                            'bar': '分布', 'pie': '比例'})
@@ -321,16 +344,17 @@ class CompanyDashboard(QWidget):
                     result = snapshot.results.get(key)
                     if result is not None:
                         panel.set_result(company_result(result, (company_id,), include_comparison=mode == 'period'), names)
-                    group.panels[slot] = panel
-                    panel.hover_offset_changed.connect(
-                        lambda seconds, current_slot=slot, source=panel:
-                        self._relay_hover(current_slot, source, seconds))
+                    else:
+                        panel.clear()
         if mode == 'companies':
             for index, slot in enumerate(slots):
                 key = satisfaction if slot == 'satisfaction-speed' else slot
-                panel = ChartPanel(label(key), modes=False,
+                panel = self.shared_panels.get(slot)
+                if panel is None:
+                    panel = ChartPanel(label(key), modes=False,
                                    default_mode='trend-bar' if key == 'cashflow' else 'line',
                                    parent=self.shared_host)
+                    self.shared_panels[slot] = panel
                 panel.set_mode_options(('trend-bar',) if key == 'cashflow' else ('line',))
                 panel.set_mode_labels({'line': '趋势', 'trend-bar': '趋势',
                                        'bar': '分布', 'pie': '比例'})
@@ -340,7 +364,8 @@ class CompanyDashboard(QWidget):
                 result = snapshot.results.get(key)
                 if result is not None:
                     panel.set_result(company_result(result, company_ids, include_comparison=False), names)
-                self.shared_panels[slot] = panel
+                else:
+                    panel.clear()
         self._align_axes(snapshot, satisfaction, mode)
         self.reflow(self._content_width)
 
@@ -354,13 +379,9 @@ class CompanyDashboard(QWidget):
         for slot in self._slots:
             key = satisfaction if slot == 'satisfaction-speed' else slot
             result = snapshot.results.get(key)
-            if result is None:
-                continue
-            values = [bucket.value for source in (result.series, result.comparison if mode == 'period' else {})
+            values = [bucket.value for source in ((result.series, result.comparison if mode == 'period' else {}) if result else ())
                       for buckets in source.values() for bucket in buckets if bucket.value is not None]
-            if not values:
-                continue
-            spec = nice_axis(values)
+            spec = nice_axis(values) if values else None
             panels = ([group.panels[slot] for group in self.groups.values()] if mode != 'companies'
                       else [self.shared_panels[slot]])
             for panel in panels:

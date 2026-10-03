@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from calendar import monthrange
 from collections import defaultdict
+from bisect import bisect_left
 
 
 HOUR = timedelta(hours=1)
@@ -155,12 +156,18 @@ class QueryCancelled(Exception):
 
 
 class HistoryStore:
-    def __init__(self, rows: list[dict], simulation_time: datetime):
+    def __init__(self, rows: list[dict], simulation_time: datetime, cancelled=None):
         self.simulation_time = parse_time(simulation_time)
         self.series: dict[tuple[str, str, str], list[HistoryRow]] = defaultdict(list)
-        for raw in rows:
+        times = {}
+        for index, raw in enumerate(rows):
+            if index % 256 == 0 and cancelled and cancelled():
+                raise QueryCancelled()
             try:
-                time = parse_time(raw['模拟时间'])
+                stamp = raw['模拟时间']
+                time = times.get(stamp)
+                if time is None:
+                    time = times[stamp] = parse_time(stamp)
                 if time > self.simulation_time:
                     continue
                 metric = raw['指标']
@@ -172,6 +179,8 @@ class HistoryStore:
             except (ValueError, KeyError):
                 continue
         for records in self.series.values():
+            if cancelled and cancelled():
+                raise QueryCancelled()
             records.sort(key=lambda record: record.time)
 
     def query(self, query: Query, cancelled=None) -> Result:
@@ -264,17 +273,20 @@ class HistoryStore:
     def _buckets(self, records, metric, start, end, grain, total=False, cancelled=None):
         result = []
         cursor = start
+        groups = {r.group for r in records} if total else set()
+        left = bisect_left(records, start, key=lambda r: r.time)
         while cursor < end:
             if cancelled and cancelled():
                 raise QueryCancelled()
             natural_start, natural_end = period_bounds(cursor, grain)
             bucket_end = min(end, natural_end)
-            selected = [r for r in records if cursor <= r.time < bucket_end]
+            right = bisect_left(records, bucket_end, lo=left, key=lambda r: r.time)
+            selected = records[left:right]
+            left = right
             # Current slot may contain live stock or a partial flow. A recorded
             # zero is an observation, while an absent hour is missing.
             expected_hours = int((bucket_end - cursor).total_seconds() // 3600)
             valid_times = {r.time for r in selected if not (r.current and self.simulation_time < r.time + HOUR)}
-            groups = {r.group for r in records} if total else set()
             observed_pairs = {(r.time, r.group) for r in selected if r.time in valid_times}
             partial_period = cursor != natural_start or bucket_end != natural_end
             complete = (not partial_period and len(valid_times) == expected_hours

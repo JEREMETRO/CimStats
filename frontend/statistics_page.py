@@ -834,6 +834,14 @@ class StatisticsPage(QWidget):
         if self.snapshot.filters.comparison != self._route_comparison('network'):
             self.schedule_query()
             return
+        if (self.network_snapshot is not None and self.network_snapshot.filters == self.snapshot.filters
+                and self.network_snapshot.options == self._effective_network_options()):
+            if self.tab_bar.currentRouteKey() == 'network':
+                if self.network_dashboard.snapshot is not self.network_snapshot:
+                    self.network_dashboard.set_snapshot(self.network_snapshot)
+                self._reflow_network()
+                self.export_button.setEnabled(True)
+            return
         self.network_snapshot = None
         if self.tab_bar.currentRouteKey() == 'network':
             self.export_button.setEnabled(False)
@@ -1022,9 +1030,12 @@ class StatisticsPage(QWidget):
         self._clear_views()
         self.snapshot_changed.emit(None)
 
-    def _clear_views(self):
+    def _clear_views(self, preserve_controls=False):
         self.export_button.setEnabled(False)
-        self.company_dashboard.clear()
+        if preserve_controls:
+            self.company_dashboard.clear_data()
+        else:
+            self.company_dashboard.clear()
         self.network_dashboard.clear()
         self.city_dashboard.clear()
         for tile in (*self.service_tiles.values(), self.transfer_tile):
@@ -1033,6 +1044,7 @@ class StatisticsPage(QWidget):
             panel.clear()
 
     def _invalidate_snapshot(self):
+        had_snapshot = any(item is not None for item in (self.snapshot, self.network_snapshot, self.city_snapshot))
         self.token += 1
         self.query_timer.stop()
         for worker in self.workers:
@@ -1043,7 +1055,8 @@ class StatisticsPage(QWidget):
         self.snapshot = None
         self.network_snapshot = None
         self.city_snapshot = None
-        self._clear_views()
+        if had_snapshot:
+            self._clear_views(preserve_controls=True)
         self.snapshot_changed.emit(None)
 
     def set_session(self, data):
@@ -1065,7 +1078,9 @@ class StatisticsPage(QWidget):
                                  for index, company_id in enumerate(sorted(self._short_ids))}
         self.network_dashboard.set_company_palette(self._company_palette)
         self.simulation_time = parse_time(data['simulation_time'])
-        self.store = HistoryStore(data.get('history', []), self.simulation_time)
+        prepared = data.get('_history_store')
+        self.store = (prepared if prepared is not None and prepared.simulation_time == self.simulation_time
+                      else HistoryStore(data.get('history', []), self.simulation_time))
         self.session_key = str(data.get('save_key', ''))
         names = [str(c.get('公司名称', '')) for c in self.companies]
         for company in self.companies:

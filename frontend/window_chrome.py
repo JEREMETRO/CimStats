@@ -299,6 +299,11 @@ class FluentFileDialog(_ChromeMixin, WindowsFramelessWindowBase, QFileDialog):
 
     @classmethod
     def getOpenFileName(cls, parent=None, caption='', directory='', filter='', selectedFilter='', options=QFileDialog.Option(0)):
+        # The save-import entry is the sole system-dialog exception. Other
+        # open/save/directory entry points retain the shared application chrome.
+        if '*.save' in filter:
+            return QFileDialog.getOpenFileName(parent, caption, directory, filter, selectedFilter,
+                                               options & ~QFileDialog.Option.DontUseNativeDialog)
         return cls._choose(parent, caption, directory, filter, selectedFilter, options,
                            QFileDialog.FileMode.ExistingFile, QFileDialog.AcceptMode.AcceptOpen)
 
