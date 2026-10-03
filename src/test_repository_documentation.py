@@ -126,18 +126,26 @@ def test_release_notes_match_restored_chart_presentation():
     assert '完整数值表' not in notes
 
 
-def test_formal_release_download_matches_version_and_retains_010_history():
+def test_formal_release_download_matches_published_version_and_retains_010_history():
     readme = (ROOT / 'README.md').read_text(encoding='utf-8')
     notes = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
     release = (ROOT / 'docs/RELEASE.md').read_text(encoding='utf-8')
     spec = (ROOT / 'CIM2_SaveStats.spec').read_text(encoding='utf-8')
     version = (ROOT / 'VERSION').read_text(encoding='utf-8-sig').strip()
-    assert f'CimStats_x64_v{version}.exe' in readme
+    import re
+    published = re.search(r'当前正式版为 \*\*(\d+\.\d+\.\d+)\*\*', release).group(1)
+    assert f'CimStats_x64_v{published}.exe' in readme
+    assert f'/releases/tag/v{published}' in readme
     assert f'## {version} - ' in notes
     historical_notes = notes.split('## 0.1.0 - 2026-10-03', 1)[1].split('## CimStats 0.1.0', 1)[0]
     assert '## 0.1.0 - 2026-10-03' in notes
     assert '悬停标签' in historical_notes and '背景颜色' in historical_notes and '控件显示被截断' in historical_notes
-    assert '正式版' in release and f'/releases/tag/v{version}' in release
+    assert '正式版' in release and f'/releases/tag/v{published}' in release
+    if version != published:
+        assert f'当前源码正在验收 {version}，尚未发布' in readme
+        assert f'## {version} - 未发布' in notes
+        assert f'{version} 为当前本地验收版本' in release
+        assert f'/releases/tag/v{version}' not in readme + release
     assert "StringStruct('Comments', metadata.license_spdx)" in spec
 
 
