@@ -51,3 +51,34 @@ def test_metrics_use_active_day_and_vehicle_km():
     ], 2, 3)
     assert result['今日平均单班人次'] == 60
     assert result['今日平均车公里人次'] == 20
+
+
+def test_equals_prefixed_save_text_is_not_written_as_formula(tmp_path):
+    from openpyxl import Workbook, load_workbook
+    from display_rules import store_text_literally
+    workbook = Workbook()
+    workbook.active.append(['=Express', 5])
+    store_text_literally(workbook)
+    workbook.save(tmp_path / 'names.xlsx')
+    cell = load_workbook(tmp_path / 'names.xlsx').active['A1']
+    assert (cell.value, cell.data_type) == ('=Express', 's')
+
+
+def test_company_workbook_reads_only_its_own_save(tmp_path):
+    import csv
+    import subprocess
+    from openpyxl import load_workbook
+    def write(stem, tag, row):
+        with (tmp_path / f'{stem}_{tag}.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(row)); writer.writeheader(); writer.writerow(row)
+    # '望' sorts before '运', so a CIM2_*_运行时.csv glob picks the other save first.
+    for tag, name in (('运行时', 'Own'), ('望春市_运行时', 'Other')):
+        write('CIM2_公司信息', tag, {'公司序号': 0, '公司名称': name})
+        write('CIM2_公司车型数据', tag, {'公司序号': 0, '公司名称': name, '车型序号': 1, '车型类型': 'bus'})
+        write('CIM2_城市历史元数据', tag, {'模拟开始': '2013-04-01 08:00:00', '模拟当前时间': '2013-04-03 10:00:00'})
+    script = Path(__file__).with_name('build_company_workbook.py')
+    subprocess.run([sys.executable, str(script), '运行时'], check=True, capture_output=True,
+                   env={**__import__('os').environ, 'CIM2_EXPORT_DIR': str(tmp_path), 'PYTHONIOENCODING': 'utf-8'})
+    workbook = load_workbook(tmp_path / 'CIM2_公司信息整理_运行时.xlsx', read_only=True)
+    assert workbook['表1_公司信息']['A2'].value == 'Own'
+    workbook.close()

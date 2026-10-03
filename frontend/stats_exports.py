@@ -8,6 +8,7 @@ from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QPixmap, QRegion
 from PySide6.QtWidgets import QWidget
 
+from display_rules import store_text_literally
 from statistics_model import BOARDS, summarize_buckets
 from stats_text import group_label, label
 
@@ -104,6 +105,7 @@ def export_xlsx(snapshot, path, companies, network_snapshot=None, *, company_mod
                 comparisons.append([owner, companies.get(owner, owner), label(key), company_mode,
                     comparison.text, comparison.tooltip, _number(comparison.amount), comparison.unit, comparison.rank])
         comparisons.freeze_panes = 'A2'
+    store_text_literally(workbook)
     workbook.save(Path(path))
 
 
@@ -151,6 +153,7 @@ def export_city_xlsx(snapshot, path, state):
     for sheet in workbook:
         sheet.freeze_panes = 'A2'
         sheet.auto_filter.ref = sheet.dimensions
+    store_text_literally(workbook)
     workbook.save(Path(path))
 
 

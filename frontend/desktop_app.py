@@ -26,6 +26,7 @@ from PySide6.QtCharts import (
     QHorizontalStackedBarSeries,
 )
 from openpyxl import load_workbook
+from openpyxl.cell.cell import ERROR_CODES
 
 PROJECT = Path(__file__).resolve().parents[1]
 SRC = PROJECT / "src"
@@ -619,7 +620,6 @@ class ParseWorker(QThread):
 
     def __init__(self, save_path: Path, managed: Path, parent=None):
         super().__init__(parent)
-        attach_card_elevation(self)
         self.save_path = save_path
         self.managed = managed
         self.job_dir = JOBS / uuid.uuid4().hex
@@ -708,15 +708,20 @@ class ParseWorker(QThread):
                 if not workbook_path.exists():
                     raise RuntimeError(f"未生成工作簿：{workbook_path.name}")
                 workbook = load_workbook(workbook_path, read_only=True, data_only=True)
-                missing = required - set(workbook.sheetnames)
-                if missing:
-                    raise RuntimeError(f"工作簿缺少工作表：{', '.join(sorted(missing))}")
-                for sheet in workbook.worksheets:
-                    for row in sheet.iter_rows():
-                        for cell in row:
-                            if isinstance(cell.value, str) and cell.value.startswith("#"):
-                                raise RuntimeError(f"工作簿存在错误值：{sheet.title}!{cell.coordinate}")
-                workbook.close()
+                try:
+                    missing = required - set(workbook.sheetnames)
+                    if missing:
+                        raise RuntimeError(f"工作簿缺少工作表：{', '.join(sorted(missing))}")
+                    for sheet in workbook.worksheets:
+                        for row in sheet.iter_rows():
+                            for cell in row:
+                                # Only Excel error codes are errors; user text such
+                                # as a line named "#3" is valid data.
+                                if cell.data_type == "e" or (isinstance(cell.value, str) and cell.value in ERROR_CODES):
+                                    raise RuntimeError(f"工作簿存在错误值：{sheet.title}!{cell.coordinate}")
+                finally:
+                    # read_only workbooks keep the file open (and locked on Windows).
+                    workbook.close()
                 self.log.emit('CIM2_PROGRESS ' + json.dumps(dict(event='progress', phase='validation', done=workbook_index, total=len(expected_sheets))))
             manifest = {
                 "job_id": self.job_dir.name,

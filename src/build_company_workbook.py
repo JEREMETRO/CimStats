@@ -2,6 +2,7 @@ from __future__ import annotations
 import csv, os, sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from display_rules import store_text_literally
 from parse_events import ProgressReporter
 # Keep workbook serialization on the standard et_xmlfile path.  This avoids
 # lxml IO_WRITE failures observed in one-file frozen processes.
@@ -19,16 +20,14 @@ TAG = sys.argv[1] if len(sys.argv) > 1 else "\u8fd0\u884c\u65f6"
 NAMES = {"826272703's Company": "\u516d\u8fdb\u516c\u4ea4", "jeremylin2005's Company": "\u516b\u8fde\u4ea4\u901a\u96c6\u56e2"}
 MODE = {"bus":"\u516c\u4ea4", "trolley":"\u65e0\u8f68\u7535\u8f66", "tram":"\u6709\u8f68\u7535\u8f66", "metro":"\u5730\u94c1", "waterbus":"\u6c34\u4e0a\u5df4\u58eb", "monorail":"\u5355\u8f68\u5217\u8f66", "anyvehicletype":"\u7efc\u5408"}
 MODE_ORDER = ["\u516c\u4ea4", "\u5355\u8f68\u5217\u8f66", "\u5730\u94c1", "\u65e0\u8f68\u7535\u8f66", "\u6709\u8f68\u7535\u8f66", "\u6c34\u4e0a\u5df4\u58eb", "\u7efc\u5408"]
-READ_INDEX = 0
 def read_csv(stem):
-    global READ_INDEX
-    expected = ["\u516c\u53f8\u5e8f\u53f7", "\u8f66\u578b\u5e8f\u53f7", "\u6a21\u62df\u5f00\u59cb", "\u5f53\u524d\u503c"][min(READ_INDEX, 3)]
-    READ_INDEX += 1
-    for path in sorted(EXPORT.glob(f"CIM2_*_{TAG}.csv")):
-        with path.open(encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.DictReader(f))
-        if rows and expected in rows[0]: return rows
-    raise FileNotFoundError(f"CSV for {expected} not found")
+    # Read the exact file: a glob such as CIM2_*_运行时.csv also matches other
+    # saves' exports (e.g. CIM2_公司信息_望春市_运行时.csv) in a shared directory.
+    path = EXPORT / f"{stem}_{TAG}.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"CSV not found: {path.name}")
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
 def integer(v):
     try: return int(float(v or 0))
     except (TypeError, ValueError): return 0
@@ -75,7 +74,7 @@ def costs(r, meta):
 def main():
     reporter = ProgressReporter()
     reporter.start('company_workbook')
-    companies, types, meta = read_csv("company"), read_csv("types"), read_csv("metadata")[0]
+    companies, types, meta = read_csv("CIM2_公司信息"), read_csv("CIM2_公司车型数据"), read_csv("CIM2_城市历史元数据")[0]
     history_path = EXPORT / f"CIM2_城市历史指标_完整_{TAG}.csv"
     history_rows = []
     if history_path.exists():
@@ -117,7 +116,7 @@ def main():
                 widths[cell.column] = max(widths.get(cell.column, 0), len(value))
         for column, width in widths.items():
             sheet.column_dimensions[sheet.cell(1, column).column_letter].width = min(max(width + 2, 10), 32)
-    out = EXPORT / f"CIM2_\u516c\u53f8\u4fe1\u606f\u6574\u7406_{TAG}.xlsx"; wb.save(out)
+    out = EXPORT / f"CIM2_\u516c\u53f8\u4fe1\u606f\u6574\u7406_{TAG}.xlsx"; store_text_literally(wb); wb.save(out)
     reporter.progress('company_workbook', 5, 5)
     reporter.finish('company_workbook')
     print(out)
