@@ -1,12 +1,27 @@
 """Interruptible Fluent surface motion, respecting Windows client animations."""
 import os
+from math import ceil
 from PySide6.QtCore import QObject, QEvent, QEasingCurve, QRect, QVariantAnimation
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
 from shiboken6 import isValid
 
 
 class _RevealEffect(QGraphicsOpacityEffect):
-    offset = 0
+    offset = 0.
+    _extent = 0
+
+    def boundingRectFor(self, rect):
+        return rect.united(rect.translated(0, self._extent))
+
+    def set_offset(self, offset):
+        self.offset = offset
+        # Keep padding stable for this effect's lifetime: the translated bottom
+        # must fit, without reallocating its source pixmap on every frame.
+        extent = ceil(offset)
+        if extent > self._extent:
+            self._extent = extent
+            self.updateBoundingRect()
+        self.update()
 
     def draw(self, painter):
         painter.save()
@@ -65,6 +80,9 @@ class SurfaceMotion(QObject):
             self.finish()
             return
         start = effect.opacity() if effect is not None else .78
+        # Capture both channels before an interruption. Opacity is not a clock:
+        # a mode fade can interrupt a float while it still has a visible offset.
+        start_offset = effect.offset if effect is not None else ((1 - start) * 28 if float_in else 0.)
         if self.animation is not None:
             self.animation.stop()
             self.animation.deleteLater()
@@ -77,25 +95,30 @@ class SurfaceMotion(QObject):
             widget.setGraphicsEffect(effect)
             self.effect = effect
         self.float_in = bool(float_in)
-        effect.setOpacity(start)
         animation = QVariantAnimation(self)
         animation.setDuration(220 if float_in else 160)
         animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        animation.setStartValue(start)
+        animation.setStartValue(0.)
         animation.setEndValue(1.)
-        animation.valueChanged.connect(lambda value: self.advance(effect, float(value)))
+        def advance(progress):
+            progress = float(progress)
+            self.advance(effect, start + (1 - start) * progress,
+                         start_offset * (1 - progress))
+        animation.valueChanged.connect(advance)
         animation.finished.connect(self.finish)
         self.animation = animation
         self.running = True
+        # QVariantAnimation.start() need not emit its unchanged initial value.
+        # Apply the complete first frame now, before any paint can see offset 0.
+        advance(0.)
         animation.start()
 
-    def advance(self, effect, value):
+    def advance(self, effect, value, offset):
         if not isValid(effect) or self.widget.graphicsEffect() is not effect:
             self.finish()
             return
         effect.setOpacity(value)
-        effect.offset = round((1 - value) * 28) if self.float_in else 0
-        effect.update()
+        effect.set_offset(offset)
         from stats_elevation import refresh_elevation
         refresh_elevation(self.widget)
 
@@ -148,9 +171,10 @@ class CollapseMotion(QObject):
                 layout.setGeometry(QRect(0, 0, self.widget.width(), self.widget.sizeHint().height()))
             layout.setEnabled(False)
             self._frozen_layout = layout
-        self.widget.show()
         if self.surface is not None:
             self.surface_start = self.surface.height()
+        self.widget.show()
+        if self.surface is not None:
             self.widget.setMaximumHeight(16777215)
             natural_height = self.surface.layout().sizeHint().height()
             content_height = self.widget.sizeHint().height()
@@ -174,6 +198,9 @@ class CollapseMotion(QObject):
         animation.valueChanged.connect(advance)
         animation.finished.connect(self.finish)
         self.animation = animation
+        # Showing a previously hidden row invalidates the parent's layout.
+        # Constrain both hosts before that layout can paint the full height.
+        advance(start)
         animation.start()
 
     def finish(self):

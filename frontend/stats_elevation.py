@@ -105,7 +105,7 @@ class _ElevationLayer(QWidget):
                         opacity*=effect.opacity()
                         draw_offset+=getattr(effect,'offset',0)
                     ancestor=parent
-                p+=QPoint(0,draw_offset)
+                p+=QPoint(0,round(draw_offset))
                 source.setGeometry(p.x(),p.y(),card.width(),card.height())
                 source.visible_clip=QRectF(clip.translated(-p))
                 source.surface_opacity=opacity
