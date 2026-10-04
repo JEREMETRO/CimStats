@@ -244,6 +244,8 @@ class ChartCanvas(QWidget):
 
     # ------------------------------------------------------------------ API
     def set_data(self, data: ChartData | None) -> None:
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         self.touch_cancel(clear_inspection=True)
         self.data = data
         self._window = None
@@ -253,11 +255,15 @@ class ChartCanvas(QWidget):
         self.update()
 
     def set_hidden(self, keys) -> None:
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         self.touch_cancel(clear_inspection=True)
         self.hidden = set(keys)
         self.update()
 
     def set_axis(self, spec: AxisSpec | None) -> None:
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         self.axis_override = spec
         self.update()
 
@@ -529,7 +535,7 @@ class ChartCanvas(QWidget):
                     rect = QRectF(x, min(y0, y1), width, abs(y1 - y0))
                     if value:
                         pieces.append((rect, color, value > 0))
-                    if self.detailed and len(members) > 1:
+                    if value and self.detailed and len(members) > 1:
                         labels.append(dict(text=format_value(raw_value, self.data.decimal_places), x=rect.center().x(),
                                            y=rect.center().y(), above=True, inside_rect=rect,
                                            color=QColor('white') if color.lightnessF() < .55 and not item.faded
@@ -548,21 +554,7 @@ class ChartCanvas(QWidget):
                     for rect, color in side:
                         painter.fillRect(rect, _bar_brush(color, rect))
                     painter.restore()
-                zeros = [item for item, value in zip(members, raw_values) if value == 0]
-                for zero_index, item in enumerate(zeros):
-                    lane = width / len(zeros)
-                    color = QColor(item.colors[index]) if item.colors else QColor(item.color)
-                    if item.faded:
-                        color = _alpha(color, COMPARISON_ALPHA)
-                    center = QPointF(x + (zero_index + .5) * lane,
-                                     min(max(baseline, self._plot.top() + 3), self._plot.bottom() - 3))
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(color)
-                    painter.drawEllipse(center, min(3., lane / 2), 3.)
-                    hit = QPainterPath()
-                    hit.addEllipse(center, min(3., lane / 2), 3.)
-                    self._bar_hits.append((index, stack, hit))
-                if any(value is not None for value in raw_values):
+                if any(value is not None and value != 0 for value in raw_values):
                     total_value = (sum((Decimal(str(value)) for value in raw_values), Decimal(0))
                                    if all(value is not None for value in raw_values) else None)
                     above = positive >= -negative
@@ -859,7 +851,7 @@ class ChartCanvas(QWidget):
                              metrics.elidedText(str(name), Qt.TextElideMode.ElideRight, label_width - 10))
             for position, item in enumerate(visible):
                 value = item.values[index] if index < len(item.values) else None
-                if value is None:
+                if value is None or value == 0:
                     continue
                 end = self._x(float(value))
                 color = QColor(item.colors[index]) if item.colors else QColor(item.color)

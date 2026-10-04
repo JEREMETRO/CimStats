@@ -136,6 +136,8 @@ class ChartPanel(QFrame):
         self._axis_override: AxisSpec | None = None
         self.axis_spec: AxisSpec | None = None
         self._hidden_groups: set = set()
+        self._default_zero_hidden: set = set()
+        self._category_choices: dict = {}
         self._settings = settings
         self._settings_key = settings_key
         self._compact_layout = False
@@ -282,6 +284,8 @@ class ChartPanel(QFrame):
 
     # --------------------------------------------------------- data in
     def set_result(self, result, companies: dict[str, str] | None = None):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         if result is not self.result:
             self._cancel_detail()
         self.result = result
@@ -304,6 +308,8 @@ class ChartPanel(QFrame):
         self._render()
 
     def clear(self):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         self._cancel_detail()
         self.result = None
         self._axis_override = None
@@ -483,7 +489,9 @@ class ChartPanel(QFrame):
                          unit=self.result.metric.unit)
 
     def _total_data(self, company, categories):
-        names = [group for group in categories if group not in self._hidden_groups]
+        names = ([] if self._combined_totals and company in self._hidden_groups else
+                 list(categories) if self._combined_totals else
+                 [group for group in categories if group not in self._hidden_groups])
         current = {group: summarize_buckets(buckets, self.result.metric) for group, buckets in categories.items()}
         multiple = len(categories) > 1
         colors = [self._category_color(group) if multiple else self._company_color(company) for group in names]
@@ -502,11 +510,13 @@ class ChartPanel(QFrame):
     def _donut_data(self, company, categories):
         values = {group: summarize_buckets(buckets, self.result.metric) for group, buckets in categories.items()}
         positive = {group: value for group, value in values.items() if value is not None and value > 0}
+        if self._combined_totals and company in self._hidden_groups:
+            positive = {}
         total = sum(positive.values(), Decimal(0))
         text, caption = self._donut_center(total, self.result.metric.unit)
         return ChartData(kind='donut', labels=[group_label(group) for group in positive],
                          series=[Series(key='share', name=self._company_name(company),
-                                        color=QColor(tokens.ACCENT), keys=list(positive),
+                                        color=QColor(tokens.ACCENT), keys=([company] * len(positive) if self._combined_totals else list(positive)),
                                         values=list(positive.values()),
                                         colors=[self._category_color(group) for group in positive])],
                          unit=self.result.metric.unit, center_text=text, center_caption=caption,
@@ -544,14 +554,20 @@ class ChartPanel(QFrame):
     def _render(self):
         if not hasattr(self, 'chart_layout'):
             return
-        self._clear_views()
         groups = self._groups()
         if self._detailed:
             self.detail_summary.refresh()
-        self._combined_totals = (self.mode in ('line', 'area', 'trend-bar') and len(groups) > 1
+        self._combined_totals = (len(groups) > 1
                                  and all(len(entries) == 1 for entries in groups.values())
                                  and len({next(iter(entries)) for entries in groups.values()}) == 1
                                  and next(iter(next(iter(groups.values())))) in TOTAL_GROUPS)
+        values = {}
+        if self.result is not None:
+            for series in (self.result.series, self.result.comparison):
+                for (company, category), buckets in series.items():
+                    key = company if self._combined_totals else category
+                    values.setdefault(key, []).extend(bucket.value for bucket in buckets if bucket.value is not None)
+        self._sync_zero_categories(values)
         self.summary_values = {}
         if self.result is not None:
             for company, categories in groups.items():
@@ -566,10 +582,12 @@ class ChartPanel(QFrame):
         self.fullscreen_button.setEnabled(self._detailed or show_chart)
         self.period_label.hide()
         if not has_data:
+            self._clear_views()
             self.summary_label.setText(label('missing') if self.result is None else '暂无可用数据')
             self._build_legend({})
             return
         if self.mode == 'summary':
+            self._clear_views()
             self.summary_label.setText('\n'.join(
                 f'{self._company_name(company)}  {_number(self.summary_values.get(company), self.result.query.metric)} '
                 f'{self.result.metric.unit}' for company in groups))
@@ -582,28 +600,42 @@ class ChartPanel(QFrame):
 
     def _place_specs(self, specs):
         columns = 1 if len(specs) == 1 else 2 if self.mode in ('pie', 'bar') or self._detailed else 1
+        if len(self.chart_views) != len(specs):
+            self._clear_views()
+        old_views = list(self.chart_views)
+        self.company_labels = []
         for index, (caption, data) in enumerate(specs):
-            cell = QWidget(self.chart_host)
-            box = QVBoxLayout(cell)
-            box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(2)
-            if caption:
-                heading = QLabel(caption, cell)
+            if index < len(old_views):
+                canvas = old_views[index]
+                cell = canvas.parentWidget()
+                heading = cell._chart_heading
+                self.chart_layout.removeWidget(cell)
+            else:
+                cell = QWidget(self.chart_host)
+                box = QVBoxLayout(cell)
+                box.setContentsMargins(0, 0, 0, 0)
+                box.setSpacing(2)
+                heading = QLabel(cell)
                 heading.setStyleSheet(f'color: {tokens.TEXT_SECONDARY}; font-size: 12px; border: 0;')
+                cell._chart_heading = heading
                 box.addWidget(heading)
+                canvas = ChartCanvas(cell, detailed=self._detailed)
+                canvas.hover_changed.connect(lambda index, source=canvas: self._canvas_hover(source, index))
+                canvas.slice_clicked.connect(self._toggle_category)
+                box.addWidget(canvas, 1)
+                self.chart_views.append(canvas)
+            heading.setText(caption)
+            heading.setVisible(bool(caption))
+            if caption:
                 self.company_labels.append(heading)
-            canvas = ChartCanvas(cell, detailed=self._detailed)
             canvas.set_hidden(self._hidden_groups)
             canvas.set_axis(self._axis_override if data.kind in ('line', 'bar', 'hbar') else None)
             data.decimal_places = number_places(self.result.query.metric)
             canvas.set_data(data)
             canvas.setMinimumHeight(0 if self._compact_height is not None else
                                     140 if len(specs) > 1 and not self._detailed else 170)
-            canvas.hover_changed.connect(lambda index, source=canvas: self._canvas_hover(source, index))
-            canvas.slice_clicked.connect(self._toggle_category)
-            box.addWidget(canvas, 1)
-            self.chart_views.append(canvas)
             self.chart_layout.addWidget(cell, index // columns, index % columns)
+            cell.show()
         self.axis_spec = self._axis_override
 
     def _build_legend(self, groups):
@@ -615,7 +647,7 @@ class ChartPanel(QFrame):
             return
         keys = (list(groups) if self._combined_totals else
                 list(dict.fromkeys(group for entries in groups.values() for group in entries)))
-        show_categories = self.mode not in ('bar', 'pie') and (len(keys) > 1 or keys[0] in self._hidden_groups)
+        show_categories = self.mode != 'pie' and (len(keys) > 1 or keys[0] in self._hidden_groups or keys[0] in self._category_choices)
         for key in keys if show_categories else []:
             if self._combined_totals:
                 entry = self._add_series_legend(key, self._legend_text(key), [self._legend_color(key)])
@@ -685,7 +717,19 @@ class ChartPanel(QFrame):
             self._hidden_groups.remove(group)
         else:
             self._hidden_groups.add(group)
+        self._category_choices[group] = group not in self._hidden_groups
         self._apply_category(group)
+
+    def _sync_zero_categories(self, values):
+        """Presentation defaults only; missing buckets and signed cancellation stay distinct."""
+        self._hidden_groups.difference_update(self._default_zero_hidden)
+        self._default_zero_hidden = {key for key, observed in values.items()
+                                     if observed and all(value == 0 for value in observed)
+                                     and key not in self._category_choices}
+        self._hidden_groups.update(self._default_zero_hidden)
+        for key, visible in self._category_choices.items():
+            if visible: self._hidden_groups.discard(key)
+            else: self._hidden_groups.add(key)
 
     def _apply_category(self, group):
         visible = group not in self._hidden_groups
@@ -723,6 +767,7 @@ class ChartPanel(QFrame):
                            modes=self.mode_selector is not None,
                            allowed_modes=self._allowed_modes if self._restricted_modes else None)
         clone._hidden_groups = set(self._hidden_groups)
+        clone._category_choices = dict(self._category_choices)
         clone.set_comparison_label(self._comparison_label)
         clone.set_mode_labels(self._mode_labels)
         clone.set_company_palette({key: color.name() for key, color in self._company_palette.items()})
@@ -754,8 +799,10 @@ class ChartPanel(QFrame):
             surface.cancel()
 
     def _adopt_hidden(self, clone):
+        self._category_choices = dict(clone._category_choices)
         if set(clone._hidden_groups) != self._hidden_groups:
             self._hidden_groups = set(clone._hidden_groups)
+            self._default_zero_hidden = set(clone._default_zero_hidden)
             self._render()
 
 

@@ -1,22 +1,38 @@
 """Interruptible Fluent surface motion, respecting Windows client animations."""
 import os
 from math import ceil
-from PySide6.QtCore import QObject, QEvent, QEasingCurve, QRect, QVariantAnimation
-from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
-from shiboken6 import isValid
+from PySide6.QtCore import QObject, QEvent, QEasingCurve, QPoint, QPointF, QRect, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QMouseEvent, QPixmapCache
+from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QWidget
+from shiboken6 import getCppPointer, isValid
 
 
 class _RevealEffect(QGraphicsOpacityEffect):
     offset = 0.
     _extent = 0
+    _needs_source_cache = True
+
+    def __init__(self, widget):
+        super().__init__(widget)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Paint, QEvent.Type.Resize):
+            self.invalidate()
+        return False
+
+    def invalidate(self):
+        self._needs_source_cache = True
+
+    def sourceChanged(self, flags):
+        self.invalidate()
+        super().sourceChanged(flags)
 
     def boundingRectFor(self, rect):
         return rect.united(rect.translated(0, self._extent))
 
     def set_offset(self, offset):
         self.offset = offset
-        # Keep padding stable for this effect's lifetime: the translated bottom
-        # must fit, without reallocating its source pixmap on every frame.
         extent = ceil(offset)
         if extent > self._extent:
             self._extent = extent
@@ -24,10 +40,37 @@ class _RevealEffect(QGraphicsOpacityEffect):
         self.update()
 
     def draw(self, painter):
+        # QWidget sourcePixmap always rerenders; drawSource reuses Qt's cache
+        # and falls back to live painting when QWidget.update invalidates it.
+        # A live source Paint event asks us to reseed that cache next frame.
+        # Keep no application-owned frozen image that could conceal updates.
+        if self._needs_source_cache:
+            rect = self.sourceBoundingRect()
+            scale = painter.device().devicePixelRatioF()
+            budget = min(128 * 1024, max(64 * 1024, ceil(rect.width()*rect.height()*scale*scale*8/1024)+8192))
+            if QPixmapCache.cacheLimit() < budget:
+                QPixmapCache.setCacheLimit(budget)
+            self.sourcePixmap(Qt.CoordinateSystem.LogicalCoordinates, QPoint(), self.PixmapPadMode.NoPad)
+            self._needs_source_cache = False
         painter.save()
         painter.translate(0, self.offset)
-        super().draw(painter)
+        painter.setOpacity(painter.opacity() * self.opacity())
+        self.drawSource(painter)
         painter.restore()
+
+
+def entrance_easing():
+    """Microsoft Fluent entrance: cubic-bezier(0, 0, 0, 1)."""
+    curve = QEasingCurve(QEasingCurve.Type.BezierSpline)
+    curve.addCubicBezierSegment(QPointF(0, 0), QPointF(0, 1), QPointF(1, 1))
+    return curve
+
+
+def reposition_easing():
+    """Microsoft Fluent on-screen movement: cubic-bezier(.55, .55, 0, 1)."""
+    curve = QEasingCurve(QEasingCurve.Type.BezierSpline)
+    curve.addCubicBezierSegment(QPointF(.55, .55), QPointF(0, 1), QPointF(1, 1))
+    return curve
 
 
 def animations_enabled():
@@ -50,12 +93,118 @@ class SurfaceMotion(QObject):
         self.running = False
         self.float_in = False
         self.effect = None
+        self._pointer_down = False
+        self._mouse_target = None
+        self._input_offset = QPointF()
+        self._input_button = Qt.MouseButton.NoButton
+        self._pending_touch_id = None
+        self._touch_device = None
         widget.installEventFilter(self)
 
     def eventFilter(self, widget, event):
-        if event.type() == QEvent.Type.Hide and getattr(self, 'running', False):
+        if getattr(QApplication.instance(), '_surface_input_dispatch_depth', 0): return False
+        if getattr(event, '_surface_mouse_relay', False): return False
+        surface = getattr(self, 'widget', None)
+        if (not getattr(self, 'running', False) or surface is None
+                or not isValid(self) or not isValid(surface)):
+            return False
+        kind = event.type()
+        if (isinstance(widget, QWidget) and self._mouse_target is not None
+                and kind in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease)):
+            self._relay_mouse(event)
+            if kind == QEvent.Type.MouseButtonRelease:
+                self._pointer_down = False
+                self._mouse_target = None
+                QTimer.singleShot(0, self, self.finish)
+            return True
+        if kind in (QEvent.Type.ApplicationDeactivate, QEvent.Type.WindowDeactivate):
             self.finish()
+            return False
+        if (isinstance(widget, QWidget) and self._pointer_down
+                and kind in (QEvent.Type.TouchEnd, QEvent.Type.TouchCancel)
+                and event.device() == self._touch_device):
+            self._pointer_down = False
+            QTimer.singleShot(0, self, self.finish)
+        point = None
+        if isinstance(widget, QWidget) and kind in (QEvent.Type.MouseButtonPress, QEvent.Type.TouchBegin):
+            point = (event.globalPosition() if kind == QEvent.Type.MouseButtonPress else
+                     event.points()[0].globalPosition() if event.points() else None)
+        inside = isinstance(widget, QWidget) and (widget is surface or surface.isAncestorOf(widget))
+        if inside or point is not None and self._contains_visual_input(widget, point):
+            if kind in (QEvent.Type.MouseButtonPress, QEvent.Type.TouchBegin):
+                if self.effect is not None and self.effect.offset > 0:
+                    if point is None: return False
+                    self._input_offset = QPointF(0, self.effect.offset)
+                    logical = point - self._input_offset
+                    target = surface.childAt(surface.mapFromGlobal(logical.toPoint())) or surface
+                    # Translate input through the same visual transform; hold
+                    # it still until release so the pressed control cannot move.
+                    self._pointer_down = True
+                    self.animation.pause()
+                    if kind == QEvent.Type.MouseButtonPress:
+                        self._input_button = event.button()
+                        self._mouse_target = target
+                        self._relay_mouse(event)
+                        return True
+                    # Borrowed QEvent Python wrappers can differ between app
+                    # filters. Hand off by the underlying event's identity.
+                    self._pending_touch_id = getCppPointer(event)[0]
+                    self._touch_device = event.device()
+                    QApplication.instance()._surface_touch_transform = (
+                        self._pending_touch_id, target, QPointF(self._input_offset))
+                else:
+                    self.finish()
+            elif kind in (QEvent.Type.MouseButtonRelease, QEvent.Type.TouchEnd, QEvent.Type.TouchCancel) and self._pointer_down:
+                self._pointer_down = False
+                QTimer.singleShot(0, self, self.finish)
+            elif kind in (QEvent.Type.KeyPress, QEvent.Type.Wheel):
+                self.finish()
+            elif kind in (QEvent.Type.Resize, QEvent.Type.LayoutRequest,
+                          QEvent.Type.StyleChange, QEvent.Type.FontChange,
+                          QEvent.Type.DynamicPropertyChange):
+                if self.effect is not None: self.effect.invalidate()
+            elif kind == QEvent.Type.Hide and widget is self.widget:
+                self.finish()
         return False
+
+    def _contains_visual_input(self, receiver, point):
+        surface = self.widget
+        if self.effect is None or QWidget.window(receiver) is not QWidget.window(surface): return False
+        rect = QRectF(surface.rect().translated(surface.mapToGlobal(QPoint()))).translated(0, self.effect.offset)
+        if not rect.contains(point): return False
+        ancestor = surface.parentWidget()
+        while ancestor is not None:
+            if not ancestor.rect().translated(ancestor.mapToGlobal(QPoint())).contains(point.toPoint()): return False
+            ancestor = None if ancestor.isWindow() else ancestor.parentWidget()
+        hit = QApplication.widgetAt(point.toPoint()) or receiver
+        if hit is surface or surface.isAncestorOf(hit) or hit.isAncestorOf(surface): return True
+        ancestors = set()
+        node = hit
+        while node is not None:
+            ancestors.add(node); node = node.parentWidget()
+        branch = surface
+        while branch.parentWidget() is not None and branch.parentWidget() not in ancestors:
+            branch = branch.parentWidget()
+        common = branch.parentWidget()
+        if common is None: return False
+        hit_branch = hit
+        while hit_branch.parentWidget() is not common:
+            hit_branch = hit_branch.parentWidget()
+        siblings = [child for child in common.children() if isinstance(child, QWidget)]
+        return siblings.index(branch) > siblings.index(hit_branch)
+
+    def _relay_mouse(self, event):
+        target = self._mouse_target
+        if target is None or not isValid(target):
+            self.finish()
+            return
+        point = event.globalPosition() - self._input_offset
+        local = QPointF(target.mapFromGlobal(point.toPoint()))
+        scene = QPointF(QWidget.window(target).mapFromGlobal(point.toPoint()))
+        mapped = QMouseEvent(event.type(), local, scene, point, event.button(), event.buttons(),
+                             event.modifiers(), event.pointingDevice())
+        mapped._surface_mouse_relay = True
+        send_surface_input(target, mapped)
 
     def reveal(self, float_in=False):
         widget = self.widget
@@ -82,7 +231,7 @@ class SurfaceMotion(QObject):
         start = effect.opacity() if effect is not None else .78
         # Capture both channels before an interruption. Opacity is not a clock:
         # a mode fade can interrupt a float while it still has a visible offset.
-        start_offset = effect.offset if effect is not None else ((1 - start) * 28 if float_in else 0.)
+        start_offset = effect.offset if effect is not None else (28. if float_in else 0.)
         if self.animation is not None:
             self.animation.stop()
             self.animation.deleteLater()
@@ -94,10 +243,11 @@ class SurfaceMotion(QObject):
             effect = _RevealEffect(widget)
             widget.setGraphicsEffect(effect)
             self.effect = effect
+        effect.invalidate()
         self.float_in = bool(float_in)
         animation = QVariantAnimation(self)
-        animation.setDuration(220 if float_in else 160)
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setDuration(250 if float_in else 167)
+        animation.setEasingCurve(entrance_easing() if float_in else QEasingCurve.Type.Linear)
         animation.setStartValue(0.)
         animation.setEndValue(1.)
         def advance(progress):
@@ -108,6 +258,7 @@ class SurfaceMotion(QObject):
         animation.finished.connect(self.finish)
         self.animation = animation
         self.running = True
+        QApplication.instance().installEventFilter(self)
         # QVariantAnimation.start() need not emit its unchanged initial value.
         # Apply the complete first frame now, before any paint can see offset 0.
         advance(0.)
@@ -123,7 +274,27 @@ class SurfaceMotion(QObject):
         refresh_elevation(self.widget)
 
     def finish(self):
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+            pending = getattr(app, '_surface_touch_transform', None)
+            if pending is not None and pending[0] == self._pending_touch_id:
+                app._surface_touch_transform = None
+        self._pending_touch_id = None
         self.running = False
+        self._pointer_down = False
+        self._touch_device = None
+        target = self._mouse_target
+        self._mouse_target = None
+        if target is not None and isValid(target):
+            # Cancel an interrupted press without activating the control.
+            local = QPointF(-100, -100)
+            cancelled = QMouseEvent(QEvent.Type.MouseButtonRelease, local, local,
+                                   QPointF(target.mapToGlobal(QPoint(-100, -100))),
+                                   self._input_button, Qt.MouseButton.NoButton,
+                                   Qt.KeyboardModifier.NoModifier)
+            cancelled._surface_mouse_relay = True
+            send_surface_input(target, cancelled)
         if self.effect is not None and isValid(self.widget) and self.widget.graphicsEffect() is self.effect:
             self.widget.setGraphicsEffect(None)
         self.effect = None
@@ -131,6 +302,35 @@ class SurfaceMotion(QObject):
             self.animation.stop()
             self.animation.deleteLater()
             self.animation = None
+
+
+def settle_surface_motion(widget):
+    """New query data must become live before an entrance snapshot is discarded."""
+    while widget is not None:
+        for motion in widget.findChildren(SurfaceMotion, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if motion.running: motion.finish()
+        widget = None if widget.isWindow() else widget.parentWidget()
+
+
+def take_surface_touch_transform(event):
+    """Consume the current TouchBegin's visual-coordinate handoff once."""
+    app = QApplication.instance()
+    pending = getattr(app, '_surface_touch_transform', None)
+    if pending is not None and pending[0] == getCppPointer(event)[0]:
+        app._surface_touch_transform = None
+        return pending[1], pending[2]
+    return None, QPointF()
+
+
+def send_surface_input(target, event):
+    """Prevent re-entry when Qt propagates a mapped event to a parent."""
+    app = QApplication.instance()
+    depth = getattr(app, '_surface_input_dispatch_depth', 0)
+    app._surface_input_dispatch_depth = depth + 1
+    try:
+        return QApplication.sendEvent(target, event)
+    finally:
+        app._surface_input_dispatch_depth = depth
 
 
 class CollapseMotion(QObject):

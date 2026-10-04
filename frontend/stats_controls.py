@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, QVariantAnimation, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
-from PySide6.QtWidgets import QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QPushButton, QStyle, QStyleOptionButton
+from PySide6.QtCore import QEvent, QEasingCurve, QVariantAnimation, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QPainter
+from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QPushButton, QStyle, QStyleOptionButton
 from qfluentwidgets import ComboBox, ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
+from qfluentwidgets import PushButton, PrimaryPushButton
 
 import stats_tokens as tokens
 from stats_typography import ui_font
@@ -85,6 +86,39 @@ def _ensure_chinese_font():
             _FONT_ID = QFontDatabase.addApplicationFont(str(path))
 
 
+class _SegmentButton(TogglePushButton):
+    """Text and icons follow the moving fill without opacity effects or polish."""
+    def paintEvent(self, event):
+        QPushButton.paintEvent(self, event)
+        owner = self.parentWidget()
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setFont(self.font())
+        left = 36 if not self.icon().isNull() else tokens.SPACE_MD
+        text_rect = QRectF(self.rect()).adjusted(left, 0, -tokens.SPACE_SM, 0)
+        clip = owner._indicator.translated(-self.x(), -self.y())
+        color = tokens.TEXT_DISABLED if not self.isEnabled() else (
+            tokens.TEXT_SECONDARY if owner._subtle else tokens.TEXT_PRIMARY)
+        painter.setPen(QColor(color))
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.text())
+        if not owner._subtle and self.isEnabled():
+            painter.save(); painter.setClipRect(clip)
+            painter.setPen(QColor(tokens.CARD_BG))
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.text())
+            painter.restore()
+        if not self.icon().isNull():
+            if not self.isEnabled(): painter.setOpacity(.3628)
+            elif self.isPressed: painter.setOpacity(.786)
+            w, h = self.iconSize().width(), self.iconSize().height()
+            x = 12 + max(0, self.width() - self.minimumSizeHint().width()) // 2
+            if self.isRightToLeft(): x = self.width() - w - x
+            icon_rect = QRectF(x, (self.height()-h)/2, w, h)
+            PushButton._drawIcon(self, self._icon, painter, icon_rect)
+            if not owner._subtle and self.isEnabled():
+                painter.setClipRect(clip)
+                PrimaryPushButton._drawIcon(self, self._icon, painter, icon_rect)
+
+
 class FluentSegmentedControl(QFrame):
     """Exclusive Fluent segments, prominent for filters and quiet inside cards."""
 
@@ -102,7 +136,7 @@ class FluentSegmentedControl(QFrame):
         self._buttons: dict[str, TogglePushButton] = {}
         self._current_key = ''
         self._animation = None
-        self._effect_button = None
+        self._indicator = QRectF()
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._layout = QHBoxLayout(self)
@@ -118,7 +152,7 @@ class FluentSegmentedControl(QFrame):
     def addItem(self, key: str, text: str, icon=None) -> None:
         if not key or key in self._buttons:
             raise ValueError('segment key')
-        button = TogglePushButton(text, self, icon)
+        button = _SegmentButton(text, self, icon)
         button.setAccessibleName(text)
         button.setFixedHeight(self._height - 2)
         font = ui_font(tokens.FONT_SIZE_CAPTION if self._compact else tokens.FONT_SIZE_BODY)
@@ -144,11 +178,6 @@ class FluentSegmentedControl(QFrame):
 
     def _restyle_buttons(self) -> None:
         keys = tuple(self._buttons)
-        ordinary_color = tokens.TEXT_SECONDARY if self._subtle else tokens.TEXT_PRIMARY
-        selected_bg = tokens.SEGMENT_QUIET_BG if self._subtle else tokens.ACCENT
-        selected_hover = tokens.SEGMENT_QUIET_HOVER if self._subtle else tokens.ACCENT_HOVER
-        selected_pressed = tokens.BORDER_STRONG if self._subtle else tokens.ACCENT_PRESSED
-        selected_color = tokens.TEXT_SECONDARY if self._subtle else tokens.CARD_BG
         selected_weight = 'font-weight: 600;' if self._subtle else ''
         for index, key in enumerate(keys):
             button = self._buttons[key]
@@ -157,7 +186,7 @@ class FluentSegmentedControl(QFrame):
             divider = '0' if index == len(keys) - 1 else f'1px solid {tokens.BORDER}'
             left_padding = 36 if not button.icon().isNull() else tokens.SPACE_MD
             button.setStyleSheet(
-                f'ToggleButton {{ background: transparent; color: {ordinary_color}; '
+                f'ToggleButton {{ background: transparent; color: transparent; '
                 f'border: 0; border-right: {divider}; '
                 f'border-top-left-radius: {left_radius}px; '
                 f'border-bottom-left-radius: {left_radius}px; '
@@ -166,13 +195,13 @@ class FluentSegmentedControl(QFrame):
                 f'padding-left: {left_padding}px; padding-right: {tokens.SPACE_SM}px; }}'
                 f'ToggleButton:hover:!checked {{ background: {tokens.ACCENT_SOFT}; }}'
                 f'ToggleButton:pressed:!checked {{ background: {tokens.BORDER_STRONG}; }}'
-                f'ToggleButton:checked {{ background: {selected_bg}; color: {selected_color}; '
+                f'ToggleButton:checked {{ background: transparent; color: transparent; '
                 f'{selected_weight} }}'
-                f'ToggleButton:hover:checked {{ background: {selected_hover}; }}'
-                f'ToggleButton:pressed:checked {{ background: {selected_pressed}; }}'
+                f'ToggleButton:hover:checked {{ background: transparent; }}'
+                f'ToggleButton:pressed:checked {{ background: transparent; }}'
                 f'ToggleButton[keyboardFocus="true"] {{ border: '
                 f'{tokens.FOCUS_RING_WIDTH}px solid {tokens.FOCUS_RING}; }}'
-                f'ToggleButton:disabled {{ color: {tokens.TEXT_DISABLED}; '
+                f'ToggleButton:disabled {{ color: transparent; '
                 f'background: {tokens.SURFACE_SUBTLE}; }}')
 
     def _select(self, key: str) -> None:
@@ -185,33 +214,66 @@ class FluentSegmentedControl(QFrame):
         self.currentKeyChanged.emit(key)
 
     def _animate_selection(self, button):
+        start = QRectF(self._indicator)
         self._clear_animation()
-        if not motion_policy.animations_enabled():
+        end = QRectF(button.geometry())
+        if not motion_policy.animations_enabled() or not self.isVisible() or start.isEmpty():
+            self._indicator = end
+            self.update()
             return
-        effect = QGraphicsOpacityEffect(button)
-        button.setGraphicsEffect(effect)
-        effect.setOpacity(0.72)
-        animation = QPropertyAnimation(effect, b'opacity', self)
-        animation.setDuration(160)
-        animation.setStartValue(0.72)
-        animation.setEndValue(1.0)
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation = QVariantAnimation(self)
+        animation.setDuration(167)
+        animation.setStartValue(start)
+        animation.setEndValue(end)
+        animation.setEasingCurve(motion_policy.reposition_easing())
+        def advance(rect):
+            self._indicator = rect
+            self.update()
+            for item in self._buttons.values(): item.update()
+        animation.valueChanged.connect(advance)
         animation.finished.connect(self._clear_animation)
-        self._effect_button = button
         self._animation = animation
         animation.start()
 
     def _clear_animation(self):
         animation = self._animation
-        button = self._effect_button
         self._animation = None
-        self._effect_button = None
         if animation is not None:
             animation.stop()
-        if button is not None and button.graphicsEffect() is not None:
-            button.setGraphicsEffect(None)
         if animation is not None:
             animation.deleteLater()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._indicator.isEmpty(): return
+        button = self._buttons.get(self._current_key)
+        color = tokens.SEGMENT_QUIET_BG if self._subtle else tokens.ACCENT
+        if button is not None and button.isDown():
+            color = tokens.BORDER_STRONG if self._subtle else tokens.ACCENT_PRESSED
+        elif button is not None and button.underMouse():
+            color = tokens.SEGMENT_QUIET_HOVER if self._subtle else tokens.ACCENT_HOVER
+        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(QColor(color))
+        painter.drawRoundedRect(self._indicator, tokens.RADIUS_CONTROL-1, tokens.RADIUS_CONTROL-1)
+
+    def _settle_indicator(self):
+        self._clear_animation()
+        if self._current_key in self._buttons:
+            self._layout.activate()
+            self._indicator = QRectF(self._buttons[self._current_key].geometry())
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._settle_indicator()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_buttons'): self._settle_indicator()
+
+    def hideEvent(self, event):
+        self._settle_indicator()
+        super().hideEvent(event)
 
     def eventFilter(self, watched, event):
         if watched in self._buttons.values() and event.type() in (

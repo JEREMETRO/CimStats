@@ -264,7 +264,7 @@ def empty_layout(layout):
 
 
 _MODE_GROUPS = {'公交': 'bus', '有轨电车': 'tram', '无轨电车': 'trolley',
-                '地铁': 'metro', '水上巴士': 'waterbus', '单轨列车': 'monorail'}
+                '地铁': 'metro', '水上巴士': 'waterbus', '单轨': 'monorail', '单轨列车': 'monorail'}
 _STATISTICS_CATEGORY_STYLE = SimpleNamespace(_category_palette=tokens.DATA_CATEGORY_COLORS)
 _UNSET = object()
 
@@ -800,13 +800,15 @@ class StructureAnalysis(CategoryCard):
         percent_width = max((self.ring.center_caption.fontMetrics().horizontalAdvance(text) + 2
                              for text in percentages), default=0)
         for i, count in enumerate(counts):
+            if numeric(count.value) == 0:
+                continue
             row = ModeRow(count, denominator, i, self.unit, Decimal(1),
                           'passenger-mode' if self.attribute == 'passengers' else 'mode', percent_width=percent_width)
             row.mode_requested.connect(self.show_ranking)
             self.mode_rows.addWidget(row)
             row.show()
             self._mode_widgets.append(row)
-        self.empty_label.setVisible(not counts)
+        self.empty_label.setVisible(not self._mode_widgets)
         empty_layout(self.ranking_rows)
         empty_layout(self.share_rows)
         self._ranking_widgets, self._share_widgets = [], []
@@ -869,7 +871,7 @@ class StructureAnalysis(CategoryCard):
         self.stack.setCurrentWidget(self.ranking)
         source = self._top10 if mode is None and self._top10 is not None else self._lines
         valid = [line for line in source if (mode is None or line.mode == mode)
-                 and numeric(getattr(line, self.attribute)) is not None]
+                 and numeric(getattr(line, self.attribute)) not in (None, 0)]
         lines = sorted(valid, key=lambda line: numeric(getattr(line, self.attribute)), reverse=True)[:10]
         empty_layout(self.ranking_rows)
         self._ranking_widgets = []

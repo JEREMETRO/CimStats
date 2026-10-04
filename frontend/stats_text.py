@@ -38,7 +38,7 @@ GROUPS = {
     '总计': '总计', 'BlueCollar': '蓝领', 'WhiteCollar': '白领',
     'BusinessPeople': '商务人士', 'Pensioner': '退休人士', 'Student': '学生',
     'Tourist': '游客', 'bus': '公交', 'tram': '有轨电车', 'trolley': '无轨电车',
-    'metro': '地铁', 'waterbus': '水上巴士', 'misc': '其他',
+    'metro': '地铁', 'monorail': '单轨', '单轨列车': '单轨', 'waterbus': '水上巴士', 'misc': '其他',
     'single-line': '单线', 'one-zone': '一区', 'two-zones': '二区',
     'three-zones': '三区', 'four-zones': '四区', 'growth': '经济增长',
     'interests': '利率', 'electricity': '电价', 'fuel': '燃油价格',

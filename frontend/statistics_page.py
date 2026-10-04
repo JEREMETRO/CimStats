@@ -332,10 +332,12 @@ class StatisticsPage(QWidget):
             item.setFixedWidth(148)
             item.setProperty('keyboardFocus', False)
             item.installEventFilter(self)
-            item.setStyleSheet('QPushButton { background: transparent; border: 0; padding: 7px 12px 7px 34px; '
-                               'color: #65758B; } QPushButton:hover { background: #E8F2FC; color: #0067C0; } '
+            # Keep the established Pivot underline, without a filled tab or
+            # surrounding frame. Keyboard focus emphasizes the text only.
+            item.setStyleSheet('QPushButton { background: transparent; border: 0; outline: 0; padding: 7px 12px 7px 34px; '
+                               'color: #65758B; } QPushButton:hover { background: transparent; color: #0067C0; } '
                                'QPushButton[isSelected="true"] { color: #0067C0; font-weight: 600; } '
-                               'QPushButton[keyboardFocus="true"] { border: 2px solid #0067C0; border-radius: 6px; }')
+                               'QPushButton[keyboardFocus="true"] { text-decoration: underline; background: transparent; border: 0; outline: 0; }')
         self.tab_bar.currentItemChanged.connect(self._tab_changed)
         self.tab_bar.setCurrentItem('company')
         outer.addWidget(self.tab_bar)

@@ -48,17 +48,19 @@ def test_long_structure_total_uses_existing_total_field_and_other_views_hide_it(
         assert panel.total_label.isHidden()
 
 
-def test_distribution_missing_count_stays_missing_and_zero_stays_visible(page, qt_application):
+def test_distribution_missing_count_stays_missing_and_zero_is_hidden(page, qt_application):
     from latest_info_model import ModeCount
     data = replace(snapshot(), departure_modes=(ModeCount('公交', None), ModeCount('地铁', 0)), total_departures=None)
     page.set_session(session())
     page.set_snapshot(data)
     qt_application.processEvents()
     panel = page.departures
-    missing, zero = panel.visible_mode_rows()
+    rows = panel.visible_mode_rows()
+    assert len(rows) == 1
+    missing = rows[0]
     assert missing.number.isVisible() and missing.number.text() == '— 班'
-    assert zero.number.isVisible() and zero.number.text() == '0 班'
-    assert all(row.share.isVisible() and row.share.text() == '—' for row in (missing, zero))
+    assert missing.share.isVisible() and missing.share.text() == '—'
+    assert panel._counts[1].value == 0
     assert panel.ring.sectors() == []
 
 

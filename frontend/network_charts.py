@@ -71,6 +71,8 @@ class NetworkChartPanel(ChartPanel):
             widget.show()
 
     def set_descriptor(self, descriptor, snapshot):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         if descriptor is not self.descriptor:
             self._cancel_detail()
         prior = self.descriptor
@@ -94,6 +96,8 @@ class NetworkChartPanel(ChartPanel):
             self.surface_motion.reveal()
 
     def clear(self):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self)
         self._cancel_detail()
         self.descriptor = None
         self.snapshot = None
@@ -117,7 +121,6 @@ class NetworkChartPanel(ChartPanel):
     def _render(self):
         if not hasattr(self, 'chart_layout') or not hasattr(self, '_hidden_categories'):
             return
-        self._clear_views()
         self._hidden_groups = self._hidden_categories
         self._combined_totals = False
         self.legend_host.clear()
@@ -144,8 +147,30 @@ class NetworkChartPanel(ChartPanel):
         self.chart_host.setVisible(not reason)
         self.placeholder.setVisible(bool(reason))
         if reason:
+            self._clear_views()
             self.placeholder.setText(reason)
             return
+        values = {}
+        categories = self._category_ids(sources)
+        groups = self._group_ids(sources)
+        period_values = {}
+        for group, company, category, buckets, previous in sources:
+            full = self.descriptor.result
+            timeline = ((full.comparison if previous else full.series).get((company, category), buckets)
+                        if full is not None else buckets)
+            period_values.setdefault((company, category), []).extend(b.value for b in timeline if b.value is not None)
+        for group, company, category, buckets, previous in sources:
+            key = category if len(categories) > 1 or (self.mode == 'bar' and len(groups) == 1) else (
+                company if self.snapshot.options.mode == 'overall' and self.mode == 'line' else group)
+            # Quantity bars use endpoints; visibility defaults inspect the whole
+            # queried period so an endpoint zero cannot hide earlier observations.
+            full = self.descriptor.result
+            timeline = ((full.comparison if previous else full.series).get((company, category), buckets)
+                        if full is not None else buckets)
+            observed = (period_values[(company, category)] if self.snapshot.options.mode == 'period' else
+                        [b.value for b in timeline if b.value is not None])
+            values.setdefault(key, []).extend(observed)
+        self._sync_zero_categories(values)
         builder = {'pie': self._pies, 'bar': self._horizontal_bars, 'trend-bar': self._time_stacks}.get(
             self.mode, self._lines)
         specs = builder(sources)
@@ -350,7 +375,9 @@ class NetworkChartPanel(ChartPanel):
     def _horizontal_bars(self, sources):
         categories = self._category_ids(sources)
         groups = self._group_ids(sources)
-        visible = [category for category in categories if category not in self._hidden_categories]
+        by_group = len(categories) == 1 and len(groups) > 1
+        visible = (categories if any(group not in self._hidden_categories for group in groups) else []) if by_group else [
+            category for category in categories if category not in self._hidden_categories]
         endpoints = {(group, category): self._endpoint_bucket(buckets, previous)
                      for group, _, category, buckets, previous in sources}
         series = []
@@ -359,14 +386,14 @@ class NetworkChartPanel(ChartPanel):
             company = next((part[1] for part in sources if part[0] == group), group)
             colors = [self._bar_color(company, category, categories) for category in visible]
             buckets = [endpoints.get((group, category)) for category in visible]
-            series.append(Series(key=str(group), name=self._group_name(group),
+            series.append(Series(key=group, name=self._group_name(group),
                                  color=colors[0] if colors else self._legend_key_color(group), colors=colors,
                                  values=[bucket.value if bucket is not None else None for bucket in buckets],
                                  notes=[self._status_note(bucket, previous) if bucket is not None else ''
                                         for bucket in buckets],
                                  faded=previous and len(groups) > 1 and self.snapshot.options.mode == 'period'))
-        self._legend_keys = categories if len(categories) > 1 or len(groups) == 1 else []
-        self._group_legend = groups if len(categories) <= 1 and len(groups) > 1 else []
+        self._legend_keys = groups if by_group else categories
+        self._group_legend = []
         return [('', ChartData(kind='hbar', labels=[group_label(category) for category in visible],
                                series=series, unit=self.result.metric.unit))]
 
@@ -408,7 +435,7 @@ class NetworkChartPanel(ChartPanel):
         self._group_legend = (getattr(self, '_group_legend', [])
                               if self.mode == 'bar' and self.snapshot.options.mode != 'period' else [])
         keys = list(dict.fromkeys(self._legend_keys))
-        if len(keys) > 1:
+        if len(keys) > 1 or any(key in self._hidden_categories or key in self._category_choices for key in keys):
             for key in keys:
                 if self.snapshot.options.mode == 'period' and key in ('current', 'comparison'):
                     continue
@@ -454,12 +481,20 @@ class NetworkChartPanel(ChartPanel):
         else:
             self._hidden_categories.add(group)
         self._hidden_groups = self._hidden_categories
+        self._category_choices[group] = group not in self._hidden_categories
+        sources = self._sources()
+        categories = self._category_ids(sources)
+        owners = list(dict.fromkeys(part[1] for part in sources))
+        if len(categories) == len(owners) == 1 and self.snapshot.options.mode != 'period':
+            for alias in (*categories, *owners, *self._group_ids(sources)):
+                self._category_choices[alias] = group not in self._hidden_categories
         self._apply_category(group)
 
     # ---------------------------------------------------------- fullscreen
     def _create_clone(self, dialog):
         clone = NetworkChartPanel(dialog)
         clone._hidden_categories = set(self._hidden_categories)
+        clone._category_choices = dict(self._category_choices)
         clone.set_company_palette({key: value.name() for key, value in self._company_palette.items()})
         clone.set_category_palette(self._category_palette)
         clone.set_descriptor(self.descriptor, self.snapshot)
@@ -480,6 +515,8 @@ class NetworkChartPanel(ChartPanel):
         return super()._open_fullscreen()
 
     def _adopt_hidden(self, clone):
+        self._category_choices = dict(clone._category_choices)
         if set(clone._hidden_categories) != self._hidden_categories:
             self._hidden_categories = set(clone._hidden_categories)
+            self._default_zero_hidden = set(clone._default_zero_hidden)
             self._render()

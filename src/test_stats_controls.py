@@ -35,11 +35,13 @@ def test_segmented_control_uses_exclusive_fluent_buttons_and_emits_once(monkeypa
     assert control.width() < 500  # The group does not stretch into three oversized pills.
     assert all(button.width() >= button.minimumWidth() for button in buttons)
     assert spy.count() == 0
+    control.show()
+    app().processEvents()
     buttons[1].click()
     assert control.currentKey() == 'companies'
     assert [button.isChecked() for button in buttons] == [False, True, False]
     assert spy.count() == 1 and spy.at(0)[0] == 'companies'
-    assert control._animation.duration() == 160
+    assert control._animation.duration() == 167
     control.setCurrentKey('companies')
     assert spy.count() == 1
     control.setCurrentKey('period')
@@ -86,8 +88,13 @@ def test_compact_and_regular_sizes_use_shared_tokens_and_group_border():
                    for button in control.findChildren(TogglePushButton))
         assert control._subtle is compact
         selected_background = tokens.SEGMENT_QUIET_BG if compact else tokens.ACCENT
-        assert all(selected_background in button.styleSheet()
-                   for button in control.findChildren(TogglePushButton))
+        control.show();app().processEvents()
+        from PySide6.QtGui import QColor
+        selected = control._buttons[control.currentKey()]
+        image = control.grab().toImage()
+        scale = image.devicePixelRatio()
+        allowed = (selected_background, tokens.SEGMENT_QUIET_HOVER if compact else tokens.ACCENT_HOVER)
+        assert image.pixelColor(round((selected.x()+5)*scale), round((selected.y()+8)*scale)).name() in {QColor(c).name() for c in allowed}
         control.deleteLater()
 
 

@@ -138,7 +138,8 @@ def test_single_company_overall_keeps_six_readable_tiles_on_one_wide_row(tmp_pat
 
 
 def test_all_card_switches_use_the_same_quiet_selection_in_each_mode(tmp_path, monkeypatch):
-    from stats_tokens import SEGMENT_QUIET_BG
+    from PySide6.QtGui import QColor
+    from stats_tokens import SEGMENT_QUIET_BG, SEGMENT_QUIET_HOVER
 
     for mode in ('overall', 'companies', 'period'):
         view, _ = _view(_fixture(mode), tmp_path, monkeypatch)
@@ -147,8 +148,13 @@ def test_all_card_switches_use_the_same_quiet_selection_in_each_mode(tmp_path, m
         controls += [control for group in view.chart_controls.values() for control in group]
         assert controls
         assert all(control._subtle and control._compact for control in controls)
-        assert all(SEGMENT_QUIET_BG in button.styleSheet()
-                   for control in controls for button in control._buttons.values())
+        view.resize(1500, 900); view.show(); QApplication.instance().processEvents()
+        for control in controls:
+            image = control.grab().toImage(); scale = image.devicePixelRatioF()
+            button = control._buttons[control.currentKey()]
+            assert image.pixelColor(round((button.x()+button.width()/2)*scale), round(4*scale)) in (
+                QColor(SEGMENT_QUIET_BG), QColor(SEGMENT_QUIET_HOVER))
+            assert all(item.graphicsEffect() is None for item in control._buttons.values())
         view.close()
 
 

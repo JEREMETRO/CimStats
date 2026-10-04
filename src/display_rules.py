@@ -68,13 +68,15 @@ def export_precision_workbook(source, target):
 MODE_NAMES = {
     "bus": "公交", "trolley": "无轨电车", "trolleybus": "无轨电车",
     "tram": "有轨电车", "metro": "地铁", "subway": "地铁",
-    "monorail": "单轨列车", "waterbus": "水上巴士", "ferry": "水上巴士",
+    "monorail": "单轨", "waterbus": "水上巴士", "ferry": "水上巴士",
     "ship": "水上巴士", "anyvehicletype": "综合",
 }
 
 
 def display_mode(value):
     raw = str(value or "").strip()
+    if raw == '单轨列车':
+        return '单轨'
     return MODE_NAMES.get(raw.lower(), raw)
 
 

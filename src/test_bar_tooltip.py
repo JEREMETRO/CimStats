@@ -79,7 +79,7 @@ def test_pointer_selects_only_the_painted_stack_and_clears_gaps(size, detailed):
 
 
 @pytest.mark.parametrize('value', [0, -10])
-def test_zero_and_negative_marks_hit_only_their_own_company(value):
+def test_zero_is_unpainted_and_negative_hits_only_its_own_company(value):
     widget = PaintedCanvas(); widget.resize(400, 190)
     widget.set_data(ChartData('bar', ['x'], [
         Series('a', '公交公司 [76561198845688243]', QColor('blue'), [value]),
@@ -92,6 +92,10 @@ def test_zero_and_negative_marks_hit_only_their_own_company(value):
         if value == 0:
             point.setY(min(max(widget._y(0), widget.plot_rect().top() + 3), widget.plot_rect().bottom() - 3))
         deliver(widget, point)
+        if value == 0:
+            assert widget._hover is None and not any(index == 0 and stack == 'a'
+                                                    for index,stack,path in widget._bar_hits)
+            return
         assert [row[1] for row in widget.painted_tip[1]] == ['公交公司 [76561198845688243]']
         assert widget.painted_tip[1][0][2] == str(value)
         widget.set_hidden({'a'}); widget.grab()

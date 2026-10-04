@@ -553,6 +553,8 @@ class LatestInfoPage(QWidget):
         empty_box.addStretch()
         self.alert_layout.addWidget(self.alert_empty)
         self.scroll.setWidget(self.board)
+        self.scroll.viewport().installEventFilter(self)
+        self.chart_host.installEventFilter(self)
         self.surface_motion = SurfaceMotion(self.board)
         self._reflow(1204)
         self.clear_session()
@@ -712,6 +714,8 @@ class LatestInfoPage(QWidget):
             combo.blockSignals(False)
 
     def set_session(self, data: dict):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self.board)
         self._workbook_availability = (False, False)
         self._clear_snapshot()
         self._session_key = str(data.get('save_key') or data.get('session_key') or '')
@@ -758,6 +762,8 @@ class LatestInfoPage(QWidget):
         self.city_save.setText(save or '未提供存档名称')
 
     def set_snapshot(self, snapshot: LatestInfoSnapshot):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self.board)
         if self._session_key is None or snapshot.session_key != self._session_key or (
                 snapshot.company_id, snapshot.mode) != self.scope():
             return
@@ -815,6 +821,8 @@ class LatestInfoPage(QWidget):
         self._reflow(self.width())
 
     def clear_session(self):
+        from stats_motion import settle_surface_motion
+        settle_surface_motion(self.board)
         self._workbook_availability = (False, False)
         self._session_key = None
         self._clear_snapshot()
@@ -946,6 +954,7 @@ class LatestInfoPage(QWidget):
         compact_actions = width < 1000
         signature = (wide, module_columns, highlight_columns, compact_actions, tuple(minimums), city_height, alert_height)
         if signature == self._layout_signature:
+            self._fit_chart_height(wide)
             return
         self._layout_signature = signature
         for button in self.actions.values():
@@ -1023,10 +1032,40 @@ class LatestInfoPage(QWidget):
             self.chart_grid.addWidget(chart, 0 if wide else i, i if wide else 0)
             self.chart_grid.setColumnStretch(i, (384, 400, 400)[i] if wide else (1 if i == 0 else 0))
         self.board.updateGeometry()
+        self._fit_chart_height(wide)
+
+    def _fit_chart_height(self, wide):
+        # Natural text rows stay intact. Let the wide bottom row absorb a small
+        # height shortfall instead of exposing a three-pixel scroll range.
+        charts = (self.passengers, self.departures)
+        natural_heights = [chart._base_height - 232 + max(232, *(widget.minimumSizeHint().height() for widget in
+                           (chart.structure, chart.ranking, chart.line_share))) for chart in charts]
+        minimum_heights = [chart.layout().totalMinimumSize().height() for chart in charts]
+        row_natural = max(304, *natural_heights)
+        row_target = row_natural
+        if wide and all(natural <= chart._base_height for chart, natural in zip(charts, natural_heights)):
+            row_current = self.chart_host.minimumSizeHint().height()
+            other = self.board.minimumSizeHint().height() - row_current
+            row_target = min(row_natural, max(row_natural - 24, *minimum_heights,
+                                             self.scroll.viewport().height() - other))
+        changed = False
+        height = min(304, row_target) if wide else 304
+        if self.trend.height() != height:
+            self.trend.set_compact_height(height); changed = True
+        for chart, natural in zip(charts, natural_heights):
+            target = min(natural, row_target) if wide else natural
+            if chart.height() != target: chart.setFixedHeight(target); changed = True
+        if changed: self.board.updateGeometry()
 
     def eventFilter(self, watched, event):
+        if (hasattr(self, 'trend') and watched is self.chart_host
+                and event.type() == QEvent.Type.LayoutRequest):
+            self._fit_chart_height(self.scroll.viewport().width() >= 1180)
+        if (hasattr(self, 'trend') and watched is self.scroll.viewport()
+                and event.type() == QEvent.Type.Resize):
+            self._reflow(self.scroll.viewport().width())
         if watched is getattr(self, 'alert_host', None) and event.type() == QEvent.Type.LayoutRequest:
-            self._reflow(self.width())
+            self._reflow(self.scroll.viewport().width())
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):

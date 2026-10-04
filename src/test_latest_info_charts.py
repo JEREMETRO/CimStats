@@ -172,7 +172,10 @@ def test_short_mode_names_remain_complete_and_selected_segment_uses_accent(page,
         assert all(label.text() != '›' for label in row.findChildren(type(row.name)))
     button = panel.structure_button
     assert button.isChecked()
-    assert button.grab().toImage().pixelColor(5, 8).name() == QColor(tokens.ACCENT).name()
+    # The fill belongs to the shared segmented surface and moves behind buttons.
+    image = panel.view_selector.grab().toImage()
+    scale = image.devicePixelRatio()
+    assert image.pixelColor(round((button.x()+5)*scale), round((button.y()+8)*scale)).name() == QColor(tokens.ACCENT).name()
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
@@ -490,8 +493,9 @@ def test_tiny_sector_exact_key_and_zero_categories_remain_available(page, qt_app
     page.set_snapshot(data)
     qt_application.processEvents()
     panel = child(page, panel_name)
-    assert len(panel.visible_mode_rows()) == 3
-    assert panel.visible_mode_rows()[-1].number.text().startswith('0 ')
+    assert len(panel.visible_mode_rows()) == 2
+    assert panel._counts[-1].value == 0
+    assert panel.mode_combo.findData('水上巴士') >= 0
     sector = panel.ring.sectors()[-1]
     angle = radians((sector[0] + sector[1]) / 2 - 90)
     center, radius = panel.ring.geometry_for_hit()

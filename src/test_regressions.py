@@ -26,7 +26,7 @@ def test_route_display(name, expected):
     assert format_line_name(12, name) == expected
 
 
-@pytest.mark.parametrize('mode,expected', [('bus','公交'), ('trolley','无轨电车'), ('tram','有轨电车'), ('waterbus','水上巴士'), ('metro','地铁'), ('monorail','单轨列车'), ('ship','水上巴士')])
+@pytest.mark.parametrize('mode,expected', [('bus','公交'), ('trolley','无轨电车'), ('tram','有轨电车'), ('waterbus','水上巴士'), ('metro','地铁'), ('monorail','单轨'), ('ship','水上巴士')])
 def test_modes(mode, expected):
     assert display_mode(mode) == expected
 

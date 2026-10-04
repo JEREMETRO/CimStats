@@ -20,7 +20,8 @@ COMPANY_NAMES = {
 }
 from display_rules import MODE_NAMES, display_mode, format_line_name, format_garage
 from line_schedule import WEEKDAY_MASK, optional_integer, prepare_schedule, running_day_mask, weekly_vehicle_average
-MODES = ["公交", "单轨列车", "地铁", "无轨电车", "有轨电车", "水上巴士"]
+_CSV_MODES = ["公交", "单轨列车", "地铁", "无轨电车", "有轨电车", "水上巴士"]
+MODES = [display_mode(mode) for mode in _CSV_MODES]
 DAY_GROUPS = ("周一至周四", "周五", "周六", "周日")
 DAY_BITS = (("周一", 2), ("周二", 4), ("周三", 8), ("周四", 16),
             ("周五", 32), ("周六", 64), ("周日", 1))
@@ -414,7 +415,7 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
             "业务价值": round(number(raw.get("业务价值")) / 100, 2),
             "声誉": round(number(raw.get("声誉")) / 10000, 4),
             "车辆总数": integer(raw.get("车辆总数")),
-            "车队": {mode: integer(raw.get(f"车辆总数_{mode}")) for mode in MODES},
+            "车队": {display_mode(mode): integer(raw.get(f"车辆总数_{mode}")) for mode in _CSV_MODES},
             "线路数": len(company_lines), "总客流": sum(x["今日客流"] for x in company_lines),
             "待付运营支出": round(number(raw.get("待付运营支出")) / 100, 2),
             "待付杂项支出": round(number(raw.get("待付杂项支出")) / 100, 2),

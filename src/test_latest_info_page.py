@@ -658,8 +658,9 @@ def test_donut_nonpositive_and_missing_modes_do_not_create_clickable_sectors(pag
     qt_application.sendEvent(ring, event)
     assert child(page, 'departureRankingMode').currentData() == '地铁'
     child(page, 'departureReturn').click()
-    assert child(page, 'mode-row-0').number.text() == '0 班'
-    assert child(page, 'mode-row-1').number.text() == '0 班'
+    assert all(row.number.text() != '0 班' for row in page.departures._mode_widgets)
+    assert page.departures.ring.counts[0].value == 0
+    assert page.departures.ring.counts[1].value == 0
 
 
 @pytest.mark.parametrize('view', ['structure', 'ranking', 'line_share'])
@@ -977,7 +978,7 @@ def visible_ranking_rows(panel, prefix):
 
 
 @pytest.mark.parametrize('invalid', [None, Decimal('NaN'), float('inf')])
-def test_passenger_mode_ranking_omits_invalid_observations_and_keeps_zero(page, qt_application, invalid):
+def test_passenger_mode_ranking_omits_invalid_and_zero_observations(page, qt_application, invalid):
     page.set_session(session())
     page.set_snapshot(risk_ranking_snapshot(invalid))
     panel = child(page, 'passengerRanking')
@@ -985,15 +986,15 @@ def test_passenger_mode_ranking_omits_invalid_observations_and_keeps_zero(page, 
     mode.setCurrentIndex(mode.findData('公交'))
     qt_application.processEvents()
     rows = visible_ranking_rows(panel, 'ranking')
-    assert len(rows) == 2
+    assert len(rows) == 1
     assert rows[0].line.name == '有观测线路' and rows[0].number.text() == '5 人次'
-    assert rows[1].line.name == '真实零值线路' and rows[1].number.text() == '0 人次'
-    assert child(panel, 'rankingNote').text() == '公交 · 2条 · 人次'
+    assert child(panel, 'rankingNote').text() == '公交 · 1条 · 人次'
+    assert any(line.key == 'zero' and line.passengers == 0 for line in panel._lines)
     child(panel, 'rankingReturn').click()
     qt_application.processEvents()
     assert panel.capture_state() == {'view': 'structure', 'mode': None}
     panel.ranking_button.click()
-    assert len(visible_ranking_rows(panel, 'ranking')) == 2
+    assert len(visible_ranking_rows(panel, 'ranking')) == 1
     assert '无有效观测线路' not in label_texts(panel)
 
 
@@ -1005,13 +1006,13 @@ def test_departure_overall_and_mode_ranking_omit_invalid_observations(page, qt_a
     child(panel, 'departureRankingAction').click()
     qt_application.processEvents()
     rows = visible_ranking_rows(panel, 'departure-ranking')
-    assert len(rows) == 2
+    assert len(rows) == 1
     assert rows[0].line.name == '有观测线路' and rows[0].number.text() == '2 班'
-    assert rows[1].line.name == '真实零值线路' and rows[1].number.text() == '0 班'
+    assert any(line.key == 'zero' and line.departures == 0 for line in panel._lines)
     mode = child(panel, 'departureRankingMode')
     mode.setCurrentIndex(mode.findData('公交'))
     qt_application.processEvents()
-    assert len(visible_ranking_rows(panel, 'departure-ranking')) == 2
+    assert len(visible_ranking_rows(panel, 'departure-ranking')) == 1
     assert '无有效观测线路' not in label_texts(panel)
 
 

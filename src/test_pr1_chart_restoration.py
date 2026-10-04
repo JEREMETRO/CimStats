@@ -117,8 +117,8 @@ def test_small_stack_segment_does_not_displace_total(monkeypatch):
 
 
 @pytest.mark.parametrize('values, text, count', [([1000, 1, 1, 1, 1, 1], '1', 5),
-                                                ([0, 0, 0, 0, 0, 0], '0', 7)])
-def test_every_tiny_or_zero_stack_segment_gets_a_label(values, text, count, monkeypatch):
+                                                ([0, 0, 0, 0, 0, 0], '0', 0)])
+def test_tiny_segments_keep_labels_and_all_zero_stacks_have_none(values, text, count, monkeypatch):
     widget = canvas(ChartData('bar', ['01-01'],
                               [line([value], str(i), stack='s') for i, value in enumerate(values)]),
                     width=960, height=300, detailed=True)
@@ -159,7 +159,7 @@ def test_vertical_bars_restore_round_baseline_and_relief():
     widget.close()
 
 
-@pytest.mark.parametrize('values, expected', [([0, 15], {'0', '15'}),
+@pytest.mark.parametrize('values, expected', [([0, 15], {'15'}),
                                              ([10, None], {'10', '—'})])
 def test_stack_labels_distinguish_zero_from_missing(values, expected, monkeypatch):
     widget = canvas(ChartData('bar', ['01-01'], [line([values[0]], 'a', stack='s'),
@@ -174,6 +174,8 @@ def test_stack_labels_distinguish_zero_from_missing(values, expected, monkeypatc
     monkeypatch.setattr(widget, '_paint_value_labels', observe)
     widget.grab()
     assert expected <= {text for text, _ in captured}
+    if 0 in values:
+        assert '0' not in {text for text, _ in captured}
     widget.close()
 
 

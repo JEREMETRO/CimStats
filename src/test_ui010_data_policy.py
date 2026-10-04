@@ -155,7 +155,7 @@ def test_actual_painter_omits_compact_numbers_keeps_detail(monkeypatch, kind, de
         widget.close()
 
 
-def test_pivot_focus_ring_only_follows_keyboard_focus(tmp_path):
+def test_pivot_keyboard_focus_state_only_follows_keyboard_input(tmp_path):
     app = application()
     page = StatisticsPage(QSettings(str(tmp_path / 'focus.ini'), QSettings.Format.IniFormat))
     try:
@@ -172,6 +172,46 @@ def test_pivot_focus_ring_only_follows_keyboard_focus(tmp_path):
         assert item.property('keyboardFocus') is False
     finally:
         page.close()
+
+
+@pytest.mark.parametrize('state', ['default', 'hover', 'pressed', 'selected', 'keyboard', 'disabled'])
+def test_statistics_tabs_never_paint_an_outline(tmp_path, state):
+    from PySide6.QtTest import QTest
+    app = application()
+    page = StatisticsPage(QSettings(str(tmp_path / ('tab-' + state + '.ini')), QSettings.Format.IniFormat))
+    page.resize(960, 680); page.show(); app.processEvents()
+    item = page.tab_bar.items['network']
+    before = item.grab().toImage()
+    sample = (round((item.width() - 15) * before.devicePixelRatio()), round(item.height() / 2 * before.devicePixelRatio()))
+    plain = before.pixelColor(*sample)
+    if state == 'selected': page.tab_bar.setCurrentItem('network')
+    if state in ('hover', 'pressed'): QTest.mouseMove(item, item.rect().center())
+    if state == 'pressed': QTest.mousePress(item, Qt.MouseButton.LeftButton)
+    if state == 'keyboard':
+        app.sendEvent(item, QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+        assert item.property('keyboardFocus') is True
+    if state == 'disabled': item.setEnabled(False)
+    app.processEvents(); QTest.qWait(250)
+    image = item.grab().toImage()
+    scale = image.devicePixelRatio()
+    # A tab may have a fill or the Pivot's bottom selection indicator, but
+    # never a surrounding blue focus/hover/selection frame.
+    edge = [(x, 1) for x in range(5, item.width() - 5)]
+    edge += [(x, y) for x in (1, item.width() - 2) for y in range(5, item.height() - 5)]
+    accent = [(x, y) for x, y in edge if image.pixelColor(round(x * scale), round(y * scale)).name() == '#0067c0']
+    try:
+        assert not accent, (state, accent[:10])
+        assert image.pixelColor(*sample) == plain, (state, 'tab background must stay transparent')
+        if state == 'keyboard':
+            assert item.font().underline(), 'keyboard focus uses text emphasis, not a fill or frame'
+        pivot = page.tab_bar.grab().toImage()
+        point = page.tab_bar.currentIndicatorGeometry().center()
+        color = pivot.pixelColor(round(point.x() * pivot.devicePixelRatio()), round(point.y() * pivot.devicePixelRatio()))
+        from qfluentwidgets import themeColor
+        assert color.name() == themeColor().name(), 'selected Pivot horizontal bar must remain visible'
+    finally:
+        if state == 'pressed': QTest.mouseRelease(item, Qt.MouseButton.LeftButton)
+        page.close(); page.deleteLater(); app.processEvents()
 
 
 @pytest.mark.parametrize('raw,expected', [('', None), (None, None), ('bad', None), ('0', 0), ('12', 12)])

@@ -4,6 +4,8 @@ Accepting TouchBegin prevents Qt from also synthesizing an early mouse press.
 Text editors keep press/drag selection; menus/sliders keep Qt's input path. Mouse, wheel and
 keyboard events are never intercepted. New widgets join on Polish, independent
 of page layout or when a dialog/menu is constructed.
+During a translated entrance, mapped mouse input keeps native controls aligned
+with the visual position; the normal touch path resumes after the gesture.
 """
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ class TouchInputPolicy(QObject):
         self._device = None
         self._chart = self._scroll = self._inspector = None
         self._editing = self._mouse_down = False
+        self._motion_offset = QPointF()
         self._mode = 'idle'
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -79,6 +82,7 @@ class TouchInputPolicy(QObject):
         self._target = self._device = self._chart = self._scroll = self._inspector = None
         self._mode = 'idle'
         self._editing = self._mouse_down = False
+        self._motion_offset = QPointF()
 
     def _target_destroyed(self):
         self._reset()
@@ -108,7 +112,11 @@ class TouchInputPolicy(QObject):
         event = QMouseEvent(kind, local, local, global_point, button, buttons,
                             Qt.KeyboardModifier.NoModifier,
                             Qt.MouseEventSource.MouseEventSynthesizedByApplication)
-        QApplication.sendEvent(target, event)
+        if not self._motion_offset.isNull():
+            from stats_motion import send_surface_input
+            send_surface_input(target, event)
+        else:
+            QApplication.sendEvent(target, event)
 
     def _inspect(self, point):
         self._mouse(QEvent.Type.MouseMove, point)
@@ -177,7 +185,10 @@ class TouchInputPolicy(QObject):
             points = event.points()
             if not points:
                 return False
-            point = points[0].globalPosition()
+            from stats_motion import take_surface_touch_transform
+            motion_target, motion_offset = take_surface_touch_transform(event)
+            if _alive(motion_target): watched = motion_target
+            point = points[0].globalPosition() - motion_offset
             # Check the hit widget as well as receiver: ignored native touches
             # can propagate to a passive parent before Qt synthesizes its mouse.
             hit = QApplication.widgetAt(point.toPoint())
@@ -185,13 +196,15 @@ class TouchInputPolicy(QObject):
                    for parent in _ancestors(watched)):
                 return False
             editing = _editor(hit or watched) is not None
-            if not editing and (_native(watched) or _native(hit)):
+            native = _native(watched) or _native(hit)
+            if not editing and native and motion_target is None:
                 return False
             if self._mode != 'idle':
                 self._reset()
             self._target, self._device = watched, event.device()
             watched.destroyed.connect(self._target_destroyed)
-            self._editing = editing
+            self._motion_offset = QPointF(motion_offset)
+            self._editing = editing or bool(native and motion_target is not None)
             self._start = self._last = QPointF(point)
             self._scroll_remainder = QPointF()
             self._point_id = points[0].id()
@@ -217,7 +230,7 @@ class TouchInputPolicy(QObject):
             if len(points) != 1 or points[0].id() != self._point_id or not _alive(self._target):
                 self._cancel_pending()
             elif self._mode not in ('cancelled', 'held'):
-                point = QPointF(points[0].globalPosition())
+                point = QPointF(points[0].globalPosition()) - self._motion_offset
                 distance = point - self._start
                 if self._mode == 'pending' and distance.manhattanLength() >= QApplication.startDragDistance():
                     self._timer.stop()

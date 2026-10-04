@@ -46,7 +46,7 @@ def test_012_motion_float_finishes_without_position_jump(surface):
         offsets.append(surface.graphicsEffect().offset)
     assert all(a >= b >= 0 for a, b in zip(offsets, offsets[1:]))
     assert len(set(offsets)) > 5
-    motion.animation.setCurrentTime(220)
+    motion.animation.setCurrentTime(250)
     assert surface.graphicsEffect() is None
 
 
