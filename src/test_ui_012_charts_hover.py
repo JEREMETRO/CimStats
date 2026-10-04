@@ -1,4 +1,4 @@
-"""0.1.2 chart owner regressions: the two home distributions and hover edges."""
+"""0.1.2 chart owner regressions: all home structure views and hover edges."""
 from dataclasses import replace
 from decimal import Decimal
 from math import ceil
@@ -10,7 +10,7 @@ from test_latest_info_page import page, snapshot, session
 
 
 @pytest.mark.parametrize('attribute', ['passengers', 'departures'])
-def test_home_structure_draws_count_and_existing_share_only_in_distribution(page, qt_application, attribute):
+def test_home_structure_draws_values_in_all_three_views(page, qt_application, attribute):
     page.set_session(session())
     page.set_snapshot(snapshot())
     panel = getattr(page, attribute)
@@ -20,17 +20,21 @@ def test_home_structure_draws_count_and_existing_share_only_in_distribution(page
     assert all(row.number.isVisible() and row.share.isVisible() for row in rows)
     assert rows[0].share.text() == ('20.3%' if attribute == 'passengers' else '21.9%')
     panel.show_ranking()
-    assert all(row.number.isHidden() for row in panel.visible_ranking_rows())
+    assert all(row.number.isVisible() for row in panel.visible_ranking_rows())
+    assert panel.visible_ranking_rows()[0].number.text() == ('100 人次' if attribute == 'passengers' else '20 班')
     panel.show_line_share()
-    assert panel.share_ring.center_total.isHidden()
-    assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_share_rows())
+    assert panel.share_ring.center_total.isVisible()
+    assert all(row.number.isVisible() and row.share.isVisible() for row in panel.visible_share_rows())
+    first = panel.visible_share_rows()[0]
+    assert first.number.text() == ('100 人次' if attribute == 'passengers' else '20 班')
+    assert first.share.text() == ('10.4%' if attribute == 'passengers' else '12.9%')
     panel.show_structure()
     qt_application.processEvents()
     assert panel.ring.center_total.isVisible()
     assert all(row.number.isVisible() and row.share.isVisible() for row in panel.visible_mode_rows())
 
 
-def test_long_structure_total_uses_existing_total_field_and_other_views_hide_it(page, qt_application):
+def test_long_ring_totals_use_existing_total_field_and_ranking_hides_it(page, qt_application):
     from latest_info_model import ModeCount
     from latest_info_charts import shown
     data = snapshot()
@@ -43,9 +47,11 @@ def test_long_structure_total_uses_existing_total_field_and_other_views_hide_it(
     panel = page.passengers
     assert panel.ring.center_total.isHidden()
     assert panel.total_label.isVisible() and panel.total_label.text() == f'{shown(value)} 人次'
-    for view in ('ranking', 'line_share'):
-        getattr(panel, 'show_' + view)()
-        assert panel.total_label.isHidden()
+    panel.show_ranking()
+    assert panel.total_label.isHidden()
+    panel.show_line_share()
+    assert panel.share_ring.center_total.isHidden()
+    assert panel.total_label.isVisible() and panel.total_label.text() == f'{shown(value)} 人次'
 
 
 def test_distribution_missing_count_stays_missing_and_zero_is_hidden(page, qt_application):

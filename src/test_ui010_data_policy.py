@@ -262,7 +262,7 @@ def test_demand_export_matches_selected_snapshot_and_context(tmp_path):
     assert not row[16] and not value(network.summaries[0], 2).context
 
 
-def test_home_structure_numeric_exception_preserves_other_views_and_drillthrough(monkeypatch):
+def test_home_structure_numeric_exception_paints_all_views_and_preserves_drillthrough(monkeypatch):
     from latest_info_page import LatestInfoPage
     from test_latest_info_page import session as home_session, snapshot
     app = application()
@@ -291,18 +291,22 @@ def test_home_structure_numeric_exception_preserves_other_views_and_drillthrough
             panel.grab()
             panel.show_ranking()
             rows = panel.visible_ranking_rows()
-            assert rows and all(row.number.isHidden() for row in rows)
+            assert rows and all(row.number.isVisible() for row in rows)
             assert all(row.track.toolTip() == '' and row.number.text() in row.accessibleName() for row in rows)
             painted.clear()
             panel.grab()
-            assert all(row.number.text() not in painted for row in rows)
+            assert all(row.number.text() in painted for row in rows)
             emissions = []
             panel.line_requested.connect(emissions.append)
             rows[0].action.click()
             assert emissions == [rows[0].line.key]
             panel.show_line_share()
-            assert panel.share_ring.center_total.isHidden() and panel.total_label.isHidden()
-            assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_share_rows())
+            assert panel.share_ring.center_total.isVisible() != panel.total_label.isVisible()
+            share_rows = panel.visible_share_rows()
+            assert all(row.number.isVisible() and row.share.isVisible() for row in share_rows)
+            painted.clear()
+            panel.grab()
+            assert all(row.number.text() in painted and row.share.text() in painted for row in share_rows)
     finally:
         page.close()
 

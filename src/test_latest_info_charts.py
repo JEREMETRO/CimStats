@@ -427,7 +427,7 @@ def test_ranking_has_ten_real_tracks_visible_mode_identity_exact_value_and_key(p
     assert len(rows) == 10 and all(inside(panel, row) for row in rows)
     assert all(row.track.width() >= 80 for row in rows)
     assert all(row.line.mode in row.name.text() for row in rows)
-    assert all(row.number.isHidden() and row.number.text() in row.accessibleName() for row in rows)
+    assert all(row.number.isVisible() and row.number.text() in row.accessibleName() for row in rows)
     assert all(row.track.toolTip() == '' for row in rows)  # Final approved cancellation stays in force.
     emitted = []
     page.line_requested.connect(emitted.append)
@@ -589,7 +589,7 @@ def test_other_line_count_is_real_and_zero_remainder_has_no_sector():
 
 
 @pytest.mark.parametrize('panel_name', ['passengerRanking', 'departureStructure'])
-def test_six_digit_total_stays_in_data_without_line_share_ring_label(page, qt_application, panel_name):
+def test_six_digit_line_share_total_is_visible_without_duplicate(page, qt_application, panel_name):
     from latest_info_model import ModeCount
     data = snapshot()
     lines = tuple(replace(line, passengers=82572 if i == 0 else 82568,
@@ -604,10 +604,10 @@ def test_six_digit_total_stays_in_data_without_line_share_ring_label(page, qt_ap
     panel = child(page, panel_name)
     panel.share_button.click()
     qt_application.processEvents()
-    assert panel.share_ring.center_total.isHidden()
+    assert panel.share_ring.center_total.isVisible() != panel.total_label.isVisible()
     value = panel.share_ring.center_total
     assert value.text() == ('825,684' if panel_name == 'passengerRanking' else '155,000')
-    assert panel.total_label.isHidden()
+    assert panel.share_ring.center_total.isVisible() == panel.share_ring.total_fits()
 
 
 def test_million_total_and_actual_other_count_fit_in_line_share(page, qt_application):
@@ -622,18 +622,19 @@ def test_million_total_and_actual_other_count_fit_in_line_share(page, qt_applica
     page.passengers.share_button.click()
     qt_application.processEvents()
     panel = page.passengers
-    assert panel.share_ring.center_total.isHidden()
+    assert panel.share_ring.center_total.isVisible() != panel.total_label.isVisible()
     assert panel.share_ring.center_total.text() == '1,376,429'
     other = panel.visible_share_rows()[-1]
     assert other.entry.name == '其他线路（63条）' and other.entry.value == 954736
-    assert inside(panel, other) and other.number.isHidden() and other.share.isHidden()
+    assert inside(panel, other) and other.number.isVisible() and other.share.isVisible()
+    assert other.number.text() == '954,736 人次' and other.share.text() == '69.3%'
     assert other.name.text() == other.entry.name and other.name.isVisible()
     assert other.name.contentsRect().width() >= other.name.fontMetrics().horizontalAdvance('其他线路')
     assert other.toolTip() == '' and other.number.text() in other.accessibleName()
 
 
 @pytest.mark.parametrize('value', [Decimal('123456789012'), Decimal('123456789012345678901234567')])
-def test_long_finite_totals_are_visible_only_in_structure_without_duplicate_total(page, qt_application, value):
+def test_long_finite_ring_totals_are_visible_without_duplicate_total(page, qt_application, value):
     from latest_info_model import ModeCount
     from latest_info_charts import shown
     data = snapshot()
@@ -646,6 +647,8 @@ def test_long_finite_totals_are_visible_only_in_structure_without_duplicate_tota
         getattr(panel, 'show_' + view)()
         qt_application.processEvents()
         if view == 'ranking':
+            assert panel.total_label.isHidden()
+            assert all(row.number.isVisible() for row in panel.visible_ranking_rows())
             continue
         ring = panel.ring if view == 'structure' else panel.share_ring
         assert ring.total == value and ring.center_total.text() == shown(value)
@@ -653,5 +656,5 @@ def test_long_finite_totals_are_visible_only_in_structure_without_duplicate_tota
             assert ring.center_total.isVisible() != panel.total_label.isVisible()
             assert all(row.number.isVisible() and row.share.isVisible() for row in panel.visible_mode_rows())
         else:
-            assert ring.center_total.isHidden() and panel.total_label.isHidden()
-            assert all(row.number.isHidden() and row.share.isHidden() for row in panel.visible_share_rows())
+            assert ring.center_total.isVisible() != panel.total_label.isVisible()
+            assert all(row.number.isVisible() and row.share.isVisible() for row in panel.visible_share_rows())

@@ -570,7 +570,7 @@ def test_top10_and_all_modes_are_visible(page, qt_application):
     assert '21.9%' in label_texts(child(modes, 'mode-row-0'))
 
 
-def test_ranking_hides_numbers_while_structure_shows_counts_and_shares_without_repeated_tips(page, qt_application):
+def test_ranking_and_structure_show_counts_and_shares_without_repeated_tips(page, qt_application):
     from PySide6.QtWidgets import QLabel
     data = snapshot()
     page.set_session(session())
@@ -580,7 +580,7 @@ def test_ranking_hides_numbers_while_structure_shows_counts_and_shares_without_r
     for i, line in enumerate(data.passenger_top10):
         row = child(page, f'ranking-row-{i}')
         value = row.number
-        assert value.isHidden() and value.text() in row.accessibleName()
+        assert value.isVisible() and value.text() in row.accessibleName()
         assert row.track.toolTip() == ''
     for i, entry in enumerate(data.departure_modes):
         row = child(page, f'mode-row-{i}')

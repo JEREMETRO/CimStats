@@ -389,7 +389,6 @@ class RankingRow(QFrame):
         row.addWidget(self.track, 1)
         row.addWidget(self.number)
         row.addWidget(self.action)
-        self.number.hide()
         self.track.setToolTip(self.number.toolTip())
         self.setAccessibleName(f'第{position + 1}名 {line.mode} {display_name} {shown(value)} {unit}')
 
@@ -615,8 +614,6 @@ class ShareRow(QFrame):
         self.share.setFixedWidth(self.share.fontMetrics().horizontalAdvance(self.share.text()) + 2)
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.share)
-        self.number.hide()
-        self.share.hide()
         self.setToolTip('')
         self.setAccessibleName(f'{entry.mode} {entry.name} {shown(entry.value)} {unit} {self.share.text()}')
 
@@ -702,7 +699,7 @@ class StructureAnalysis(CategoryCard):
         structure_box.setSpacing(8)
         lower = QHBoxLayout()
         lower.setSpacing(8)
-        # The two home distributions are the sole compact numeric exception.
+        # All three views in the two home structure cards retain their values.
         self.ring = ModeRing(self, show_values=True)
         self.ring.setFixedSize(156, 156)
         lower.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -731,7 +728,7 @@ class StructureAnalysis(CategoryCard):
         share_box = QHBoxLayout(self.line_share)
         share_box.setContentsMargins(0, 0, 0, 0)
         share_box.setSpacing(8)
-        self.share_ring = ModeRing(self)
+        self.share_ring = ModeRing(self, show_values=True)
         self.share_ring.setFixedSize(156, 156)
         self.share_ring.setAccessibleName('当前范围线路 Top10 与其他占比')
         share_box.addWidget(self.share_ring, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -829,7 +826,7 @@ class StructureAnalysis(CategoryCard):
         self.view_selector.blockSignals(False)
         ring = self.ring if structure else self.share_ring
         self.total_label.setText(f'{shown(ring.total)} {self.unit}')
-        self.total_label.setVisible(structure and not self.ring.total_fits())
+        self.total_label.setVisible(view != 'ranking' and not ring.total_fits())
         content_height = max(232, *(widget.minimumSizeHint().height() for widget in
                                    (self.structure, self.ranking, self.line_share)))
         base_height = self._base_height - 232 + content_height
