@@ -284,6 +284,8 @@ def _exercise(win, desktop_app, args):
             source = page.city_dashboard.panels['population']
         else:
             dashboard = page.company_dashboard if family == 'company' else page.network_dashboard
+            wait_until(lambda: any(p.result is not None and p.chart_views
+                                   for p in dashboard.findChildren(ChartPanel)))
             source = next(p for p in dashboard.findChildren(ChartPanel) if p.result is not None and p.chart_views)
         ancestor = source.parentWidget()
         while ancestor is not None:
@@ -338,14 +340,100 @@ def _exercise(win, desktop_app, args):
         shares = panel.visible_share_rows()
         assert shares and all(row.number.isVisible() and row.share.isVisible() for row in shares)
         assert panel.share_ring.center_total.isVisible() != panel.total_label.isVisible()
+        assert all(row.name.width() <= 112 for row in shares)
+        assert len({row.number.x() for row in shares}) == len({row.share.x() for row in shares}) == 1
+        ring_left = panel.share_ring.mapTo(panel.line_share, QPoint(0, 0)).x()
+        data_right = max(row.share.mapTo(panel.line_share, row.share.rect().bottomRight()).x() for row in shares)
+        assert abs(ring_left - (panel.line_share.width() - 1 - data_right)) <= 8
         for row in shares:
+            assert row.number.x() - row.name.geometry().right() - 1 >= 4
+            assert row.share.x() - row.number.geometry().right() - 1 == 8
             assert all(field.contentsRect().width() >= field.fontMetrics().horizontalAdvance(field.text())
                        for field in (row.number, row.share))
             assert panel.rect().contains(row.mapTo(panel, row.rect().bottomRight()))
         home_structure[name]['line_share'] = [{'key':row.entry.key, 'count':row.number.text(), 'share':row.share.text()}
                                               for row in shares]
         home_structure[name]['line_share_total'] = panel.share_ring.center_total.text()
+        home_structure[name]['line_share_columns'] = {'name_width':shares[0].name.width(),
+            'count_x':shares[0].number.x(), 'share_x':shares[0].share.x(), 'row_width':shares[0].width()}
         capture('home-line-share-' + name, panel)
+        panel.show_structure()
+    # Compare both real model-backed cards at identical narrow/medium/wide
+    # widths, rather than inferring the narrow case from a wide screenshot.
+    from PySide6.QtWidgets import QWidget, QVBoxLayout
+    from latest_info_charts import PassengerRanking, DepartureStructure
+    home_structure_responsive = []
+    snapshot = win.latest_info_controller.snapshot
+    for width in (400, 520, 864):
+        host = QWidget(win, Qt.WindowType.Tool)
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        passengers, departures = PassengerRanking(), DepartureStructure()
+        passengers.set_data(snapshot.lines, snapshot.passenger_top10, snapshot.passenger_modes)
+        departures.set_data(snapshot.lines, snapshot.departure_modes, snapshot.total_departures)
+        for panel in (passengers, departures):
+            panel.show_line_share()
+            layout.addWidget(panel)
+        host.setFixedSize(width, passengers.height() + departures.height() + 12)
+        host.show()
+        settle()
+        geometries = []
+        for panel in (passengers, departures):
+            rows = panel.visible_share_rows()
+            assert rows and all(row.number.isVisible() and row.share.isVisible() for row in rows)
+            assert all(field.width() >= field.fontMetrics().horizontalAdvance(field.text())
+                       for row in rows for field in (row.number, row.share))
+            left = panel.share_ring.mapTo(panel.line_share, QPoint(0, 0)).x()
+            right = panel.line_share.width() - 1 - max(
+                row.share.mapTo(panel.line_share, row.share.rect().bottomRight()).x() for row in rows)
+            assert abs(left - right) <= 8
+            dot_left = rows[0].dot.mapTo(panel.line_share, QPoint(0, 0)).x()
+            ring_right = panel.share_ring.mapTo(panel.line_share, panel.share_ring.rect().bottomRight()).x()
+            ring_gap = dot_left - ring_right - 1
+            name_gap = rows[0].number.x() - rows[0].name.geometry().right() - 1
+            if width >= 520:
+                assert max(left, right, ring_gap, name_gap) - min(left, right, ring_gap, name_gap) <= 2
+            else:
+                assert ring_gap >= 16 and name_gap >= 4
+            assert all(row.share.x() - row.number.geometry().right() - 1 == 8 for row in rows)
+            assert len({row.number.x() for row in rows}) == len({row.share.x() for row in rows}) == 1
+            assert all(panel.rect().contains(row.mapTo(panel, row.rect().bottomRight())) for row in rows)
+            geometries.append({'left':left, 'right':right, 'ring_gap':ring_gap, 'name_gap':name_gap,
+                               'name_width':rows[0].name.width(), 'count_width':rows[0].number.width(),
+                               'share_width':rows[0].share.width()})
+        assert geometries[0] == geometries[1]
+        capture('home-line-share-responsive-' + str(width), host)
+        home_structure_responsive.append({'width':width, 'passengers':geometries[0], 'departures':geometries[1]})
+        host.close()
+        host.deleteLater()
+        settle()
+    # Use actual native button contents and painted arrow bounds, after theme
+    # polish. Check all captions in both real home cards at the current DPR.
+    from PySide6.QtCore import QRectF
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+    for name, panel in (('passengers', win.latest_info_page.passengers),
+                        ('departures', win.latest_info_page.departures)):
+        panel.show_ranking()
+        win.latest_info_page.scroll.ensureWidgetVisible(panel)
+        menu = panel.mode_combo
+        for index in range(menu.count()):
+            menu.setCurrentIndex(index)
+            settle()
+            arrows = []
+            original = menu._drawDropDownIcon
+            menu._drawDropDownIcon = lambda painter, rect: (arrows.append(QRectF(rect)), original(painter, rect))[-1]
+            try:
+                menu.grab()
+            finally:
+                menu._drawDropDownIcon = original
+            option = QStyleOptionButton()
+            menu.initStyleOption(option)
+            contents = menu.style().subElementRect(QStyle.SubElement.SE_PushButtonContents, option, menu)
+            ink = menu.fontMetrics().boundingRect(contents, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextSingleLine, menu.text())
+            assert arrows and ink.right() + 4 < arrows[-1].left()
+            assert contents.contains(ink)
+            capture('home-mode-menu-' + name + '-' + str(index), panel, delay=0, activate=False)
         panel.show_structure()
     for index, text in enumerate(('查看完整名称', '长标签验证：真实公司的完整名称    前一完整日' * 4, '短说明')):
         QToolTip.showText(win.mapToGlobal(QPoint(260, 180)), text, win)
@@ -427,4 +515,5 @@ def _exercise(win, desktop_app, args):
               'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True,
               'comparison_bars':bar_evidence, 'exported_workbooks':workbooks, 'cases':records}
     report['home_structure'] = home_structure
+    report['home_structure_responsive'] = home_structure_responsive
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QEvent, Qt, QPointF, QRect, QRectF, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QPainter
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolTip,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QSizePolicy, QSpacerItem, QToolTip,
                               QStackedWidget, QVBoxLayout, QWidget)
 from qfluentwidgets import DropDownPushButton, FluentIcon, RoundMenu, TransparentPushButton, TransparentToolButton
 from display_rules import display_mode, format_number
 from latest_info_model import ModeCount
 from stats_charts import ChartPanel
-from stats_controls import FluentSegmentedControl
+from stats_controls import FluentSegmentedControl, button_text_size
 from stats_elevation import attach_card_elevation
 from stats_motion import SurfaceMotion, attach_surface_reveal
 from stats_typography import emphasis_font, ui_font
@@ -98,9 +98,11 @@ class FullLabel(QLabel):
         painter = QPainter(self)
         painter.setFont(self.font())
         painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(self.contentsRect(), self.alignment(), self._display_text())
+
+    def _display_text(self):
         mode = Qt.TextElideMode.ElideMiddle if self.property('elideMode') == 'middle' else Qt.TextElideMode.ElideRight
-        painter.drawText(self.contentsRect(), self.alignment(), self.fontMetrics().elidedText(
-            self.text(), mode, self.contentsRect().width()))
+        return self.fontMetrics().elidedText(self.text(), mode, self.contentsRect().width())
 
 
 def label(text='', name='', size=12, bold=False, parent=None):
@@ -172,7 +174,7 @@ class ModeMenu(DropDownPushButton):
         self.range_menu = RoundMenu(parent=self)
         self.range_menu.view.installEventFilter(self)
         self.setMenu(self.range_menu)
-        self.setStyleSheet('DropDownPushButton {border:0;background:transparent;padding:0 14px 0 2px;}')
+        self.setStyleSheet('DropDownPushButton {border:0;background:transparent;padding:0 30px 0 2px;}')
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
@@ -234,7 +236,7 @@ class ModeMenu(DropDownPushButton):
         self._index = index
         text = self._items[index][0]
         self.setText(text)
-        self.setFixedWidth(self.fontMetrics().horizontalAdvance(text) + 24)
+        self.setFixedWidth(button_text_size(self).width())
         self.setToolTip('')
         self.setAccessibleName('制式：' + text)
         for position, item in enumerate(self._items):
@@ -576,6 +578,45 @@ class ModeRow(QFrame):
             super().keyPressEvent(event)
 
 
+class ShareNameLabel(FullLabel):
+    """Prefer a shared compact column; let only the name shrink in narrow cards."""
+    def __init__(self, text, parent=None, *, route_name=''):
+        self.column_width = 112
+        self.route_name = route_name
+        super().__init__(text, parent=parent)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.setMaximumWidth(self.column_width)
+
+    def set_column_width(self, width):
+        self.column_width = width
+        self.setMaximumWidth(width)
+        self.updateGeometry()
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setWidth(self.column_width)
+        return hint
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
+
+    def paintEvent(self, event):
+        if self.wordWrap():
+            QLabel.paintEvent(self, event)
+        else:
+            super().paintEvent(event)
+
+    def _display_text(self):
+        metrics, width = self.fontMetrics(), self.contentsRect().width()
+        route_width = metrics.horizontalAdvance(self.route_name)
+        if self.route_name and route_width <= width < metrics.horizontalAdvance(self.text()):
+            prefix = self.text()[:-len(self.route_name)]
+            return metrics.elidedText(prefix, Qt.TextElideMode.ElideRight, width - route_width) + self.route_name
+        return super()._display_text()
+
+
 class ShareRow(QFrame):
     line_requested = Signal(str)
 
@@ -588,34 +629,51 @@ class ShareRow(QFrame):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus if entry.line_key else Qt.FocusPolicy.NoFocus)
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
+        row.setSpacing(0)
         self.dot = QLabel(self)
         self.dot.setFixedSize(6, 6)
         self.dot.setProperty('legendColor', color.name())
         self.dot.setStyleSheet(f'background:{color.name()};border-radius:3px;')
         row.addWidget(self.dot)
+        row.addSpacing(4)
         display_name = short_line_name(entry.name) if entry.line_key else entry.name
-        self.name = label(f'{entry.mode} {display_name}'.strip(), parent=self) if entry.line_key else QLabel(display_name, self)
+        self.name = ShareNameLabel(f'{entry.mode} {display_name}'.strip(), self,
+                                   route_name=display_name if entry.line_key else '')
         if not entry.line_key:
             self.name.setFont(font())
             self.name.setWordWrap(True)
             self.name.setMinimumWidth(0)
-            self.name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            self.name.setToolTip('')
             self.name.setStyleSheet(f'color:{tokens.TEXT_PRIMARY};background:transparent;')
         if entry.line_key:
+            self.name.setProperty('elideMode', 'middle')
             self.name.set_full_text(f'{entry.mode} {entry.name}'.strip())
-        row.addWidget(self.name, 1)
+        row.addWidget(self.name)
+        row.addSpacing(4)
+        self.identity_extra = QSpacerItem(0, 0, QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        row.addItem(self.identity_extra)
         known = '（已知）' if not entry.complete and entry.value is not None else ''
         self.number = label(f'{shown(entry.value)}{known} {unit}', parent=self)
         self.number.setFixedWidth(max(64, self.number.fontMetrics().horizontalAdvance(self.number.text()) + 2))
         self.number.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.number)
+        row.addSpacing(8)
         self.share = label(f'{format_number(entry.value / total * 100, 1, fixed=True)}%' if entry.value is not None and total and total > 0 else '—', parent=self)
         self.share.setFixedWidth(self.share.fontMetrics().horizontalAdvance(self.share.text()) + 2)
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.share)
         self.setToolTip('')
         self.setAccessibleName(f'{entry.mode} {entry.name} {shown(entry.value)} {unit} {self.share.text()}')
+
+    def set_identity_gap(self, gap):
+        extra = max(0, gap - 4)
+        if self.identity_extra.sizeHint().width() != extra:
+            # Preferred spacers have zero minimum: a wide card can shrink again.
+            self.identity_extra.changeSize(extra, 0, QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+            self.layout().invalidate()
+            self.updateGeometry()
+            return True
+        return False
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.entry.line_key:
@@ -725,17 +783,27 @@ class StructureAnalysis(CategoryCard):
         self.rows = self.ranking_rows
         self.stack.addWidget(self.ranking)
         self.line_share = QWidget()
+        self.line_share.installEventFilter(self)
         share_box = QHBoxLayout(self.line_share)
+        self.share_box = share_box
         share_box.setContentsMargins(0, 0, 0, 0)
-        share_box.setSpacing(8)
+        share_box.setSpacing(0)
+        share_box.addStretch(1)
         self.share_ring = ModeRing(self, show_values=True)
         self.share_ring.setFixedSize(156, 156)
         self.share_ring.setAccessibleName('当前范围线路 Top10 与其他占比')
         share_box.addWidget(self.share_ring, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.share_rows = QVBoxLayout()
+        share_box.addSpacing(16)
+        self._ring_extra = QSpacerItem(0, 0, QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        share_box.addItem(self._ring_extra)
+        self.share_legend = QWidget(self.line_share)
+        self.share_legend.setMinimumWidth(0)
+        self.share_legend.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self.share_rows = QVBoxLayout(self.share_legend)
         self.share_rows.setContentsMargins(0, 0, 0, 0)
         self.share_rows.setSpacing(0)
-        share_box.addLayout(self.share_rows, 1)
+        share_box.addWidget(self.share_legend)
+        share_box.addStretch(1)
         self.stack.addWidget(self.line_share)
         self.status = label('', 'rankingNote' if attribute == 'passengers' else 'departureNote')
         self.status.setFixedHeight(16)
@@ -750,6 +818,30 @@ class StructureAnalysis(CategoryCard):
         self.mode_combo.currentIndexChanged.connect(self._mode_selected)
         self._base_height = 16 + max(self.mode_combo.height(), self.title.fontMetrics().height()) + 28 + 8 + 232
         self.clear()
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, 'line_share', None) and event.type() == QEvent.Type.Resize:
+            self._update_share_spacing()
+        return super().eventFilter(watched, event)
+
+    def _update_share_spacing(self):
+        rows = getattr(self, '_share_widgets', ())
+        number_width = max((row.number.width() for row in rows), default=90)
+        share_width = max((row.share.width() for row in rows), default=41)
+        # Four semantic gaps share one continuous width budget. Count/percent
+        # stay one data group; only names surrender width when space is scarce.
+        content = self.share_ring.width() + 6 + 4 + 112 + number_width + 8 + share_width
+        gap = max(4, (self.line_share.width() - content) // 4)
+        extra = max(0, gap - 16)
+        changed = self._ring_extra.sizeHint().width() != extra
+        if changed:
+            self._ring_extra.changeSize(extra, 0, QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        for row in rows:
+            changed = row.set_identity_gap(gap) or changed
+        if changed:
+            self.share_rows.invalidate()
+            self.share_legend.updateGeometry()
+            self.share_box.invalidate()
 
     def capture_state(self):
         return {'view': self._view, 'mode': self._mode if self._view != 'structure' else None}
@@ -931,9 +1023,18 @@ class StructureAnalysis(CategoryCard):
             self.share_rows.addWidget(row)
             row.show()
             self._share_widgets.append(row)
+        if self._share_widgets:
+            # One budget for both cards; only genuinely longer values expand it.
+            number_width = max(90, *(row.number.width() for row in self._share_widgets))
+            share_width = max(41, *(row.share.width() for row in self._share_widgets))
+            for row in self._share_widgets:
+                row.name.set_column_width(112)
+                row.number.setFixedWidth(number_width)
+                row.share.setFixedWidth(share_width)
         if not entries:
             self.share_rows.addWidget(label('当前范围暂无有效线路数据'))
         self.share_rows.addStretch()
+        self._update_share_spacing()
         self.share_button.setToolTip('')
         self._header('line_share')
 

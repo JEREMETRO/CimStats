@@ -10,6 +10,127 @@ from test_latest_info_page import page, snapshot, session
 
 
 @pytest.mark.parametrize('attribute', ['passengers', 'departures'])
+@pytest.mark.parametrize('width', [400, 520, 864])
+def test_line_share_keeps_aligned_values_close_to_names_at_both_widths(qt_application, monkeypatch, attribute, width):
+    from latest_info_charts import PassengerRanking, DepartureStructure, short_line_name
+    data = snapshot()  # Explicit capacity fixture using the actual snapshot model.
+    panel = PassengerRanking() if attribute == 'passengers' else DepartureStructure()
+    if attribute == 'passengers':
+        panel.set_data(data.lines, data.passenger_top10, data.passenger_modes)
+    else:
+        panel.set_data(data.lines, data.departure_modes, data.total_departures)
+    panel.show_line_share()
+    panel.resize(width, panel.height())
+    panel.show()
+    qt_application.processEvents()
+    panel.grab()
+    try:
+        assert panel.width() == width
+        rows = panel.visible_share_rows()
+        assert rows and all(row.name.width() <= 112 for row in rows)
+        assert len({row.number.x() for row in rows}) == len({row.share.x() for row in rows}) == 1
+        from PySide6.QtCore import QPoint
+        ring_left = panel.share_ring.mapTo(panel.line_share, QPoint(0, 0)).x()
+        data_right = max(row.share.mapTo(panel.line_share, row.share.rect().bottomRight()).x() for row in rows)
+        assert abs(ring_left - (panel.line_share.width() - 1 - data_right)) <= 8
+        legend_left = rows[0].dot.mapTo(panel.line_share, QPoint(0, 0)).x()
+        ring_right = panel.share_ring.mapTo(panel.line_share, panel.share_ring.rect().bottomRight()).x()
+        ring_gap = legend_left - ring_right - 1
+        name_gap = rows[0].number.x() - rows[0].name.geometry().right() - 1
+        if width >= 520:
+            gaps = [ring_left, panel.line_share.width() - 1 - data_right, ring_gap, name_gap]
+            assert max(gaps) - min(gaps) <= 2
+        else:
+            assert ring_gap >= 16 and name_gap >= 4
+        assert all(row.number.width() == 90 and row.share.width() == 41 for row in rows)
+        painted = []
+        original = QPainter.drawText
+        def record(painter, *args):
+            if isinstance(args[-1], str):
+                painted.append(args[-1])
+            return original(painter, *args)
+        monkeypatch.setattr(QPainter, 'drawText', record)
+        for row in rows:
+            painted.clear()
+            row.name.grab()
+            assert any(short_line_name(row.entry.name) in text for text in painted)
+            assert row.number.x() - row.name.geometry().right() - 1 == name_gap
+            assert row.share.x() - row.number.geometry().right() - 1 == 8
+            for field in (row.number, row.share):
+                assert field.isVisible()
+                assert field.width() >= field.fontMetrics().horizontalAdvance(field.text())
+                assert panel.rect().contains(field.mapTo(panel, field.rect().bottomRight()))
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+@pytest.mark.parametrize('before_show', [True, False])
+def test_mode_menu_reserves_real_painted_arrow_space(qt_application, before_show):
+    from latest_info_charts import ModeMenu
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+    menu = ModeMenu()
+    captions = ['全部制式', '公交', '有轨电车', '无轨电车', '地铁', '单轨', '水上巴士']
+    for caption in captions:
+        menu.addItem(caption, userData=caption)
+    if not before_show:
+        menu.show()
+        qt_application.processEvents()
+    arrows = []
+    original = menu._drawDropDownIcon
+    menu._drawDropDownIcon = lambda painter, rect: (arrows.append(QRectF(rect)), original(painter, rect))[-1]
+    try:
+        for index, caption in enumerate(captions):
+            menu.setCurrentIndex(index)
+            menu.show()
+            qt_application.processEvents()
+            arrows.clear()
+            menu.grab()
+            option = QStyleOptionButton()
+            menu.initStyleOption(option)
+            contents = menu.style().subElementRect(QStyle.SubElement.SE_PushButtonContents, option, menu)
+            ink = menu.fontMetrics().boundingRect(contents, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextSingleLine, caption)
+            assert arrows and ink.right() + 4 < arrows[-1].left(), caption
+            assert contents.contains(ink), caption
+            assert menu.width() <= 88
+    finally:
+        menu.close()
+        menu.deleteLater()
+
+
+@pytest.mark.parametrize('attribute', ['passengers', 'departures'])
+def test_share_spacing_can_shrink_after_wide_card(qt_application, attribute):
+    from latest_info_charts import PassengerRanking, DepartureStructure
+    from PySide6.QtCore import QPoint
+    data = snapshot()
+    panel = PassengerRanking() if attribute == 'passengers' else DepartureStructure()
+    if attribute == 'passengers':
+        panel.set_data(data.lines, data.passenger_top10, data.passenger_modes)
+    else:
+        panel.set_data(data.lines, data.departure_modes, data.total_departures)
+    panel.show_line_share()
+    panel.show()
+    try:
+        for width in (864, 400, 639, 640, 520, 864):
+            panel.resize(width, panel.height())
+            qt_application.processEvents()
+            panel.grab()
+            assert panel.width() == width
+            rows = panel.visible_share_rows()
+            first = rows[0]
+            left = panel.share_ring.x()
+            right = panel.line_share.width() - 1 - first.share.mapTo(panel.line_share, first.share.rect().bottomRight()).x()
+            ring_gap = first.dot.mapTo(panel.line_share, QPoint()).x() - panel.share_ring.geometry().right() - 1
+            name_gap = first.number.x() - first.name.geometry().right() - 1
+            if width >= 520:
+                assert max(left, right, ring_gap, name_gap) - min(left, right, ring_gap, name_gap) <= 2
+            assert all(panel.rect().contains(row.mapTo(panel, row.rect().bottomRight())) for row in rows)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+@pytest.mark.parametrize('attribute', ['passengers', 'departures'])
 def test_home_structure_draws_values_in_all_three_views(page, qt_application, attribute):
     page.set_session(session())
     page.set_snapshot(snapshot())
