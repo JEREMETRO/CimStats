@@ -4,15 +4,13 @@ Cities in Motion 2 存档统计工具，作者 **JEREMETRO**。支持单人和�
 
 ## 下载运行
 
-前往 [0.1.1 正式版](https://github.com/JEREMETRO/CimStats/releases/tag/v0.1.1)下载 `CimStats_x64_v0.1.1.exe`，双击运行，打开或拖入 `.save` 存档即可使用。原 `Test` 预览版及 0.1.0 保留在 Releases 中。
+前往 [0.1.2 正式版](https://github.com/JEREMETRO/CimStats/releases/tag/v0.1.2)下载 `CimStats_x64_v0.1.2.exe`，双击运行，打开或拖入 `.save` 存档即可使用。既有正式版与 `Test` 预览版保留在 Releases 中。
 
 - 系统：Windows 11 x64
 - 存档：Cities in Motion 2 v1.6.3 的 `.save` 文件
 - 预编译版本无需安装 Python
 
-0.1.1 修复悬停标签和控件截断问题，统一窗口标题栏、启动过渡与图表交互，详见[版本记录](CHANGELOG.md)。
-
-当前源码正在验收 0.1.2，尚未发布。公开下载仍为上述 0.1.1 正式版。
+0.1.2 改善字体、动效和界面性能，恢复首页结构卡三种视图的数据，统一响应式间距并修复制式菜单重叠，详见[版本记录](CHANGELOG.md)。触控设备交互与高刷新率掉帧的已知限制也记录于该文档。
 
 ## 从源码运行
 

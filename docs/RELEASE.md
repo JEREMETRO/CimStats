@@ -1,8 +1,6 @@
 # CimStats 构建与发布
 
-当前正式版为 **0.1.1**，下载见 [0.1.1 Release](https://github.com/JEREMETRO/CimStats/releases/tag/v0.1.1)。更新与未修复的已知问题记录在[版本记录](../CHANGELOG.md)，发布说明不得将已知问题列为已修复。
-
-0.1.2 为当前本地验收版本，尚未创建标签或 GitHub Release。`VERSION` 标记待验收源码和构建版本；公开下载地址仅在该版本实际发布后更新。
+当前正式版为 **0.1.2**，下载见 [0.1.2 Release](https://github.com/JEREMETRO/CimStats/releases/tag/v0.1.2)。更新与未修复的已知问题记录在[版本记录](../CHANGELOG.md)，发布说明不得将已知问题列为已修复。
 
 ## 构建单文件 EXE
 
