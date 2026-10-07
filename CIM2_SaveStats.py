@@ -20,6 +20,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "--backend":
     sys.argv = [sys.argv[0], *sys.argv[2:]]
     raise SystemExit(backend_main())
 
+if len(sys.argv) == 3 and sys.argv[1] == '--map-geometry-worker':
+    from map_geometry import worker_main
+    worker_main(sys.argv[2])
+    raise SystemExit(0)
+
 FRONTEND = ROOT / "frontend"
 if str(FRONTEND) not in sys.path:
     sys.path.insert(0, str(FRONTEND))

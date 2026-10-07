@@ -23,7 +23,7 @@ if str(SRC) not in sys.path:
 if str(PROJECT) not in sys.path:
     sys.path.insert(sys.path.index(str(SRC)) + 1, str(PROJECT))
 from stats_style import initialize_theme
-from stats_tokens import FONT_FAMILY, FONT_SIZE_BODY, NAV_WIDTH_EXPANDED, PAGE_BG, TEXT_PRIMARY
+from stats_tokens import FONT_FAMILY, FONT_SIZE_BODY, NAV_WIDTH_EXPANDED, PAGE_BG, TEXT_PRIMARY, ACCENT
 from window_chrome import FluentMainWindow, FluentFileDialog as QFileDialog
 from startup_surface import (MINIMUM_WINDOW_SIZE, StartupSurface, center_startup_window,
                              initial_window_size)
@@ -69,7 +69,9 @@ def _load_ui_dependencies():
     from parse_progress import ParseProgressEstimator
     from statistics_model import parse_time
     from stats_dialogs import FluentMessageBox as QMessageBox
+    from map_icon import MAP_ICON
     PAGES = (('overview', '最新信息', FluentIcon.HOME),
+             ('map', '地图显示', MAP_ICON),
              ('lines', '线路查询', FluentIcon.SEARCH),
              ('statistics', '统计数据', FluentIcon.PIE_SINGLE))
     _UI_LOADED = True
@@ -445,7 +447,7 @@ class MainWindow(FluentMainWindow):
             self._startup_failed(error)
             return
         self._startup_steps = iter((self._prepare_content, self._build_shell,
-                                   self.build_overview, self.build_lines,
+                                   self.build_overview, self.build_map, self.build_lines,
                                    self._build_statistics, self._finish_ui, self._finish_content))
         self._startup_next()
 
@@ -536,6 +538,7 @@ class MainWindow(FluentMainWindow):
     def build_ui(self):
         self._build_shell()
         self.build_overview()
+        self.build_map()
         self.build_lines()
         self._build_statistics()
         self._finish_ui()
@@ -684,8 +687,11 @@ class MainWindow(FluentMainWindow):
                 motion.finish()
         self.pages.setCurrentIndex(index)
         route, title, icon = PAGES[index]
-        self.header.set_page(title, icon, self.stats_tabs if index == 2 else None)
+        self.header.set_page(title, icon, self.stats_tabs if index == 3 else None)
         self.sidebar.setCurrentItem(route)
+        for position, button in enumerate(self.nav_buttons):
+            glyph = PAGES[position][2]
+            button.setIcon(glyph.colored(ACCENT, ACCENT) if position == index else glyph)
         self._refresh_exports()
         if changed and self.data:
             page = self.pages.currentWidget()
@@ -721,7 +727,9 @@ class MainWindow(FluentMainWindow):
             items += [('latest-xlsx', '首页报告 XLSX', FluentIcon.DOCUMENT, ready),
                       ('latest-png', '首页图片 PNG', FluentIcon.PHOTO, ready),
                       ('latest-copy', '复制当前摘要', FluentIcon.COPY, ready), (None, '', None, False)]
-        elif index == 2:
+        elif index == 1:
+            items += [('map-png', '地图图片 PNG', FluentIcon.PHOTO, self.map_page.result is not None), (None, '', None, False)]
+        elif index == 3:
             items += [('stats-report', '统计报表（PNG + XLSX）', FluentIcon.DOCUMENT,
                        self.statistics_page.export_button.isEnabled()), (None, '', None, False)]
         items += [('line_workbook', '线路工作簿 XLSX', FluentIcon.SAVE, has_line),
@@ -734,7 +742,11 @@ class MainWindow(FluentMainWindow):
 
     def _export_action(self, key):
         controller = self.latest_info_controller
-        if key == 'latest-xlsx':
+        if key == 'map-png':
+            path, _ = QFileDialog.getSaveFileName(self, '导出地图', '地图.png', 'PNG 图片 (*.png)')
+            if path and not self.map_page.export_image(path):
+                self._notify('导出失败', '无法写入地图图片', error=True)
+        elif key == 'latest-xlsx':
             controller._export('xlsx')
         elif key == 'latest-png':
             controller._export('png')
@@ -774,6 +786,11 @@ class MainWindow(FluentMainWindow):
         self._progress_timer.stop()
         self.loading_overlay.finish()
         self.statistics_page.stop_workers()
+        if not self.map_page.stop_workers():
+            event.ignore()
+            for task in self.map_page.workers:
+                if task.isRunning(): task.finished.connect(self.close)
+            return
         if not self.latest_info_controller.stop_workers():
             event.ignore()
             for task in self.latest_info_controller.workers:
@@ -797,6 +814,13 @@ class MainWindow(FluentMainWindow):
             self.set_sidebar_collapsed(True)
 
     # ------------------------------------------------------------- pages
+    def build_map(self):
+        from map_page import MapPage
+        self.map_page = MapPage(self.settings, self.pages, cache_dir=JOBS / 'map-cache')
+        self.map_page.failed.connect(lambda message: self._notify('地图读取失败', message, error=True))
+        self.map_page.ready.connect(self._refresh_exports)
+        self.pages.addWidget(self.map_page)
+
     def build_overview(self):
         from latest_info_page import LatestInfoPage
         from latest_info_controller import LatestInfoController
@@ -833,7 +857,7 @@ class MainWindow(FluentMainWindow):
         line = next((row for row in self.data.get('lines', []) if row.get('key') == key), None)
         if line is None:
             return
-        self.navigate(1)
+        self.navigate(2)
         self.query.clear()
         self.line_company.setCurrentIndex(max(0, self.line_company.findData(str(line.get('公司标识') or ''))))
         self.line_mode.setCurrentIndex(max(0, self.line_mode.findData(line.get('运输制式') or '')))
@@ -973,6 +997,9 @@ class MainWindow(FluentMainWindow):
         worker.failed.connect(lambda message: self.on_failed(message) if current() else None)
         worker.finished.connect(lambda: self.worker_finished(worker))
         worker.start()
+        # Warm the map cache alongside the statistics parser so navigating to
+        # the map can reuse this exact worker or its completed snapshot.
+        self.map_page.start_prefetch(path)
 
     def worker_finished(self, worker=None):
         # Drop the finished thread before the next import; a Python reference
@@ -1049,6 +1076,7 @@ class MainWindow(FluentMainWindow):
         self._update_estimated_progress()
 
     def on_failed(self, message):
+        self.map_page.cancel_prefetch()
         self.latest_info_controller.clear_session()
         self.statistics_page.clear_session()
         self.data = {}
@@ -1074,6 +1102,7 @@ class MainWindow(FluentMainWindow):
         self.loading_overlay.update_progress('准备图表')
         self._ready_timer.start()
         self.data = data
+        self.map_page.set_session(data)
         self.statistics_page.clear_session()
         self.latest_info_controller.set_session(data)
         counts = data.get("counts", {})

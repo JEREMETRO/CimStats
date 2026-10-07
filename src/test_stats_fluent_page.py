@@ -386,7 +386,7 @@ def test_statistics_shell_has_file_header_and_live_actions(monkeypatch, tmp_path
     data = load_session(Path(__file__).resolve().parents[1] / 'exports', '望春市_test_运行时')
     data.update(history=[], save_path='测试存档.save', save_key='stats-header')
     window.on_completed(data)
-    window.navigate(2)
+    window.navigate(3)
     window.show()
     app.processEvents()
     # The shared header shows the save, opens files and carries every export.
@@ -408,7 +408,7 @@ def test_statistics_header_and_pivot_share_wide_row_but_wrap_on_narrow_window(mo
                         lambda *_: QSettings(str(tmp_path / 'responsive.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     window = desktop_app.MainWindow()
-    window.navigate(2)
+    window.navigate(3)
     window.resize(1440, 960)
     window.show()
     app.processEvents()

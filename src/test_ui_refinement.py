@@ -277,7 +277,7 @@ def test_structured_progress_updates_estimate_without_showing_raw_json(qt_applic
 def test_filter_heights_action_widths_and_no_extra_status_row(qt_application, monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_app, 'QSettings', lambda *a: QSettings(str(tmp_path/'sizes.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda s: None)
-    window = desktop_app.MainWindow(); window.show(); window.navigate(2)
+    window = desktop_app.MainWindow(); window.show(); window.navigate(3)
     qt_application.processEvents()
     page = window.statistics_page
     assert {control.height() for control in (page.company_selector, page.range_combo, page.grain_combo,

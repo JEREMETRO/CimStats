@@ -21,6 +21,7 @@ _build_runtime_*/
 *.payload.bin
 
 /data/*
+!/data/map_assets.json
 !/data/Assembly-CSharp.probe.dll
 !/data/UnityEngine.dll
 /exports/*

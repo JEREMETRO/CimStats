@@ -788,8 +788,8 @@ class LatestInfoPage(QWidget):
         company_names = dict(snapshot.companies)
         company_names['__selected__'] = company_selection_name(
             snapshot.companies, (snapshot.company_id,) if snapshot.company_id else tuple(company_names))
-        self.trend.set_company_palette({key: tokens.DATA_COMPANY_COLORS[index % len(tokens.DATA_COMPANY_COLORS)]
-                                       for index, key in enumerate(sorted(dict(snapshot.companies)))})
+        from semantic_colors import company_palette
+        self.trend.set_company_palette(company_palette(dict(snapshot.companies)))
         self.trend.set_result(snapshot.company_trend, company_names)
         self.passengers.set_data(display_lines, display_top10, snapshot.passenger_modes, scope_mode=snapshot.mode)
         self.departures.set_data(display_lines, snapshot.departure_modes, snapshot.total_departures, scope_mode=snapshot.mode)

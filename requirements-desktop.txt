@@ -5,3 +5,5 @@ pythonnet>=3.0
 openpyxl>=3.1
 UnityPy>=1.21
 psutil>=7.0
+numpy>=2.0
+dnfile>=0.15

@@ -1,0 +1,1091 @@
+"""Native, read-only map rendering of immutable game geometry in metres."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+from pathlib import Path
+
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal, Slot, QTimer, QObject, QRunnable, QThreadPool
+from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTransform
+from PySide6.QtWidgets import QWidget
+
+import stats_tokens as tokens
+from stats_typography import ui_font
+from map_model import MapSnapshot, road_display_level
+from map_visibility import operating_paths, visible_route_stop_ids
+from display_rules import format_line_name
+
+# Public visual interpretation, not Apple-internal style constants. Widths
+# below are logical pixel symbols when a measured full road width is missing.
+MAP_BACKGROUND = '#F1F4F6'
+ROAD_STYLES = {
+    'express': ('#F7E4AB','#D7C58F',2.8,8.0),
+    'arterial': ('#FFF3D2','#D9D1B9',2.1,6.8),
+    'secondary': ('#FFFFFF','#C9D1D7',1.3,5.0),
+    'local': ('#FFFFFF','#D0D8DE',.65,3.6),
+    'pedestrian': ('#E3E9EC','#C4CFD5',.55,2.4),
+    'track': ('#9BA8B1','#E4E9ED',.8,1.5),
+    'unknown': ('#D6DEE3','#E6ECEF',.55,1.2),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RoadStyle:
+    level: str
+    fill: str
+    shell: str
+    width: float
+    casing: float
+
+
+def road_style(road,zoom):
+    """Shared map/legend style in logical pixels; no inferred physical width."""
+    level = road_display_level(road)
+    fill,shell,overview,detail = ROAD_STYLES[level]
+    transition = max(0.,min(1.,(zoom-.10)/.35))
+    width = overview+(detail-overview)*transition
+    if zoom>.45:
+        width = detail*min(2.2,math.sqrt(zoom/.45))
+    if road.width is not None and road.width>0 and zoom>=.25 and level!='track':
+        width = max(1.,min(48.,road.width*zoom))
+    casing = .65 if zoom<.15 else 1.1 if zoom<.5 else 1.6
+    if level in ('local','unknown','pedestrian') and zoom<.15:
+        casing = .25
+    return RoadStyle(level,fill,shell,width,casing)
+
+
+@dataclass(frozen=True, slots=True)
+class MapSearchResult:
+    kind: str
+    id: int
+    name: str
+    bounds: tuple[float, float, float, float]
+
+    @property
+    def label(self):
+        return self.name
+
+
+def _bounds(points):
+    points = tuple(points)
+    if not points:
+        return None
+    xs, zs = [p[0] for p in points], [p[2] for p in points]
+    return min(xs), min(zs), max(xs), max(zs)
+
+
+def continuous_paths(paths):
+    """Join ordered curves only at identical saved xyz; never bridge a gap."""
+    runs,current = [],[]
+    for path in paths:
+        if not path:
+            if current:
+                runs.append(tuple(current))
+                current = []
+            continue
+        if current and current[-1] == path[0]:
+            current.extend(path[1:])
+        else:
+            if current:
+                runs.append(tuple(current))
+            current = list(path)
+    if current:
+        runs.append(tuple(current))
+    return tuple(runs)
+
+
+class _SpatialIndex:
+    """Uniform world grid with overflow for long features; no geometry copies."""
+    def __init__(self, entries, bounds):
+        self.cell = max(1., max(bounds[2]-bounds[0], bounds[3]-bounds[1]) / 32)
+        self.bins = {}
+        self.large = []
+        self.entries = entries
+        for i, (_, box) in enumerate(entries):
+            a,b,c,d = self._cells(box)
+            if (c-a+1)*(d-b+1) > 256:
+                self.large.append(i)
+            else:
+                for x in range(a,c+1):
+                    for y in range(b,d+1):
+                        self.bins.setdefault((x,y), []).append(i)
+
+    def _cells(self, box):
+        return tuple(math.floor(v/self.cell) for v in box)
+
+    def query(self, box):
+        a,b,c,d = self._cells(box)
+        found = set(self.large)
+        if (c-a+1)*(d-b+1) > 4096:
+            found.update(range(len(self.entries)))
+        else:
+            for x in range(a,c+1):
+                for y in range(b,d+1):
+                    found.update(self.bins.get((x,y), ()))
+        for i in sorted(found):
+            item, bounds = self.entries[i]
+            if bounds[0] <= box[2] and bounds[2] >= box[0] and bounds[1] <= box[3] and bounds[3] >= box[1]:
+                yield item
+
+
+class _MapDrawing:
+    """Pure image drawing shared by the widget, exports and background frames."""
+    def world_to_screen(self, point):
+        x,z = (point[0],point[2]) if len(point) == 3 else point
+        return QPointF(self.width()/2+(x-self.center[0])*self.zoom,
+                       self.height()/2-(z-self.center[1])*self.zoom)
+
+
+    def screen_to_world(self, point):
+        return (self.center[0]+(point.x()-self.width()/2)/self.zoom,
+                self.center[1]-(point.y()-self.height()/2)/self.zoom)
+
+
+    def route_paths(self,route):
+        return operating_paths(route,self.options['direction'])
+
+
+    def _route_path_groups(self,route):
+        if (self.options['distinguish_directions'] and self.options['direction']=='whole'
+                and route.direction.kind=='roundtrip' and route.direction.terminal_index is not None
+                and route.leg_paths):
+            return ((operating_paths(route,'down'),False),(operating_paths(route,'up'),True))
+        return ((self.route_paths(route),False),)
+
+
+    def _route_width(self,route,default):
+        from semantic_colors import canonical_key
+        value = self.options['mode_widths'].get(canonical_key('mode',route.mode),default)
+        try:
+            value = float(value)
+        except (ValueError,TypeError):
+            return default
+        return value if math.isfinite(value) and value>0 else default
+
+
+    @staticmethod
+    def road_level(road):
+        """Display classes from actual asset metadata; elevation is separate."""
+        return road_display_level(road)
+
+
+    @staticmethod
+    def route_label(route):
+        return format_line_name(route.number,route.name)
+
+
+    def _visible(self,name):
+        return self._indexes[name].query(self._viewport_bounds()) if name in self._indexes else ()
+
+
+    def _viewport_bounds(self):
+        tl = self.screen_to_world(QPointF(-40,-40))
+        br = self.screen_to_world(QPointF(self.width()+40,self.height()+40))
+        return tl[0],br[1],br[0],tl[1]
+
+
+    def _polyline(self,path,offset=0.):
+        world = self._world_polygon(path)
+        polygon = self._transform().map(world)
+        if offset and len(polygon)>1:
+            points = list(polygon)
+            distances = [0.]
+            for a,b in zip(points,points[1:]):
+                distances.append(distances[-1]+math.hypot(b.x()-a.x(),b.y()-a.y()))
+            total = distances[-1]
+            # Interpolate only along already-known screen edges. The style
+            # tapers to the exact saved fragment endpoint, never a new bridge.
+            limits = sorted({min(12.,total/2),max(total-12.,total/2)})
+            expanded,positions = [],[]
+            for i,(a,b) in enumerate(zip(points,points[1:])):
+                expanded.append(a);positions.append(distances[i])
+                span = distances[i+1]-distances[i]
+                for limit in limits:
+                    if distances[i]<limit<distances[i+1] and span:
+                        expanded.append(a+(b-a)*((limit-distances[i])/span))
+                        positions.append(limit)
+            expanded.append(points[-1]);positions.append(total)
+            points = expanded
+            shifted = []
+            for i,p in enumerate(points):
+                tangent = points[min(i+1,len(points)-1)]-points[max(0,i-1)]
+                length = math.hypot(tangent.x(),tangent.y()) or 1
+                amount = offset*max(0.,min(1.,positions[i]/12,(total-positions[i])/12))
+                shifted.append(p+QPointF(-tangent.y()*amount/length,tangent.x()*amount/length))
+            return QPolygonF(shifted)
+        return polygon
+
+
+    def _continuous_paths(self,paths):
+        paths = tuple(paths)
+        key = tuple(id(path) for path in paths)
+        if key not in self._continuous_cache:
+            # Holding both source and result avoids id reuse by transient runs.
+            self._continuous_cache[key] = (paths,continuous_paths(paths))
+        return self._continuous_cache[key][1]
+
+
+    def _lane_margins(self,road,lane_index,style):
+        """Partition a road symbol at observed lane midpoints and outer edges.
+
+        These are screen margins around a saved turning curve, not a claimed
+        junction footprint. Outermost lanes carry the street's outer margin;
+        centring every lane's width on its centreline would shrink the street.
+        """
+        if not road.width or road.width<=0:
+            return None
+        lanes = sorted((lane for lane in road.lanes
+                        if lane.type_mask&0x1f000000 and
+                        (lane.type_mask&3 or lane.type_mask&4 and lane.turn_directions)),
+                       key=lambda lane:lane.offset)
+        if len(lanes)<2:
+            return None
+        index = next((i for i,lane in enumerate(lanes) if lane.index==lane_index),None)
+        if index is None:
+            return None
+        lane = lanes[index]
+        if not lane.type_mask&0x300:
+            return None
+        low,high = -road.width/2,road.width/2
+        sidewalks = [lane.offset for lane in road.lanes if lane.type_mask&0x10000]
+        if sidewalks and road.sidewalk_left is not None and road.sidewalk_right is not None:
+            low = min(sidewalks)-road.sidewalk_left/2
+            high = max(sidewalks)+road.sidewalk_right/2
+        low = (lanes[index-1].offset+lane.offset)/2 if index else low
+        high = (lane.offset+lanes[index+1].offset)/2 if index+1<len(lanes) else high
+        scale = style.width/road.width
+        margins = (low*scale-lane.offset*self.zoom,high*scale-lane.offset*self.zoom)
+        # The stored offset follows the road's canonical travel tangent.
+        # Backward lanes follow the reverse tangent on their saved turn curve.
+        return margins if lane.type_mask&0x100 else (-margins[1],-margins[0])
+
+
+    def _lane_surface(self,path,start,end,casing):
+        polygon = self._polyline(path)
+        if len(polygon)<2:
+            return None
+        arcs = [0.]
+        for a,b in zip(polygon,list(polygon)[1:]):
+            arcs.append(arcs[-1]+math.hypot(b.x()-a.x(),b.y()-a.y()))
+        if not arcs[-1]:
+            return None
+        left,right,outer_left,outer_right = [],[],[],[]
+        for i,point in enumerate(polygon):
+            a,b = polygon[max(0,i-1)],polygon[min(len(polygon)-1,i+1)]
+            dx,dy = b.x()-a.x(),b.y()-a.y()
+            length = math.hypot(dx,dy)
+            normal = QPointF(-dy/length,dx/length) if length else QPointF()
+            t = arcs[i]/arcs[-1]
+            low,high = (start[j]*(1-t)+end[j]*t for j in (0,1))
+            left.append(point+normal*low);right.append(point+normal*high)
+            outer_left.append(point+normal*(low-casing/2))
+            outer_right.append(point+normal*(high+casing/2))
+        return (QPolygonF(left+list(reversed(right))),
+                QPolygonF(outer_left+list(reversed(outer_right))))
+
+
+    def _transform(self):
+        return QTransform(self.zoom,0.,0.,-self.zoom,
+                          self.width()/2-self.center[0]*self.zoom,
+                          self.height()/2+self.center[1]*self.zoom)
+
+
+    def _world_polygon(self,path):
+        level = math.floor(math.log2(1/self.zoom))
+        identity = (id(path),level)
+        world = self._world_polygons.get(identity)
+        if world is None:
+            points = self._simplify(path,.65*2**level)
+            world = QPolygonF([QPointF(p[0],p[2]) for p in points])
+            self._world_polygons[identity] = world
+        return world
+
+
+    @staticmethod
+    def _simplify(path,tolerance):
+        """RDP with <0.65 projected pixel error, endpoints and gaps preserved."""
+        if len(path)<3:
+            return path
+        retained = {0,len(path)-1}
+        stack = [(0,len(path)-1)]
+        squared = tolerance*tolerance
+        while stack:
+            first,last = stack.pop()
+            a,b = path[first],path[last]
+            dx,dz = b[0]-a[0],b[2]-a[2]
+            length = dx*dx+dz*dz
+            maximum,index = squared,None
+            for i in range(first+1,last):
+                p = path[i]
+                ratio = max(0.,min(1.,((p[0]-a[0])*dx+(p[2]-a[2])*dz)/length)) if length else 0.
+                distance = (p[0]-a[0]-ratio*dx)**2+(p[2]-a[2]-ratio*dz)**2
+                if distance>maximum:
+                    maximum,index = distance,i
+            if index is not None:
+                retained.add(index)
+                stack.extend(((first,index),(index,last)))
+        return tuple(path[i] for i in sorted(retained))
+
+
+    def _path_key(self,path):
+        identity = id(path)
+        if identity not in self._path_keys:
+            canonical = min(tuple(path),tuple(reversed(path)))
+            self._path_keys[identity] = (hash(canonical),len(path),canonical[:1],canonical[-1:])
+        return self._path_keys[identity]
+
+
+    def _draw_path(self,painter,path,pen,offset=0.):
+        if len(path)<2:
+            return QPolygonF()
+        polygon = self._polyline(path,offset)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolyline(polygon)
+        return polygon
+
+
+    def _path_visible(self,path,viewport):
+        identity=id(path)
+        cached=self._path_bounds.get(identity)
+        if cached is None:
+            cached=(path,_bounds(path))
+            self._path_bounds[identity]=cached
+        box=cached[1]
+        return box is not None and box[0]<=viewport[2] and box[2]>=viewport[0] and box[1]<=viewport[3] and box[3]>=viewport[1]
+
+
+    def _route_color(self,route):
+        colors = self.options['route_colors']
+        explicit = colors.get(route.id,colors.get(str(route.id)))
+        if explicit:
+            return QColor(explicit)
+        try:
+            from semantic_colors import color_for
+            return QColor(color_for('line',route.id))
+        except ImportError:
+            return QColor(tokens.COMPANY_COLORS[route.id % len(tokens.COMPANY_COLORS)])
+
+
+    def _label(self,painter,point,text,occupied,color=tokens.TEXT_PRIMARY):
+        if point.x() < -250 or point.x()>self.width() or point.y()<0 or point.y()>self.height()+12:
+            return False
+        if not str(text).strip():
+            return False
+        width = painter.fontMetrics().horizontalAdvance(str(text))+12
+        rect = QRectF(point.x()+7,point.y()-12,width,22)
+        if not QRectF(self.rect()).contains(rect) or any(rect.intersects(r) for r in occupied):
+            return False
+        occupied.append(rect.adjusted(-3,-3,3,3))
+        path = QPainterPath()
+        metrics = painter.fontMetrics()
+        path.addText(rect.x()+6,rect.y()+metrics.ascent()+2,painter.font(),str(text))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor('#FFFFFF'),3.,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(path)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawPath(path)
+        return True
+
+
+    def _paint_base(self,painter):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(),QColor(MAP_BACKGROUND))
+        if self.options['buildings']:
+            for building in self._visible('buildings'):
+                selected = self.options['building_classes']
+                uses = self.options['building_uses']
+                groups = building.combined_groups
+                present = {c.group for c in groups if c.count is not None and c.count>0}
+                if building.category in ('transport','special'):
+                    present = {building.category}
+                if not present:
+                    present = {'unknown'}
+                if selected is not None and not present.intersection(selected):
+                    continue
+                if uses is not None and getattr(building,'usage',building.category) not in uses:
+                    continue
+                if len(building.polygon)<3:
+                    continue
+                box = self._boxes['buildings'][building.id]
+                if (box[2]-box[0])*(box[3]-box[1])*self.zoom*self.zoom<.8:
+                    continue
+                polygon = self._polyline(building.polygon)
+                if polygon.boundingRect().width()*polygon.boundingRect().height()<.8:
+                    continue
+                colors = self.options['building_colors']
+                painter.setBrush(QColor(colors.get(building.id,colors.get(str(building.id),'#DCE3E8'))))
+                painter.setPen(QPen(QColor('#C4CDD3'),.45 if self.zoom<.15 else .7))
+                painter.drawPolygon(polygon)
+        if self.options['roads']:
+            roads = list(self._visible('roads'))
+            strata = {0:[],1:[],2:[]}
+            ranking = {'unknown':0,'local':1,'pedestrian':2,'secondary':3,'arterial':4,'express':5,'track':6}
+            road_styles = {}
+            for road in roads:
+                levels = self.options['road_levels']
+                if levels is not None and self.road_level(road) not in levels:
+                    continue
+                style = road_style(road,self.zoom)
+                road_styles[road.id] = style
+                level,fill,shell,width,casing = style.level,style.fill,style.shell,style.width,style.casing
+                batches = []
+                for i,path in enumerate(road.paths):
+                    if len(path)<2:
+                        batches.append((None,[]))
+                        continue
+                    bridge = bool(road.bridge_masks[i]) if i<len(road.bridge_masks) else road.bridge
+                    tunnel = bool(road.tunnel_masks[i]) if i<len(road.tunnel_masks) else road.tunnel
+                    layer = 0 if tunnel else 2 if bridge else 1
+                    if batches and batches[-1][0]==layer:
+                        batches[-1][1].append(path)
+                    else:
+                        batches.append((layer,[path]))
+                for layer,paths in batches:
+                    for path in self._continuous_paths(paths):
+                        polygon = self._polyline(path)
+                        if self.zoom<.15 and level in ('local','pedestrian','unknown') and polygon.boundingRect().width()+polygon.boundingRect().height()<1.5:
+                            continue
+                        strata[layer].append((ranking[level],polygon,fill,shell,width,casing,layer==0,None))
+            viewport = self._viewport_bounds()
+            for junction in self._visible('junctions'):
+                layer = 0 if junction.tunnel else 2 if junction.bridge else 1
+                for connection in junction.connections:
+                    box = self._connection_boxes.get(connection.id)
+                    if box is None or box[0]>viewport[2] or box[2]<viewport[0] or box[1]>viewport[3] or box[3]<viewport[1]:
+                        continue
+                    source = self._roads.get(connection.source_road_id)
+                    target = self._roads.get(connection.target_road_id)
+                    if source is None or target is None:
+                        continue
+                    styles = []
+                    for road in (source,target):
+                        style = road_styles.get(road.id)
+                        if style is None:
+                            style = road_style(road,self.zoom)
+                            road_styles[road.id] = style
+                        styles.append(style)
+                    levels = self.options['road_levels']
+                    if levels is not None and any(style.level not in levels for style in styles):
+                        continue
+                    style = min(styles,key=lambda s:s.width)
+                    # Saved paths are lane centre curves, not a junction road
+                    # polygon. A lane receives only a fraction of its related
+                    # road's pixel symbol, never the full road width.
+                    widths = [s.width/max(2,(r.lanes_a or 0)+(r.lanes_b or 0)) for r,s in zip((source,target),styles)]
+                    width = max(.5,min(widths))
+                    casing = .2 if self.zoom<.15 else .45
+                    start = self._lane_margins(source,connection.source_lane,styles[0])
+                    end = self._lane_margins(target,connection.target_lane,styles[1])
+                    for path in self._continuous_paths(connection.paths):
+                        if len(path)<2:
+                            continue
+                        polygon = self._polyline(path)
+                        if self.zoom<.15 and polygon.boundingRect().width()+polygon.boundingRect().height()<1.5:
+                            continue
+                        surface = self._lane_surface(path,start,end,casing) if start is not None and end is not None else None
+                        core,edge = surface if surface else (polygon,None)
+                        fill = style.fill
+                        if styles[0].fill!=styles[1].fill and polygon[0]!=polygon[-1]:
+                            gradient = QLinearGradient(polygon[0],polygon[-1])
+                            gradient.setColorAt(0.,QColor(styles[0].fill))
+                            gradient.setColorAt(1.,QColor(styles[1].fill))
+                            fill = QBrush(gradient)
+                        strata[layer].append((ranking[style.level],core,fill,style.shell,width,casing,junction.tunnel,edge))
+            for layer,items in strata.items():
+                items.sort(key=lambda item:item[0])
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                # Every shell precedes every fill within its actual elevation
+                # layer, so intersecting road ends never cut a dark seam.
+                for _,polygon,fill,shell,width,casing,tunnel,edge_polygon in items:
+                    if edge_polygon is not None:
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QColor('#C6D0D7' if tunnel else shell))
+                        painter.drawPolygon(edge_polygon,Qt.FillRule.WindingFill)
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        continue
+                    # Bridge/tunnel ends are open transitions in a road, not
+                    # standalone rounded symbols. Keep only restrained sides;
+                    # the bridge's elevation order supplies the crossing cue.
+                    cap = Qt.PenCapStyle.RoundCap if layer==1 else Qt.PenCapStyle.FlatCap
+                    edge = min(casing,1.2) if layer!=1 else casing
+                    pen = QPen(QColor('#C6D0D7' if tunnel else shell),width+edge,
+                               Qt.PenStyle.SolidLine,cap,Qt.PenJoinStyle.RoundJoin)
+                    if tunnel:
+                        # Dash the exposed margins, not the road body. The
+                        # pattern stays six/four pixels at every road width.
+                        pen.setDashPattern([6/(width+edge),4/(width+edge)])
+                    painter.setPen(pen)
+                    painter.drawPolyline(polygon)
+                for _,polygon,fill,shell,width,casing,tunnel,edge_polygon in items:
+                    brush = (QBrush(QColor('#E3E9ED')) if tunnel else
+                             fill if isinstance(fill,QBrush) else QBrush(QColor(fill)))
+                    if edge_polygon is not None:
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(brush)
+                        painter.drawPolygon(polygon,Qt.FillRule.WindingFill)
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        continue
+                    cap = Qt.PenCapStyle.RoundCap if layer==1 else Qt.PenCapStyle.FlatCap
+                    painter.setPen(QPen(brush,width,
+                                        Qt.PenStyle.SolidLine,cap,Qt.PenJoinStyle.RoundJoin))
+                    painter.drawPolyline(polygon)
+
+    def _draw_base(self,painter):
+        key=(id(self.snapshot.roads),id(self.snapshot.buildings),id(self.snapshot.junctions),
+             self.options['roads'],self.options['buildings'],
+             tuple(sorted(self.options['road_levels'] or ())),
+             self.options['road_levels'] is None,
+             tuple(sorted(self.options['building_classes'] or ())),self.options['building_classes'] is None,
+             tuple(sorted(self.options['building_uses'] or ())),self.options['building_uses'] is None,
+             id(self.options['building_colors']),self.zoom,self.width(),self.height(),self.ratio if isinstance(self,_FrameSurface) else self.devicePixelRatioF())
+        cached=self._base_cache
+        margin=192
+        if cached is not None:
+            old_key,center,image,owners=cached
+            dx=(center[0]-self.center[0])*self.zoom
+            dy=(self.center[1]-center[1])*self.zoom
+        if cached is None or old_key!=key or abs(dx)>margin or abs(dy)>margin:
+            surface=_FrameSurface(self)
+            surface._size=QSize(self.width()+2*margin,self.height()+2*margin)
+            image=QImage(round(surface.width()*surface.ratio),round(surface.height()*surface.ratio),QImage.Format.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(surface.ratio)
+            base_painter=QPainter(image)
+            try:surface._paint_base(base_painter)
+            finally:base_painter.end()
+            # Keep identity-keyed inputs alive until the cached image is replaced.
+            self._base_cache=(key,self.center,image,(self.snapshot,self.options['building_colors']))
+            self._world_polygons.update(surface._world_polygons)
+            self._continuous_cache.update(surface._continuous_cache)
+            dx=dy=0
+        painter.drawImage(QPointF(dx-margin,dy-margin),image)
+
+    def _paint(self,painter,overlays=True):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(),QColor(MAP_BACKGROUND))
+        painter.setFont(self.font())
+        occupied = [QRectF(10,self.height()-55,180,45),QRectF(self.width()-45,10,35,65)]
+        occupied.extend(rect.adjusted(-3,-3,3,3) for rect,_,_ in self._legend_layout(painter))
+        self._draw_base(painter)
+        modes = self.options['layer_modes']
+        from semantic_colors import canonical_key
+        visible_routes = [r for r in self._visible('routes')
+                          if modes is None or canonical_key('mode',r.mode) in modes]
+        routes = visible_routes if self.options['routes'] else []
+        # Offset only exact shared geometry, stable under route visibility/order changes.
+        shared = {}
+        route_colors = {r.id:self._route_color(r) for r in routes}
+        for route in routes:
+            for paths,dashed in self._route_path_groups(route):
+                for path in paths:
+                    shared.setdefault(self._path_key(path),set()).add((route_colors[route.id].name(),dashed))
+        drawn_strokes = set()
+        number_count = 0
+        number_limit = max(3,int(self.width()*self.height()/(48000 if self.zoom<.15 else 20000)))
+        default_width = 1.8 if self.zoom<.15 else 2.3 if self.zoom<.4 else 2.8
+        decorations = []
+        viewport = self._viewport_bounds()
+        if self.options['deadhead']:
+            for route in routes:
+                muted = QColor(route_colors[route.id])
+                muted.setAlpha(95)
+                for path in self._continuous_paths(route.depot_paths):
+                    if self._path_visible(path,viewport):
+                        self._draw_path(painter,path,QPen(muted,self._route_width(route,2),Qt.PenStyle.DashLine))
+        for route in routes:
+            color = route_colors[route.id]
+            line_width = self._route_width(route,default_width)
+            drawings = []
+            for paths,dashed in self._route_path_groups(route):
+                batches = []
+                for path in paths:
+                    if len(path)<2 or not self._path_visible(path,viewport):
+                        batches.append((None,[]))
+                        continue
+                    colors = sorted(shared[self._path_key(path)])
+                    offset = max(-2.,min(2.,(colors.index((color.name(),dashed))-(len(colors)-1)/2)*(1.4 if self.zoom<.15 else 2.2)))
+                    if tuple(path) > tuple(reversed(path)):
+                        offset *= -1
+                    # Labels retain source-curve identity and stable placement.
+                    drawings.append(((self._path_key(path),color.name(),abs(offset),dashed),
+                                     path,offset))
+                    if batches and batches[-1][0]==offset:
+                        batches[-1][1].append(path)
+                    else:
+                        batches.append((offset,[path]))
+                for offset,paths in batches:
+                    for path in self._continuous_paths(paths):
+                        key = (self._path_key(path),color.name(),abs(offset),dashed,line_width)
+                        polygon = self._polyline(path,offset)
+                        if key not in drawn_strokes:
+                            drawn_strokes.add(key)
+                            pen = QPen(color,line_width,Qt.PenStyle.SolidLine,
+                                       Qt.PenCapStyle.FlatCap if dashed else Qt.PenCapStyle.RoundCap,
+                                       Qt.PenJoinStyle.RoundJoin)
+                            if dashed:
+                                pen.setDashPattern([8/line_width,5/line_width])
+                            painter.setPen(pen)
+                            painter.setBrush(Qt.BrushStyle.NoBrush)
+                            painter.drawPolyline(polygon)
+            decorations.append((route,color,drawings))
+        # Paint every line body in query priority order before decorations;
+        # an earlier route's text halo cannot interrupt a later body.
+        for route,color,drawings in decorations:
+            number_placed = False
+            if not self.options['line_numbers'] or number_count>=number_limit:
+                continue
+            label=self.route_label(route)
+            for key,path,offset in drawings:
+                if number_placed:
+                    break
+                polygon=self._polyline(path,offset)
+                if polygon:
+                    for fraction in (.5,.3,.7,.15,.85):
+                        index = fraction*(len(polygon)-1)
+                        lower = int(index)
+                        point = polygon[lower]+(polygon[min(lower+1,len(polygon)-1)]-polygon[lower])*(index-lower)
+                        if self._label(painter,point,label,occupied,color.name()):
+                            number_placed = True
+                            number_count += 1
+                            break
+        stop_ids = {sid for route in routes
+                    for sid in visible_route_stop_ids(route,self.options['direction'])}
+        stop_cells = set()
+        for stop in self._visible('stops'):
+            if stop.id not in stop_ids:
+                continue
+            point = self.world_to_screen(stop.position)
+            if self.options['stops']:
+                cell = (int(point.x()/6),int(point.y()/6))
+                if self.zoom>=.15 or cell not in stop_cells:
+                    stop_cells.add(cell)
+                    painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY),.8 if self.zoom<.15 else 1.2))
+                    painter.setBrush(QColor(tokens.CARD_BG))
+                    radius = 1.2 if self.zoom<.15 else max(2.,min(3.5,self.zoom*12))
+                    painter.drawEllipse(point,radius,radius)
+            if self.options['stops'] and self.options['stop_names'] and self.zoom>=.15:
+                self._label(painter,point,stop.name,occupied)
+        if self._highlight:
+            kind,identity = self._highlight
+            index = self._indexes.get(kind+'s')
+            if index:
+                for item,box in index.entries:
+                    if item.id == identity:
+                        a = self.world_to_screen((box[0],box[1]))
+                        b = self.world_to_screen((box[2],box[3]))
+                        painter.setPen(QPen(QColor(tokens.ACCENT),2))
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        painter.drawRoundedRect(QRectF(a,b).normalized().adjusted(-7,-7,7,7),5,5)
+                        break
+        if overlays:
+            self._draw_scale(painter)
+            self._draw_legend(painter)
+
+
+    def _legend_layout(self,painter):
+        """Caller supplies actual identities; reserve two compact caption rows."""
+        available = self.width()-210
+        if available<40:
+            return []
+        items = []
+        x,row = 190.,0
+        metrics = painter.fontMetrics()
+        for label,color in self.options['legend_items']:
+            label = str(label).strip()
+            if not label:
+                continue
+            text = metrics.elidedText(label,Qt.TextElideMode.ElideRight,max(1,int(available-34)))
+            width = metrics.horizontalAdvance(text)+34
+            if x+width>self.width()-20:
+                row += 1
+                x = 190.
+            if row>=2:
+                break
+            rect = QRectF(x,self.height()-52+row*22,width,20)
+            items.append((rect,text,color))
+            x += width+8
+        return items
+
+
+    def _draw_legend(self,painter):
+        painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for rect,label,color in self._legend_layout(painter):
+            y = rect.center().y()
+            painter.setPen(QPen(QColor(color),3.,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
+            painter.drawLine(QPointF(rect.left()+3,y),QPointF(rect.left()+17,y))
+            painter.setPen(QColor(tokens.TEXT_SECONDARY))
+            painter.drawText(rect.adjusted(24,0,0,0),Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignLeft,label)
+
+
+    def _draw_scale(self,painter):
+        budget = min(120,max(20,self.width()/4))
+        metres = budget/self.zoom
+        exponent = 10**math.floor(math.log10(metres))
+        length = max(v*exponent for v in (1,2,5) if v*exponent<=metres)
+        pixels = length*self.zoom
+        x,y = 18.,self.height()-22.
+        painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY),1.4))
+        painter.drawLine(QPointF(x,y-5),QPointF(x,y))
+        painter.drawLine(QPointF(x,y),QPointF(x+pixels,y))
+        painter.drawLine(QPointF(x+pixels,y),QPointF(x+pixels,y-5))
+        text = f'{length/1000:g} km' if length>=1000 else f'{length:g} m'
+        painter.drawText(QRectF(x,y-28,150,20),text)
+        x = self.width()-27.
+        painter.drawText(QRectF(x-8,12,20,20),Qt.AlignmentFlag.AlignCenter,'N')
+        painter.setBrush(QColor(tokens.TEXT_SECONDARY))
+        painter.drawPolygon(QPolygonF([QPointF(x,37),QPointF(x-5,50),QPointF(x+5,50)]))
+
+
+
+class _FrameSurface(_MapDrawing):
+    """Detached values only: the worker never reads a QWidget."""
+    def __init__(self,canvas):
+        self._size=QSize(canvas.width(),canvas.height())
+        self._font=canvas.font()
+        self.ratio=canvas.ratio if isinstance(canvas,_FrameSurface) else canvas.devicePixelRatioF()
+        self._base_cache=canvas._base_cache
+        for name in ('snapshot','center','zoom','_indexes','_stops','_roads',
+                     '_connection_boxes','_boxes','_highlight'):
+            setattr(self,name,getattr(canvas,name))
+        self.options=dict(canvas.options)
+        for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
+            setattr(self,name,dict(getattr(canvas,name)))
+
+    def width(self):return self._size.width()
+    def height(self):return self._size.height()
+    def rect(self):return QRect(0,0,self.width(),self.height())
+    def font(self):return self._font
+
+
+class _FrameSignals(QObject):
+    completed=Signal(object,object,object,object)
+    failed=Signal(object,str)
+
+
+class _FrameJob(QRunnable):
+    def __init__(self,surface,key,view):
+        super().__init__()
+        self.surface,self.key,self.view=surface,key,view
+        self.signals=_FrameSignals()
+
+    def run(self):
+        surface=self.surface
+        image=QImage(round(surface.width()*surface.ratio),round(surface.height()*surface.ratio),QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(surface.ratio)
+        painter=QPainter(image)
+        try:
+            surface._paint(painter,overlays=False)
+        except Exception as error:
+            self.signals.failed.emit(self.key,str(error))
+            return
+        finally:
+            painter.end()
+        self.signals.completed.emit(self.key,self.view,image,surface)
+
+
+class MapCanvas(_MapDrawing, QWidget):
+    """View changes emit ``(center_x, center_z, pixels_per_metre)``.
+
+    ``set_snapshot`` fits only the first nonempty snapshot; subsequent updates
+    preserve navigation. Selection and route ordering belong to the caller.
+    """
+    view_changed = Signal(float, float, float)
+    frame_ready = Signal()
+    render_failed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.snapshot = MapSnapshot()
+        self.center = (0.,0.)
+        self.zoom = 1.
+        self._loaded = False
+        self._fit_pending = False
+        self._drag = None
+        self._indexes = {}
+        self._stops = {}
+        self._highlight = None
+        self._world_polygons = {}
+        self._continuous_cache = {}
+        self._path_keys = {}
+        self._path_bounds = {}
+        self._boxes = {}
+        self._roads = {}
+        self._connection_boxes = {}
+        self._revision = 0
+        self._frame = None
+        self._frame_key = None
+        self._frame_view = None
+        self._frame_job = None
+        self._base_cache = None
+        self._async_render = False
+        self._failed_frame_key = None
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self.update)
+        self.options = dict(roads=True, buildings=True, routes=True, direction='whole',
+                            stops=True, stop_names=True, line_numbers=True, deadhead=False,
+                            road_levels=None, building_classes=None, building_uses=None,
+                            layer_modes=None, route_colors={}, building_colors={},legend_items=(),
+                            mode_widths={},distinguish_directions=False)
+        self.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+
+    def set_snapshot(self, snapshot):
+        previous=self.snapshot
+        self.snapshot = snapshot
+        # Published index dictionaries must remain stable for an in-flight frame.
+        self._indexes=dict(self._indexes)
+        self._boxes=dict(self._boxes)
+        self._revision += 1
+        self._async_render=sum(len(getattr(snapshot,name)) for name in ('roads','buildings','routes','junctions'))>1000
+        if snapshot.roads is not previous.roads:
+            self._world_polygons={}
+            self._continuous_cache={}
+            self._path_keys={}
+            self._path_bounds={}
+        self._stops = {s.id:s for s in snapshot.stops}
+        self._roads = {r.id:r for r in snapshot.roads}
+        self._connection_boxes = {c.id:_bounds(p for path in c.paths for p in path)
+                                  for j in snapshot.junctions for c in j.connections}
+        for name in ('roads','buildings','routes','stops','junctions'):
+            if getattr(snapshot,name) is getattr(previous,name) and name in self._indexes:
+                continue
+            entries = []
+            for item in getattr(snapshot,name):
+                if name in ('roads','routes','junctions'):
+                    points = [p for path in item.paths for p in path]
+                    if name == 'routes':
+                        points += [p for path in item.depot_paths for p in path]
+                        points += [p for leg in item.leg_paths for path in leg for p in path]
+                        # Bounds for navigation/stop visibility only; never connect these.
+                        points += [self._stops[sid].position for sid in item.stop_ids if sid in self._stops]
+                elif name == 'buildings':
+                    points = item.polygon or (item.position,)
+                else:
+                    points = (item.position,)
+                box = _bounds(points)
+                if box:
+                    entries.append((item,box))
+            self._indexes[name] = _SpatialIndex(entries,snapshot.bounds)
+            self._boxes[name] = {item.id:box for item,box in entries}
+        if not self._loaded and any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops)):
+            self._loaded = True
+            self.fit_to_map()
+            self._fit_pending = not self.isVisible()
+        self.update()
+
+    def set_options(self, **options):
+        unknown = set(options) - self.options.keys()
+        if unknown:
+            raise TypeError('Unknown map options: ' + ', '.join(sorted(unknown)))
+        if 'direction' in options and options['direction'] not in ('whole','up','down'):
+            raise ValueError('direction must be whole, up or down')
+        self.options.update(options)
+        self._revision += 1
+        self.update()
+
+    def _changed(self,interactive=False):
+        self._fit_pending = False
+        if interactive:
+            self._render_timer.start(100)
+        else:
+            self._render_timer.stop()
+        self.view_changed.emit(*self.center,self.zoom)
+        self.update()
+
+    def _fit_bounds(self, bounds):
+        x,z,xx,zz = bounds
+        self.center = ((x+xx)/2,(z+zz)/2)
+        self.zoom = min(max(1,self.width()-80)/max(1,xx-x),
+                        max(1,self.height()-80)/max(1,zz-z))
+        self.zoom = max(.0001,min(100.,self.zoom))
+        self._changed()
+
+    def fit_to_map(self):
+        self._fit_bounds(self.snapshot.bounds)
+
+    reset_view = fit_to_map
+
+
+
+    def _zoom(self, factor, anchor=None):
+        anchor = anchor or QPointF(self.width()/2,self.height()/2)
+        before = self.screen_to_world(anchor)
+        self.zoom = max(.0001,min(100.,self.zoom*factor))
+        after = self.screen_to_world(anchor)
+        self.center = (self.center[0]+before[0]-after[0],self.center[1]+before[1]-after[1])
+        self._changed(interactive=True)
+
+    def zoom_in(self):
+        self._zoom(1.35)
+
+    def zoom_out(self):
+        self._zoom(1/1.35)
+
+    def wheelEvent(self,event):
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if delta:
+            self._zoom(2 ** (delta/480),event.position())
+            event.accept()
+
+    def mousePressEvent(self,event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag = (event.position(),self.center)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+
+    def mouseMoveEvent(self,event):
+        if self._drag:
+            origin,center = self._drag
+            delta = event.position()-origin
+            self.center = (center[0]-delta.x()/self.zoom,center[1]+delta.y()/self.zoom)
+            self._changed(interactive=True)
+            event.accept()
+
+    def mouseReleaseEvent(self,event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._drag:
+                self.mouseMoveEvent(event)
+            self._drag = None
+            self._render_timer.stop()
+            self.update()
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        if self._fit_pending:
+            self.fit_to_map()
+
+    def search(self,text):
+        needle = str(text).strip().casefold()
+        if not needle:
+            return []
+        results = []
+        for kind,name in (('route','routes'),('stop','stops'),('building','buildings')):
+            boxes = {item.id:box for item,box in self._indexes.get(name,_SpatialIndex([],self.snapshot.bounds)).entries}
+            for item in getattr(self.snapshot,name):
+                label = self.route_label(item) if kind == 'route' else item.name
+                if needle in label.casefold() or needle == str(item.id) or (kind=='route' and needle==str(item.number)):
+                    results.append(MapSearchResult(kind,item.id,label,boxes.get(item.id,self.snapshot.bounds)))
+        return results
+
+    def focus_result(self,result):
+        # Resolve again against the current snapshot rather than stale result bounds.
+        for item,box in self._indexes.get(result.kind+'s',_SpatialIndex([],self.snapshot.bounds)).entries:
+            if item.id == result.id:
+                self._highlight = (result.kind,result.id)
+                if result.kind == 'route':
+                    self._fit_bounds(box)
+                else:
+                    self.center = ((box[0]+box[2])/2,(box[1]+box[3])/2)
+                    self.zoom = max(self.zoom,1.5)
+                    self._changed()
+                return True
+        return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def _render_key(self):
+        return (self._revision,self.width(),self.height(),self.devicePixelRatioF(),self.font().toString(),self._highlight)
+
+    def prepare_frame(self):
+        """Prewarm hidden map pages using their current layout, without blocking."""
+        key=self._render_key()
+        view = (*self.center,self.zoom)
+        if key==self._failed_frame_key:
+            return
+        if self._frame is None or key!=self._frame_key or (view!=self._frame_view and not self._render_timer.isActive()):
+            if self._async_render:
+                if self._frame_job is None:
+                    job=_FrameJob(_FrameSurface(self),key,view)
+                    job.signals.completed.connect(self._frame_completed)
+                    job.signals.failed.connect(self._frame_failed)
+                    self._frame_job=job
+                    QThreadPool.globalInstance().start(job)
+            else:
+                self._render_frame(key,view)
+
+    def paintEvent(self,event):
+        self.prepare_frame()
+        painter = QPainter(self)
+        key=self._render_key()
+        painter.fillRect(self.rect(),QColor(MAP_BACKGROUND))
+        if self._frame is not None and key==self._frame_key:
+            painter.save()
+            x,z,zoom = self._frame_view
+            factor = self.zoom/zoom
+            painter.translate(self.width()/2*(1-factor)+(x-self.center[0])*self.zoom,
+                              self.height()/2*(1-factor)+(self.center[1]-z)*self.zoom)
+            painter.scale(factor,factor)
+            painter.drawImage(QPointF(0,0),self._frame)
+            painter.restore()
+        painter.setFont(self.font())
+        self._draw_scale(painter)
+        self._draw_legend(painter)
+        painter.end()
+
+    @Slot(object,object,object,object)
+    def _frame_completed(self,key,view,frame,surface):
+        self._frame_job=None
+        if key==self._render_key():
+            self._frame,self._frame_key,self._frame_view=frame,key,view
+            self._base_cache=surface._base_cache
+            for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
+                setattr(self,name,getattr(surface,name))
+            self.frame_ready.emit()
+        self.update()
+        if not self.isVisible() and (key!=self._render_key() or view!=(*self.center,self.zoom)):
+            self.prepare_frame()
+
+    @Slot(object,str)
+    def _frame_failed(self,key,message):
+        self._frame_job=None
+        if key==self._render_key():
+            self._failed_frame_key=key
+            self.render_failed.emit(message)
+        else:
+            self.prepare_frame()
+
+    def _render_frame(self,key,view):
+        ratio = self.devicePixelRatioF()
+        frame = QImage(round(self.width()*ratio),round(self.height()*ratio),QImage.Format.Format_ARGB32_Premultiplied)
+        frame.setDevicePixelRatio(ratio)
+        painter = QPainter(frame)
+        self._paint(painter,overlays=False)
+        painter.end()
+        self._frame,self._frame_key,self._frame_view = frame,key,view
+        self.frame_ready.emit()
+
+
+
+
+
+    def export_image(self,path):
+        """Export the current viewport, with the exact same rendering/options."""
+        image = QImage(self.size(),QImage.Format.Format_ARGB32_Premultiplied)
+        painter = QPainter(image)
+        self._paint(painter)
+        painter.end()
+        return image.save(str(Path(path)))

@@ -28,7 +28,7 @@ def visual_window(qt_application,monkeypatch,tmp_path):
         pytest.skip('Local exported-save fixture is unavailable')
     data.update(save_path='测试数据.save',save_key='capacity-test',history=[])
     w.on_completed(data)
-    w.show();w.navigate(1)
+    w.show();w.navigate(2)
     QTest.qWait(200)
     # The custom 32px title bar is inside this client size; native rendering
     # checks the same content budget, rather than old external DWM margins.
@@ -182,7 +182,7 @@ def test_overlay_selection_reverse_and_navigation_do_not_change_detail_budget(vi
     assert p.left.width()==p._compact_width()
     assert p.right_scroll.geometry()==detail
     p.set_expanded(True);QTest.qWait(30)
-    w.navigate(0);w.navigate(1);QTest.qWait(350)
+    w.navigate(0);w.navigate(2);QTest.qWait(350)
     assert p.left.geometry()==p._left_rect()
     assert w.selected_key==key
 

@@ -119,7 +119,7 @@ def test_startup_stages_yield_to_events_and_keep_window_identity(monkeypatch, qt
     from PySide6.QtGui import QDragEnterEvent
     from PySide6.QtCore import Qt
     stages = []
-    for name in ('_prepare_content', '_build_shell', 'build_overview', 'build_lines', '_build_statistics', '_finish_ui'):
+    for name in ('_prepare_content', '_build_shell', 'build_overview', 'build_map', 'build_lines', '_build_statistics', '_finish_ui'):
         step = getattr(window, name)
         def checked_step(callback=step, stage=name):
             callback()
@@ -145,8 +145,8 @@ def test_startup_stages_yield_to_events_and_keep_window_identity(monkeypatch, qt
     assert not errors, errors
     assert order.index('responsive') < order.index('ready')
     assert window._content_ready and int(window.winId()) == original
-    assert window.pages.count() == 3
-    assert len(stages) == 6 and window.acceptDrops()
+    assert window.pages.count() == 4
+    assert len(stages) == 7 and window.acceptDrops()
     window.close()
 
 

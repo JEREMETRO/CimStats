@@ -133,16 +133,16 @@ def ready(window, qt_application, data=None):
 
 def test_navigation_renames_only_home_and_keeps_other_pages(window):
     from latest_info_page import LatestInfoPage
-    assert [button.text() for button in window.nav_buttons] == ['最新信息', '线路查询', '统计数据']
-    assert window.pages.count() == 3
+    assert [button.text() for button in window.nav_buttons] == ['最新信息', '地图显示', '线路查询', '统计数据']
+    assert window.pages.count() == 4
     assert isinstance(window.pages.widget(0), LatestInfoPage)
     # One shared header: only its title and the statistics sub-tabs change.
     window.navigate(0)
     assert window.header.title.text() == '最新信息' and window.stats_tabs.isHidden()
-    window.navigate(1)
+    window.navigate(2)
     assert window.pages.currentWidget() is window.lines_page
     assert window.header.title.text() == '线路查询' and window.stats_tabs.isHidden()
-    window.navigate(2)
+    window.navigate(3)
     assert window.pages.currentWidget() is window.statistics_page
     assert window.header.title.text() == '统计数据' and window.header.isAncestorOf(window.stats_tabs)
 

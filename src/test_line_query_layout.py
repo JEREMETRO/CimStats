@@ -21,7 +21,7 @@ def lines_window(qt_application, monkeypatch, tmp_path):
     data.update(history=[], save_path='TEST DATA.save', save_key='layout-test')
     window.on_completed(data)
     window.resize(1424, 921)  # reserve native frame/title within 1440 x 960
-    window.show(); window.navigate(1); window.line_clicked(0,0)
+    window.show(); window.navigate(2); window.line_clicked(0,0)
     for _ in range(8): qt_application.processEvents()
     yield window
     window.close()
@@ -152,13 +152,13 @@ def test_navigation_interrupts_surface_motion_without_reflow(lines_window, qt_ap
     before = page.right_scroll.geometry()
     w.navigate(0)
     QTest.qWait(35)
-    w.navigate(1)
-    QTest.qWait(35)
     w.navigate(2)
+    QTest.qWait(35)
+    w.navigate(3)
     assert not page.motion.running
     assert page.graphicsEffect() is None
     QTest.qWait(35)
-    w.navigate(1)
+    w.navigate(2)
     # Check natural completion with a bounded condition: a fixed 320 ms can
     # expire between paint and animation ticks when the real-save UI is busy.
     deadline = time.monotonic() + 2
@@ -168,7 +168,7 @@ def test_navigation_interrupts_surface_motion_without_reflow(lines_window, qt_ap
     assert page.graphicsEffect() is None
     assert not page.motion.running
     assert page.right_scroll.verticalScrollBar().maximum() == 0
-    w.navigate(1)
+    w.navigate(2)
     assert not page.motion.running
 
 
@@ -284,7 +284,7 @@ def test_fact_collapse_animation_reverses_from_current_height(lines_window, monk
     interrupted = page.detail_motion.animation
     lines_window.navigate(0)
     assert interrupted.state() == QAbstractAnimation.State.Stopped
-    lines_window.navigate(1)
+    lines_window.navigate(2)
     QTest.qWait(350)
     assert not page.schedule_expanded and page.detail.isVisible()
     assert page.detail.height() == original, (page.detail.maximumHeight(),page.detail.sizeHint(),page.detail.minimumSizeHint(),page.schedule_panel.height(),page.schedule_panel.minimumHeight(),page.schedule_panel.matrix.columns,page.schedule_panel.summary_host.height(),page.right_host.size(),[(c.isVisible(),c.isHidden(),c.geometry()) for c in lines_window.fact_cards])
@@ -325,7 +325,7 @@ def test_main_pages_do_not_show_bottom_status_area(lines_window, qt_application)
         from PySide6.QtCore import QPoint
         assert page.mapTo(window.content_host, QPoint(0, page.height())).y() == window.content_host.height(), \
             f'page {page_index} lost content height to a bottom status area'
-    window.navigate(1)
+    window.navigate(2)
     qt_application.processEvents()
     assert len(window.fact_cards) == 9
     assert window.lines_page.right_scroll.verticalScrollBar().maximum() == 0

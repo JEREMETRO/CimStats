@@ -1092,8 +1092,8 @@ class StatisticsPage(QWidget):
         self._short_ids = {str(c['公司标识']): str(index + 1)
                            for index, c in enumerate(sorted(self.companies,
                                                              key=lambda item: str(item['公司标识'])))}
-        self._company_palette = {company_id: DATA_COMPANY_COLORS[index % len(DATA_COMPANY_COLORS)]
-                                 for index, company_id in enumerate(sorted(self._short_ids))}
+        from semantic_colors import company_palette
+        self._company_palette = company_palette(self._short_ids)
         self.network_dashboard.set_company_palette(self._company_palette)
         self.simulation_time = parse_time(data['simulation_time'])
         prepared = data.get('_history_store')

@@ -56,30 +56,19 @@ def shared_axis_budget(panels):
     return min((view.axis_tick_budget() for panel in panels for view in getattr(panel, 'chart_views', ())), default=7)
 
 
-_KNOWN_GROUP_COLORS = dict(zip(
-    ('BlueCollar', 'WhiteCollar', 'BusinessPeople', 'Pensioner', 'Student', 'Tourist',
-     'bus', 'tram', 'trolley', 'metro', 'waterbus', 'misc'),
-    tokens.CATEGORY_COLORS[:6] + tokens.CATEGORY_COLORS[:6]))
-
-
 def _stable_color(key: str, palette: tuple[str, ...]) -> QColor:
-    return QColor(palette[int.from_bytes(sha256(key.encode('utf-8')).digest()[:4], 'big') % len(palette)])
+    from semantic_colors import stable_color
+    return QColor(stable_color(key, palette))
 
 
 def company_color(company_id: str) -> QColor:
-    return _stable_color('company:' + company_id, tokens.COMPANY_COLORS)
+    from semantic_colors import color_for
+    return QColor(color_for('company', company_id))
 
 
 def category_color(group: str, palette: tuple[str, ...] | None = None) -> QColor:
-    transport = tokens.transport_color(group)
-    if transport is not None:
-        return QColor(transport)
-    if palette is None:
-        return (QColor(_KNOWN_GROUP_COLORS[group]) if group in _KNOWN_GROUP_COLORS
-                else _stable_color('category:' + group, tokens.CATEGORY_COLORS))
-    if group in tokens.DATA_CATEGORY_GROUPS:
-        return QColor(palette[tokens.DATA_CATEGORY_GROUPS.index(group) % 6])
-    return _stable_color('category:' + group, palette)
+    from semantic_colors import category_color_hex
+    return QColor(category_color_hex(group, palette))
 
 
 def _number(value: Decimal | None, metric=None) -> str:

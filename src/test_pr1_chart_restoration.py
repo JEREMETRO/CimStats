@@ -201,7 +201,7 @@ def test_statistics_header_has_no_overlap_at_supported_sizes(width, height, tmp_
     monkeypatch.setattr(desktop_app, 'QSettings', lambda *_: settings)
     window = desktop_app.MainWindow()
     window.statistics_page.set_session(session())
-    window.navigate(2)
+    window.navigate(3)
     window.resize(width, height)
     window.show()
     QTest.qWait(100)

@@ -167,7 +167,7 @@ def test_line_details_scroll_and_tabs_replace_cleanly(monkeypatch, tmp_path):
     window.on_completed(data)
     window.resize(1600, 900)
     window.show()
-    window.navigate(1)
+    window.navigate(2)
     window.line_clicked(0, 0)
     from test_latest_info_integration import wait_for
     wait_for(app, lambda: not window._awaiting_dashboards
@@ -442,7 +442,7 @@ def test_main_window_sidebar_collapses_and_persists(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     window = desktop_app.MainWindow()
     assert isinstance(window.sidebar, NavigationInterface)
-    assert [button.text() for button in window.nav_buttons] == ['最新信息', '线路查询', '统计数据']
+    assert [button.text() for button in window.nav_buttons] == ['最新信息', '地图显示', '线路查询', '统计数据']
     window.set_sidebar_collapsed(True)
     assert window.sidebar.width() < 100
     assert window._sidebar_collapsed
@@ -517,7 +517,7 @@ def test_other_pages_reflow_and_scroll_at_narrow_width(monkeypatch, tmp_path):
     assert passengers.visible_mode_rows()
     passengers.show_ranking()
     assert passengers.visible_ranking_rows()
-    window.navigate(1)
+    window.navigate(2)
     window.line_clicked(0, 0)
     for _ in range(5): app.processEvents()
     assert window._selected_line is not None

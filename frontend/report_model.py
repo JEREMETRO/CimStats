@@ -340,7 +340,7 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
         mode_name = display_mode(raw.get("线路类型", ""))
         line_number = integer(raw.get("线路号"))
         line = {
-            "key": public_key(raw), "公司名称": company_name,
+            "key": public_key(raw), "对象ID": optional_integer(raw.get("对象ID")), "公司名称": company_name,
             "公司标识": raw["公司标识"], "原始公司名称": raw["原始公司名称"],
             "运输制式": mode_name, "线路号": line_number,
             "线路名称": format_line_name(line_number, raw.get("线路名称", "")),

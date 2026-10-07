@@ -114,12 +114,12 @@ def test_overview_ranking_pie_and_extreme_interaction(window):
         assert len(card.values) == 4
         if highlight.line is not None:
             card.line_requested.emit(highlight.line.key)
-            assert window.pages.currentIndex() == 1
+            assert window.pages.currentIndex() == 2
             assert window._selected_line['key'] == highlight.line.key
 
 
 def test_line_search_sort_details_and_fields(window):
-    window.navigate(1)
+    window.navigate(2)
     row = window.data['lines'][0]
     window.query.setText(row['线路名称'])
     assert window.line_table.rowCount() == len(window.filtered_lines())
@@ -224,7 +224,7 @@ def test_replacement_import_clears_old_tabs_and_can_cancel(window, monkeypatch, 
     source = tmp_path / 'company.xlsx'
     Workbook().save(source)
     replacement.setdefault('outputs', {})['company_workbook'] = source
-    window.navigate(1)
+    window.navigate(2)
     window.line_clicked(0, 0)
     old_cards = list(window.fact_cards)
     window.start_parse(tmp_path / '中文存档.save')

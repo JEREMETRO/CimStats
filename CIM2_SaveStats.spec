@@ -31,7 +31,7 @@ version_resource = VSVersionInfo(
     ])]), VarFileInfo([VarStruct('Translation', [2052, 1200])])],
 )
 hiddenimports = collect_submodules("PySide6.QtCharts") + collect_submodules("clr") + [
-    "clr", "pythonnet", "clr_loader",
+    "clr", "pythonnet", "clr_loader", "map_geometry", "map_analysis", "map_model", "numpy", "UnityPy", "dnfile",
 ]
 managed_root_arg = os.environ.get("CIM2_BUILD_MANAGED_ROOT")
 probe_arg = os.environ.get("CIM2_BUILD_PROBE_PATH")
@@ -90,7 +90,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "pytest", "_pytest", "Cython", "IPython", "UnityPy"],
+    excludes=["tkinter", "pytest", "_pytest", "Cython", "IPython"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

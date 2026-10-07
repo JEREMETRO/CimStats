@@ -15,11 +15,10 @@ import stats_tokens as tokens
 from stats_motion import SurfaceMotion, CollapseMotion
 from stats_elevation import attach_card_elevation
 from card_comparison_label import ComparisonLabel
+from semantic_colors import SOCIAL, stable_color
 
 MODE_COLORS = {'步行': '#1677FF', '公共交通': '#159A79', '私家车': '#F5A653'}
-SERIES_COLORS = {**MODE_COLORS, '平均': '#1677FF', 'WhiteCollar': '#F5A653',
-    'BlueCollar': '#159A79', 'BusinessPeople': '#A477E6', 'Pensioner': '#C63864',
-    'Student': '#72C7D9', 'Tourist': '#B99027', '经济增长率': '#1677FF',
+SERIES_COLORS = {**MODE_COLORS, '平均': '#1677FF', **{item.key: item.color for item in SOCIAL}, '经济增长率': '#1677FF',
     '利率': '#F5A653', '电力': '#1677FF', '柴油': '#F5A653'}
 
 
