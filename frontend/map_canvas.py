@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal, Slot, QTimer, QObject, QRunnable, QThreadPool
 from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTransform
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QApplication
 
 import stats_tokens as tokens
 from stats_typography import ui_font
@@ -794,6 +794,7 @@ class MapCanvas(_MapDrawing, QWidget):
     view_changed = Signal(float, float, float)
     frame_ready = Signal()
     render_failed = Signal(str)
+    buildingClicked = Signal(int, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -935,6 +936,7 @@ class MapCanvas(_MapDrawing, QWidget):
     def mousePressEvent(self,event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag = (event.position(),self.center)
+            self._drag_moved = False
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
 
@@ -942,19 +944,44 @@ class MapCanvas(_MapDrawing, QWidget):
         if self._drag:
             origin,center = self._drag
             delta = event.position()-origin
+            if delta.manhattanLength() >= QApplication.startDragDistance():
+                self._drag_moved = True
             self.center = (center[0]-delta.x()/self.zoom,center[1]+delta.y()/self.zoom)
             self._changed(interactive=True)
             event.accept()
 
     def mouseReleaseEvent(self,event):
         if event.button() == Qt.MouseButton.LeftButton:
+            clicked = self._drag is not None
             if self._drag:
                 self.mouseMoveEvent(event)
+                clicked = not self._drag_moved
             self._drag = None
             self._render_timer.stop()
             self.update()
             self.setCursor(Qt.CursorShape.OpenHandCursor)
             event.accept()
+            if clicked:
+                building = self.building_at(event.position())
+                if building is not None:
+                    self.buildingClicked.emit(building.id, event.globalPosition().toPoint())
+
+    def building_at(self, position):
+        """Hit only visible saved footprints; a bounding box is not a building."""
+        if not self.options.get('buildings', True):
+            return None
+        index = self._indexes.get('buildings')
+        if index is None:
+            return None
+        x, z = self.screen_to_world(position)
+        hits = []
+        for building in index.query((x, z, x, z)):
+            if len(building.polygon) < 3:
+                continue
+            polygon = QPolygonF([QPointF(p[0], p[2]) for p in building.polygon])
+            if polygon.containsPoint(QPointF(x, z), Qt.FillRule.OddEvenFill):
+                hits.append(building)
+        return max(hits, key=lambda b: (b.position[1], b.id), default=None)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)

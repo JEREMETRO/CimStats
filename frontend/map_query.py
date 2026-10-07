@@ -6,7 +6,7 @@ from collections import OrderedDict
 from math import isfinite, dist
 from types import MappingProxyType
 from datetime import datetime, timedelta
-from map_model import MapSnapshot, SOCIAL_GROUPS, building_function_values
+from map_model import MapSnapshot, SOCIAL_GROUPS, BuildingFunctionValues, building_function_values
 from map_visibility import operating_paths, visible_route_stop_ids
 from semantic_colors import (SOCIAL, category, canonical_key, color_for,
                              company_palette, line_palette, map_fill, building_function_fill)
@@ -64,6 +64,14 @@ def _selected(state, key, value):
     return selection is None or str(value) in {str(item) for item in selection}
 
 
+def _function_view(values, view):
+    if view not in ('home', 'work', 'leisure'):
+        return values
+    return BuildingFunctionValues(*(getattr(values, role) if role == view else 0
+                                    for role in ('home', 'work', 'leisure')),
+                                  values.denominator)
+
+
 class MapQuery:
     def __init__(self, snapshot, stats=None, *, company_ids=()):
         # Waterbus saves do not expose usable operational route geometry.
@@ -114,9 +122,9 @@ class MapQuery:
             self._depot_lengths[route.id] = length
         return length
 
-    def _buildings_for(self, selected, emphasis):
+    def _buildings_for(self, selected, emphasis, view='combined'):
         groups = None if selected is None else tuple(g for g in SOCIAL_GROUPS if g in selected)
-        key = (groups, bool(emphasis), None if selected is None else
+        key = (view, groups, bool(emphasis), None if selected is None else
                frozenset(g for g in selected if g in ('transport', 'special', 'unknown')))
         if key in self._building_cache:
             self._building_cache.move_to_end(key)
@@ -140,7 +148,7 @@ class MapQuery:
                     included = ((selected is None or 'unknown' in selected) if values.denominator is None
                                 else selected is None or any(v is not None and v > 0
                                                              for v in (values.home, values.work, values.leisure)))
-                    cached = (included, building_function_fill(values, bool(emphasis)) if included else None)
+                    cached = (included, building_function_fill(_function_view(values, view), bool(emphasis)) if included else None)
                     capacity_colors[capacities] = cached
                 included, color = cached
                 if not included:
@@ -201,7 +209,8 @@ class MapQuery:
                           and _selected(state, 'layer_modes', canonical_key('mode', route.mode))]
         if emphasis is None:
             emphasis = not any(self._geometry_for(route, direction)[0] for route in visible_routes)
-        buildings, building_colors = self._buildings_for(state.get('building_classes'), emphasis)
+        buildings, building_colors = self._buildings_for(state.get('building_classes'), emphasis,
+                                                        state.get('building_view', 'combined'))
         # Display offsets and colouring never enter distance calculations.
         length = 0.
         visible_stop_ids = set()
@@ -230,7 +239,8 @@ class MapQuery:
                 if building.category in ('transport','special'):
                     keys.add(building.category)
                     continue
-                values=building_function_values(building,groups)
+                values=_function_view(building_function_values(building,groups),
+                                      state.get('building_view', 'combined'))
                 if values.denominator is None or values.denominator==0:
                     keys.add('unknown')
                     continue
