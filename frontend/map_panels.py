@@ -2,10 +2,10 @@
 from __future__ import annotations
 from copy import deepcopy
 from math import isfinite
-from PySide6.QtCore import Qt, Signal, QRect, QSize
+from PySide6.QtCore import Qt, Signal, QRect, QSize, QDateTime
 from PySide6.QtGui import QColor, QIcon, QPixmap, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidgetItem, QAbstractItemView, QFrame, QGridLayout, QButtonGroup
-from qfluentwidgets import CheckBox, ComboBox, LineEdit, PushButton, ListWidget, BodyLabel, RadioButton, FluentIcon, TransparentPushButton, CompactDoubleSpinBox, setCustomStyleSheet
+from qfluentwidgets import CheckBox, ComboBox, LineEdit, PushButton, ListWidget, BodyLabel, RadioButton, FluentIcon, TransparentPushButton, CompactDoubleSpinBox, DateTimeEdit, setCustomStyleSheet
 from stats_controls import StatisticsScrollArea
 from stats_typography import ui_font
 import stats_tokens as tokens
@@ -19,7 +19,8 @@ _DEFAULTS = dict(roads=True, buildings=True, routes=True, **{k:None for k in _SE
     passenger_min=None, passenger_max=None, building_color_by='class', building_class_target=None,
     building_metric='density', direction='whole', color_by='mode', priority_by='mode',
     passenger_desc=True, mode_order=[], company_order=[], deadhead=False, stops=True,
-    stop_names=False, line_numbers=False, mode_widths={}, distinguish_directions=False, building_emphasis=None)
+    stop_names=False, line_numbers=False, mode_widths={}, distinguish_directions=False, building_emphasis=None,
+    service_time_mode='off', service_start=None, service_end=None)
 _PROFITS = [dict(id=entry.key, name=entry.name, color=entry.color) for entry in PROFIT]
 
 class _WrappedList(ListWidget):
@@ -182,6 +183,7 @@ class MapPanelSet(QWidget):
         self._state = deepcopy(_DEFAULTS)
         self._options = {}
         self._updating = False
+        self._service_clock = None
         self.group_lists = {}; self.group_summaries = {}; self.layer_checks = {}; self.controls = {}; self.control_labels = {}
         self.panels = {}; self._layouts = {}
         for key, title in [('layers','图层控制'),('filters','线路筛选'),('display','显示设置')]:
@@ -204,10 +206,21 @@ class MapPanelSet(QWidget):
             if key not in _DEFAULTS: continue
             if key=='mode_widths':self._state[key]=_clean_widths(value or {})
             else:self._state[key] = (None if value is None else set(value)) if key in _SET_KEYS else deepcopy(value)
+        mode=self._state['service_time_mode']
+        if mode not in ('off','instant','range'):mode='off'
+        dates={key:QDateTime.fromString(str(self._state[key] or ''),Qt.DateFormat.ISODate)
+               for key in ('service_start','service_end')}
+        for key,value in dates.items():
+            if self._state[key] is not None and not value.isValid():self._state[key]=None
+        if mode!='off' and not dates['service_start'].isValid():mode='off'
+        if mode=='range' and (not dates['service_end'].isValid() or dates['service_end']<=dates['service_start']):mode='off'
+        self._state['service_time_mode']=mode
         self._refresh()
 
     def set_options(self, options):
         self._options=deepcopy(options)
+        clock=QDateTime.fromString(str(options.get('simulated_datetime') or ''),Qt.DateFormat.ISODate)
+        self._service_clock=clock if clock.isValid() else None
         # Aliases accept model-facing category names, preserving public state keys.
         for key, alias in [('company_ids','companies'),('layer_modes','modes')]:
             if key not in self._options: self._options[key]=self._options.get(alias,[])
@@ -336,6 +349,17 @@ class MapPanelSet(QWidget):
             edit.editingFinished.connect(lambda k=key,e=edit:self._passenger_changed(k,e))
             self.controls[key]=edit; row.addWidget(edit)
         conditions.addLayout(row)
+        service=self._section(layout)
+        self._choices(service,'service_time_mode','运营时间', [('off','不限时间'),('instant','指定时刻'),('range','指定时段')])
+        self.service_labels={}
+        for key,text in [('service_start','开始日期时间'),('service_end','结束日期时间')]:
+            self.service_labels[key]=self._label(service,text)
+            edit=_style_control(DateTimeEdit()); edit.setDisplayFormat('yyyy-MM-dd HH:mm:ss')
+            edit.setCalendarPopup(False); edit.setMinimumHeight(36); edit.setAccessibleName(text)
+            edit.dateTimeChanged.connect(self._service_edited)
+            self.controls[key]=edit; service.addWidget(edit)
+        self.service_error=self._label(service,'')
+        self.service_error.hide()
         results=self._section(layout)
         self.line_list=self._group(results,'manual_line_ids','线路结果',160)
 
@@ -374,12 +398,62 @@ class MapPanelSet(QWidget):
         for key in ('manual_line_ids','company_ids','modes','profit_statuses'):
             self._state[key]={item['id'] for item in self._options.get(key,[])}
         self._state['passenger_min']=self._state['passenger_max']=None
+        self._state['service_time_mode']='off'
         self.search.clear(); self._refresh(); self.stateChanged.emit(self.state())
 
     def _changed(self,key,value):
+        if key=='service_time_mode':
+            self._service_mode_changed(value); return
         if key=='mode_widths':value=_clean_widths(value or {})
         if self._updating or self._state[key]==value: return
-        self._state[key]=value; self._refresh(); self.stateChanged.emit(self.state())
+        self._state[key]=value
+        if key=='manual_line_ids':
+            # Selection changes do not alter candidates or any other controls.
+            blocked=self.line_list.blockSignals(True)
+            try:
+                for i in range(self.line_list.count()):
+                    item=self.line_list.item(i)
+                    item.setCheckState(Qt.CheckState.Checked if item.data(Qt.ItemDataRole.UserRole) in value else Qt.CheckState.Unchecked)
+            finally:self.line_list.blockSignals(blocked)
+            self._summaries()
+        else:self._refresh()
+        self.stateChanged.emit(self.state())
+
+    def _service_values(self,mode):
+        if mode=='off':return {}
+        if self._service_clock is None and self._state['service_start'] is None:
+            self.service_error.setText('模拟日期不可用'); self.service_error.show(); return None
+        start=self.controls['service_start'].dateTime()
+        end=self.controls['service_end'].dateTime()
+        if mode=='range' and end<=start:
+            self.service_error.setText('结束日期时间须晚于开始'); self.service_error.show(); return None
+        self.service_error.hide()
+        values={'service_start':start.toString(Qt.DateFormat.ISODate)}
+        if mode=='range':values['service_end']=end.toString(Qt.DateFormat.ISODate)
+        return values
+
+    def _service_mode_changed(self,mode):
+        if self._updating:return
+        values=self._service_values(mode)
+        if values is None:
+            self.controls['service_time_mode'].set_value(self._state['service_time_mode']); return
+        if mode==self._state['service_time_mode'] and all(self._state[k]==v for k,v in values.items()):return
+        self._state.update(values); self._state['service_time_mode']=mode
+        self._sync_service_controls(); self._refresh_lines(); self.stateChanged.emit(self.state())
+
+    def _service_edited(self,*_):
+        if self._updating or self._state['service_time_mode']=='off':return
+        values=self._service_values(self._state['service_time_mode'])
+        if values is None:return
+        if any(self._state[k]!=v for k,v in values.items()):
+            self._state.update(values); self.stateChanged.emit(self.state())
+
+    def _sync_service_controls(self):
+        mode=self._state['service_time_mode']
+        for key in ('service_start','service_end'):
+            visible=mode!='off' and (key=='service_start' or mode=='range')
+            self.controls[key].setVisible(visible); self.service_labels[key].setVisible(visible)
+        if mode=='off':self.service_error.hide()
 
     def _passenger_changed(self,key,edit):
         text=edit.text().strip()
@@ -468,6 +542,7 @@ class MapPanelSet(QWidget):
         view.blockSignals(False)
 
     def _line_matches(self,line):
+        if self._state['service_time_mode']!='off' and line.get('service_matches') is not True:return False
         for key,field in [('company_ids','company_id'),('modes','mode')]:
             if self._state[key] is not None and line.get(field) not in self._state[key]:return False
         profit=line.get('profit')
@@ -572,6 +647,11 @@ class MapPanelSet(QWidget):
             for key,widget in self.controls.items():
                 widget.blockSignals(True)
                 if isinstance(widget,_ChoiceGroup):widget.set_value(self._state[key])
+                elif isinstance(widget,DateTimeEdit):
+                    value=QDateTime.fromString(str(self._state[key] or ''),Qt.DateFormat.ISODate)
+                    if not value.isValid() and self._service_clock is not None:
+                        value=self._service_clock.addSecs(3600) if key=='service_end' else self._service_clock
+                    if value.isValid():widget.setDateTime(value)
                 elif isinstance(widget,CheckBox):
                     value=self._options.get('building_emphasis_effective',True) if key=='building_emphasis' and self._state[key] is None else self._state[key]
                     widget.setChecked(bool(value))
@@ -592,4 +672,5 @@ class MapPanelSet(QWidget):
             date=self._options.get('passenger_date')
             self.passenger_date.setText(f'客流 · {date} · 人次' if date else '客流 · 人次')
             self._refresh_lines(); self._sync_layer_checks(); self._summaries()
+            self._sync_service_controls()
         finally:self._updating=False
