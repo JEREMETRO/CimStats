@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, Slot, Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
 from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar
 import stats_tokens as tokens
 from stats_typography import ui_font
@@ -254,10 +254,33 @@ class MapPage(QWidget):
             return
         if any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops)):
             self.surface.set_loading(True)
+        self._prepare_hidden_layout()
         self.set_snapshot(snapshot)
         self.canvas.fit_to_map()
+        # A replacement save can arrive while the canvas is hidden and already
+        # marked loaded. Keep its deferred resize fit for the actual dock size.
+        if not self.canvas.isVisible():
+            self.canvas._fit_pending=not isinstance(self.parentWidget(),QStackedWidget)
         self.canvas.prepare_frame()
         self.ready.emit()
+
+    def _prepare_hidden_layout(self):
+        """Lay out a stacked page before prewarming its first visible frame."""
+        parent=self.parentWidget()
+        if self.isVisible() or not isinstance(parent,QStackedWidget):
+            return
+        self.resize(parent.contentsRect().size())
+        self.ensurePolished()
+        self.layout().setGeometry(self.rect())
+        self.dock.layout().setGeometry(self.dock.rect())
+        # These are now the actual host bounds, so saved floating-panel clamps
+        # and collapsed-dock widths can be resolved before the page is shown.
+        if self.dock._pending_layout is not None:
+            saved=self.dock._pending_layout
+            self.dock._pending_layout=None
+            self.dock._apply_layout(saved)
+            self.dock.layout().setGeometry(self.dock.rect())
+        self.canvas.setGeometry(self.surface.rect())
 
     def _failed(self,generation,message):
         if generation==self._generation:

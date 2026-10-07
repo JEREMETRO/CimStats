@@ -152,6 +152,7 @@ def test_prefetch_result_is_held_until_session_then_reused_without_second_worker
     assert len(workers) == 1
     assert page.query is not None
     assert page.query.snapshot.buildings == snapshot.buildings
+    assert page.canvas._fit_pending
     page.close()
 
 

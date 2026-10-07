@@ -624,7 +624,7 @@ class MapGeometryService:
                 raise RuntimeError('Map assets changed during extraction')
             _check(cancelled)
             staging=job/'snapshot.json.gz'
-            with gzip.open(staging,'wt',encoding='utf-8') as f:
+            with gzip.open(staging,'wt',encoding='utf-8',compresslevel=3) as f:
                 json.dump(asdict(snapshot),f,ensure_ascii=False,separators=(',',':'))
             _check(cancelled)
             os.replace(staging,target)
