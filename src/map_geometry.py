@@ -22,7 +22,8 @@ import tempfile
 import threading
 
 from map_model import (GroupCount, GroupFunctionCount, MapBuilding, MapRoad, MapRoute, MapSnapshot,
-                       MapStop, MapLane, MapJunction, MapJunctionConnection, RouteDirection, polygon_area)
+                       MapStop, MapLane, MapJunction, MapJunctionConnection, RouteDirection, polygon_area,
+                       BuildingServiceLines, RouteService, ServiceTimetable)
 from map_analysis import infer_direction
 from display_rules import format_line_name
 
@@ -40,7 +41,7 @@ def probe_script():
 
 
 PROJECT = runtime_root()
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SOCIAL_GROUPS = ('BlueCollar','WhiteCollar','Student','BusinessPeople','Pensioner','Tourist')
 
 
@@ -359,6 +360,21 @@ def route_leg(references, roads, start=None, end=None, *, connections=None, mode
     return tuple(p for p in paths[lo:hi+1] if len(p)>1),tuple(issues)
 
 
+def _service_lines(data):
+    data = data or {}
+    return BuildingServiceLines(data.get('known', False), tuple(dict.fromkeys(data.get('route_ids', ()))),
+                                tuple(data.get('unresolved_refs', ())), data.get('source'))
+
+
+def _route_service(data):
+    data = data or {}
+    tables = data.get('timetables')
+    return RouteService(data.get('active'), data.get('complete'),
+                        None if tables is None else tuple(ServiceTimetable(**(t | {
+                            'departure_ticks': None if t.get('departure_ticks') is None else tuple(t['departure_ticks'])
+                        })) for t in tables))
+
+
 def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None):
     roads=[]; diagnostics=list(data.get('diagnostics',()))
     raw_roads=data['roads']
@@ -390,7 +406,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None)
                                      polygon,b.get('category','unknown'),population[0],population[1],polygon_area(polygon),population[2],
                                      tuple(GroupFunctionCount(**r) for r in b.get('function_capacities',())),
                                      tuple(GroupFunctionCount(g.group,g.count,next((v.count for v in population[1] if v.group==g.group),None),None) for g in population[0]),
-                                     b.get('game_area_type')))
+                                     b.get('game_area_type'), _service_lines(b.get('service_lines'))))
     junctions=[]
     for j in data.get('junctions',()):
         _check(cancelled)
@@ -476,7 +492,8 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None)
                                tuple(p for leg in legs for p in leg),direction,tuple(legs),tuple(depot_paths),
                                ';'.join(dict.fromkeys(issues)) or None,line.get('company_index'),
                                line.get('previous_day_passengers'),line.get('passenger_date'),
-                               line.get('passenger_diagnostic','no_serialized_previous_day_line_passengers')))
+                               line.get('passenger_diagnostic','no_serialized_previous_day_line_passengers'),
+                               _route_service(line.get('service'))))
     allpoints=[p for r in roads for path in r.paths for p in path]
     allpoints.extend(b.position for b in buildings)
     allpoints.extend(j.position for j in junctions)
@@ -496,7 +513,8 @@ def _decode_snapshot(d):
                        'residents':counts(b['residents']),'workers':counts(b['workers']),
                        'combined_groups':counts(b['combined_groups']),
                        'function_capacities':tuple(GroupFunctionCount(**r) for r in b.get('function_capacities',())),
-                       'function_population':tuple(GroupFunctionCount(**r) for r in b.get('function_population',()))})) for b in d['buildings'])
+                       'function_population':tuple(GroupFunctionCount(**r) for r in b.get('function_population',())),
+                       'service_lines':_service_lines(b.get('service_lines'))})) for b in d['buildings'])
     stops=tuple(MapStop(**(s|{'position':tuple(s['position'])})) for s in d['stops'])
     junctions=tuple(MapJunction(**(j|{'position':tuple(j['position']),'road_ids':tuple(j['road_ids']),
                           'connections':tuple(MapJunctionConnection(**(c|{'paths':paths(c['paths'])})) for c in j['connections'])}))
@@ -506,7 +524,7 @@ def _decode_snapshot(d):
         direction=r['direction']; direction=RouteDirection(**(direction|{'paired_stations':tuple(tuple(v) for v in direction['paired_stations'])}))
         routes.append(MapRoute(**(r|{'stop_ids':tuple(r['stop_ids']),'paths':paths(r['paths']),
                                       'depot_paths':paths(r['depot_paths']),'leg_paths':tuple(paths(p) for p in r['leg_paths']),
-                                      'direction':direction})))
+                                      'direction':direction, 'service':_route_service(r.get('service'))})))
     return MapSnapshot(**(d|{'roads':roads,'buildings':buildings,'stops':stops,'routes':tuple(routes),
                             'diagnostics':tuple(d['diagnostics']),'bounds':tuple(d['bounds']),'junctions':junctions}))
 
@@ -801,6 +819,20 @@ def _extract_objects(e,root,catalog):
         metadata=field_cache[key]
         return metadata.GetValue(obj) if metadata is not None else None
     array=e.array_values
+    def optional_int(obj, name):
+        value = field(obj, name)
+        return int(value) if value is not None else None
+    def optional_bool(obj, name):
+        value = field(obj, name)
+        return bool(value) if value is not None else None
+    def service_record(line):
+        tables = field(line, 'm_timeTables')
+        return dict(active=optional_bool(line, 'm_active'), complete=optional_bool(line, 'm_complete'),
+                    timetables=None if tables is None else [dict(
+                        active_days=optional_int(tt, 'm_activeDays'), start_tick=optional_int(tt, 'm_startTime'),
+                        end_tick=optional_int(tt, 'm_endTime'), interval_tick=optional_int(tt, 'm_interval'),
+                        departure_ticks=None if field(tt, 'm_rows') is None else [optional_int(row, 'm_departure')
+                            for row in array(field(tt, 'm_rows'))]) for tt in array(tables)])
     rules=field(field(root,'m_rulesetManagerData'),'m_ruleset')
     items=field(rules,'m_items')
     rule_values=None if items is None else [(str(field(entry.Key,'m_category') or ''),str(field(entry.Key,'m_id') or ''),int(entry.Value)) for entry in items]
@@ -906,7 +938,8 @@ def _extract_objects(e,root,catalog):
             buildings.append(dict(id=oid,kind=kind,asset_id=asset_id,name=str(field(obj,'m_name') or ''),position=position,
                                   polygon=polygon,category=_category(metadata,kind),residents=citizens(field(obj,'m_residents')),
                                   workers=citizens(field(obj,'m_employees')),game_area_type=metadata.get('area_type') if metadata else None,
-                                  function_capacities=native_function_capacities(metadata,multiplier,tables)))
+                                  function_capacities=native_function_capacities(metadata,multiplier,tables),
+                                  service_lines=dict(known=False,route_ids=[],unresolved_refs=[],source=None)))
         elif kind=='StopData':
             stops[str(oid)]=dict(id=oid,name=str(field(obj,'m_name') or ''),position=vector(field(obj,'m_position')))
         elif kind=='JunctionData':
@@ -972,7 +1005,7 @@ def _extract_objects(e,root,catalog):
                           mode=str(field(field(line,'m_type'),'m_id') or ''),company=str(field(owner,'m_name') or ''),
                           company_id=company_id,company_index=owner_index,stops=line_stops,legs=legs,
                           previous_day_passengers=None,passenger_date=None,
-                          passenger_diagnostic='no_serialized_previous_day_line_passengers'))
+                          passenger_diagnostic='no_serialized_previous_day_line_passengers',service=service_record(line)))
         line=field(line,'m_nextLine')
     if len(lines)!=int(field(transport,'m_lineCount')): raise ValueError('Line manager count mismatch')
     if not catalog: diagnostics.append('building_asset_catalog_unavailable')

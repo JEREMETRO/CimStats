@@ -70,6 +70,35 @@ class MapRoad:
     lanes: tuple[MapLane, ...] = ()
 
 @dataclass(frozen=True, slots=True)
+class BuildingServiceLines:
+    """Confirmed saved associations; unavailable source differs from empty.
+
+    v1.6.3 BuildingData has no such serialized field. Its coverage menu is
+    calculated by TransportManager.ListLines; extraction leaves this unknown.
+    """
+    known: bool = False
+    route_ids: tuple[int, ...] = ()
+    unresolved_refs: tuple[int | None, ...] = ()
+    source: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceTimetable:
+    active_days: int | None = None
+    start_tick: int | None = None
+    end_tick: int | None = None
+    interval_tick: int | None = None
+    departure_ticks: tuple[int | None, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RouteService:
+    active: bool | None = None
+    complete: bool | None = None
+    timetables: tuple[ServiceTimetable, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MapBuilding:
     id: int
     asset_id: str
@@ -84,6 +113,7 @@ class MapBuilding:
     function_capacities: tuple[GroupFunctionCount, ...] = ()
     function_population: tuple[GroupFunctionCount, ...] = ()
     game_area_type: int | None = None
+    service_lines: BuildingServiceLines = BuildingServiceLines()
 
 @dataclass(frozen=True, slots=True)
 class MapStop:
@@ -145,6 +175,7 @@ class MapRoute:
     previous_day_passengers: int | None = None
     passenger_date: str | None = None
     passenger_diagnostic: str | None = None
+    service: RouteService = RouteService()
 
 @dataclass(frozen=True, slots=True)
 class MapSnapshot:
@@ -156,7 +187,7 @@ class MapSnapshot:
     asset_signature: str = ''
     diagnostics: tuple[str, ...] = ()
     bounds: tuple[float, float, float, float] = (0., 0., 1., 1.)
-    schema_version: int = 9
+    schema_version: int = 10
     junctions: tuple[MapJunction, ...] = ()
 
 class MapModel:
