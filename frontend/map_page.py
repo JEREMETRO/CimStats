@@ -3,20 +3,28 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from copy import deepcopy
+from dataclasses import dataclass
 from PySide6.QtCore import QThread, Signal, Slot, Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
-from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar
+from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar, Pivot
 import stats_tokens as tokens
 from stats_typography import ui_font
-from map_canvas import MapCanvas, ROAD_STYLES
+from map_canvas import MapCanvas, ROAD_STYLES, MapSearchResult
 from map_panels import MapPanelSet
 from map_docking import MapDockHost
 from map_model import MapSnapshot, road_display_level
 from map_query import MapQuery, stats_from_session
+from map_presets import PresetStore, PRESETS, valid_view
 
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, default=lambda v: sorted(v, key=str) if isinstance(v, set) else str(v))
+
+
+@dataclass(frozen=True, slots=True)
+class _SaveSearchResult(MapSearchResult):
+    save_token: tuple[str, int]
 
 
 class MapWorker(QThread):
@@ -30,7 +38,7 @@ class MapWorker(QThread):
     def run(self):
         from map_geometry import MapGeometryService, MapCancelled
         try:
-            snapshot = MapGeometryService(cache_dir=self.cache).load(self.source, self.isInterruptionRequested)
+            snapshot = MapGeometryService(cache_dir=self.cache).load(self.source, self.isInterruptionRequested, use_disk_cache=False)
             if not self.isInterruptionRequested():
                 self.completed.emit(self.generation, snapshot)
         except MapCancelled:
@@ -41,9 +49,11 @@ class MapWorker(QThread):
 
 
 class _MapSurface(QWidget):
-    def __init__(self, canvas, parent=None):
+    def __init__(self, canvas, parent=None, search=None, focus=None):
         super().__init__(parent)
         self.canvas = canvas
+        self._search_provider = search or canvas.search
+        self._focus_provider = focus or canvas.focus_result
         canvas.setParent(self)
         self.loading = IndeterminateProgressBar(self)
         self.loading.setAccessibleName('正在加载地图')
@@ -60,6 +70,7 @@ class _MapSurface(QWidget):
         self.search.searchSignal.connect(self._search)
         self.search.clearSignal.connect(self.results.hide)
         self.results.itemClicked.connect(self._focus)
+        self.results.itemActivated.connect(self._focus)
         self.controls = QWidget(self)
         column = QVBoxLayout(self.controls)
         column.setContentsMargins(0,0,0,0)
@@ -85,7 +96,7 @@ class _MapSurface(QWidget):
 
     def _search(self,*_):
         self.results.clear()
-        for result in self.canvas.search(self.search.text()):
+        for result in self._search_provider(self.search.text()):
             item=QListWidgetItem(result.label)
             item.setData(Qt.ItemDataRole.UserRole,result)
             self.results.addItem(item)
@@ -102,7 +113,7 @@ class _MapSurface(QWidget):
             self.loading.hide()
 
     def _focus(self,item):
-        self.canvas.focus_result(item.data(Qt.ItemDataRole.UserRole))
+        self._focus_provider(item.data(Qt.ItemDataRole.UserRole))
         self.results.hide()
 
 
@@ -113,11 +124,17 @@ class MapPage(QWidget):
     def __init__(self, settings, parent=None, cache_dir=None):
         super().__init__(parent)
         self.settings=settings
-        self.cache_dir=Path(cache_dir or Path(__file__).resolve().parents[1]/'jobs'/'map-cache')
+        self.cache_dir=Path(cache_dir) if cache_dir is not None else None
         self.session={}
         self.query=None
         self.result=None
         self._generation=0
+        self._session_generation=0
+        self._pending_route=None
+        self._switching=True
+        self._snapshot=None
+        self._panel_catalogs={}
+        self._planning_options=None
         self._awaiting_frame=False
         self._panel_presentation=None
         self._prefetch_path=None
@@ -134,10 +151,28 @@ class MapPage(QWidget):
             self.canvas.frame_ready.connect(self._frame_ready)
         if hasattr(self.canvas, 'render_failed'):
             self.canvas.render_failed.connect(self._render_failed)
-        self.surface=_MapSurface(self.canvas)
+        self.surface=_MapSurface(self.canvas, search=self.search, focus=self._focus_search)
+        building_clicked=getattr(self.canvas,'buildingClicked',None)
+        if building_clicked is not None:building_clicked.connect(self.show_building)
         self.panel_set=MapPanelSet(self)
+        self._network_defaults=self.panel_set.state()
+        for key in ('manual_line_ids','company_ids','modes','layer_modes','road_levels','building_classes','building_uses','profit_statuses'):
+            self._network_defaults[key]=None
+        self.presets=PresetStore(settings,self._network_defaults)
+        self.preset='network'
         self.dock=MapDockHost(self.surface,self.panel_set.panels,self)
-        layout.addWidget(self.dock,1)
+        self.docks={'network':self.dock}
+        self._placeholders={'network':QWidget(self)}
+        self.dock_stack=QStackedWidget(self)
+        self.dock_stack.addWidget(self.dock)
+        self.preset_pivot=Pivot(self)
+        self.preset_pivot.setItemFontSize(tokens.FONT_SIZE_BODY)
+        for key,title in [('single','单线'),('network','线网'),('planning','规划')]:
+            self.preset_pivot.addItem(key,title)
+        self.preset_pivot.setCurrentItem('network')
+        self.preset_pivot.currentItemChanged.connect(self.set_preset)
+        layout.addWidget(self.preset_pivot)
+        layout.addWidget(self.dock_stack,1)
         footer=QHBoxLayout()
         footer.setContentsMargins(12,3,6,0)
         self.status=QLabel()
@@ -146,21 +181,212 @@ class MapPage(QWidget):
         footer.addWidget(self.status,1)
         self.reset_layout=PushButton('恢复默认布局',self)
         self.reset_layout.setFixedHeight(28)
-        self.reset_layout.clicked.connect(self.dock.reset_layout)
+        self.reset_layout.clicked.connect(lambda:self.dock.reset_layout())
         footer.addWidget(self.reset_layout)
         layout.addLayout(footer)
         self.panel_set.stateChanged.connect(self.apply_state)
-        self.dock.layoutChanged.connect(self._save_layout)
-        try:
-            saved=json.loads(str(settings.value('map/layout','{}')))
-            if saved:self.dock.restore_layout(saved)
-        except (TypeError,ValueError,KeyError):
-            pass
+        self.dock.layoutChanged.connect(lambda state:self._save_layout('network',state))
+        self.canvas.view_changed.connect(self._save_view)
+        saved=self.presets.state('network')['layout']
+        if saved:self.dock.restore_layout(saved)
+        self._switching=False
+        self.set_preset(self.presets.current)
 
-    def _save_layout(self,state):
-        self.settings.setValue('map/layout',_json(state))
+    @property
+    def save_token(self):
+        return (str(self.session.get('save_key') or self.session.get('session_key') or ''),
+                self._session_generation)
+
+    def _save_layout(self,preset,state):
+        if not self._switching:
+            self.presets.update(preset,layout=state)
+            if preset=='network':self.settings.setValue('map/layout',_json(state))
+
+    def _save_view(self,x,z,zoom):
+        if not self._switching and self.query is not None:
+            self.presets.update(self.preset,view=[x,z,zoom])
+
+    def _ensure_dock(self,preset):
+        if preset in self.docks:return self.docks[preset]
+        from map_preset_panels import SingleLinePanel, PlanningPanel
+        if preset=='single':
+            self.single_panel=SingleLinePanel(self)
+            self.single_panel.routeSelected.connect(lambda identity:self.show_route(identity,self.save_token))
+            self.single_panel.directionChanged.connect(lambda value:self._preset_changed('single',direction=value))
+            self.single_panel.deadheadChanged.connect(lambda value:self._preset_changed('single',deadhead=value))
+            panels={'single':self.single_panel}
+        else:
+            self.planning_panel=PlanningPanel(self)
+            self.planning_panel.set_popup_host(self.surface)
+            self.planning_panel.selectionChanged.connect(lambda value:self._preset_changed('planning',selected_ids=set(value)))
+            self.planning_panel.buildingViewChanged.connect(lambda value:self._preset_changed('planning',building_view=value))
+            self.planning_panel.buildingClassesChanged.connect(lambda value:self._preset_changed('planning',building_classes=set(value)))
+            self.planning_panel.buildingEmphasisChanged.connect(lambda value:self._preset_changed('planning',building_emphasis=value))
+            panels={'planning':self.planning_panel}
+        placeholder=QWidget(self)
+        self._placeholders[preset]=placeholder
+        host=MapDockHost(placeholder,panels,self)
+        self.docks[preset]=host
+        self.dock_stack.addWidget(host)
+        host.layoutChanged.connect(lambda state,key=preset:self._save_layout(key,state))
+        saved=self.presets.state(preset)['layout']
+        if saved:host.restore_layout(saved)
+        return host
+
+    def set_preset(self,preset):
+        if preset not in PRESETS:raise ValueError('Unknown map preset: '+str(preset))
+        if preset==self.preset:return
+        if self.query is not None:
+            self.presets.update(self.preset,view=[*self.canvas.center,self.canvas.zoom])
+        host=self._ensure_dock(preset)
+        self._switching=True
+        try:
+            if hasattr(self,'planning_panel') and hasattr(self.planning_panel,'building_menu'):
+                menu=self.planning_panel.building_menu
+                if menu is not None:menu.hide()
+            self.dock.set_content(self._placeholders[self.preset])
+            self.preset=preset
+            self.dock=host
+            host.set_content(self.surface)
+            self.dock_stack.setCurrentWidget(host)
+            self.preset_pivot.blockSignals(True)
+            self.preset_pivot.setCurrentItem(preset)
+            self.preset_pivot.blockSignals(False)
+            self.presets.activate(preset)
+            self.surface.search.setPlaceholderText('搜索线路、站点或建筑' if preset=='network' else '搜索线路')
+            self.surface.search.setAccessibleName(self.surface.search.placeholderText())
+            self.surface.search.clear()
+            self.surface.results.hide()
+            self._sync_preset_panels()
+            if self.query is not None:
+                self._apply_current()
+                self._restore_view()
+        finally:self._switching=False
+
+    def _restore_view(self):
+        view=valid_view(self.presets.state(self.preset)['view'])
+        if view is not None:
+            self.canvas.center=tuple(view[:2])
+            self.canvas.zoom=view[2]
+            self.canvas._changed()
+        else:self.canvas.fit_to_map()
+        self.canvas._fit_pending=False
+
+    def _preset_changed(self,preset,**values):
+        self.presets.update(preset,query=values)
+        if self.query is not None and self.preset==preset:self._apply_current()
+
+    def _sync_preset_panels(self):
+        routes=self.query.snapshot.routes if self.query is not None else ()
+        if hasattr(self,'single_panel'):
+            state=self.presets.state('single')['query']
+            if self._panel_catalogs.get('single') is not routes:
+                self.single_panel.set_routes(routes)
+                self._panel_catalogs['single']=routes
+            self.single_panel.set_state(dict(state,selected_route_id=state['route_id']))
+            if self.query is None:self.single_panel.set_route(None,None,None,None)
+        if hasattr(self,'planning_panel'):
+            state=self.presets.state('planning')['query']
+            self.planning_panel.set_state(state)
+            if self._panel_catalogs.get('planning') is not routes:
+                self.planning_panel.set_routes(routes,state['selected_ids'])
+                self._panel_catalogs['planning']=routes
+            if self.query is not None and self._planning_options is not self._panel_options:
+                self.planning_panel.set_options(self._panel_options)
+                self.presets.update('planning',query={'building_classes':self.planning_panel.state()['building_classes']})
+                self._planning_options=self._panel_options
+
+    def _current_state(self):
+        if self.preset=='network':return self.panel_set.state()
+        state=deepcopy(self._network_defaults)
+        own=self.presets.state(self.preset)['query']
+        if self.preset=='single':
+            state.update(manual_line_ids=[] if own['route_id'] is None else [own['route_id']],
+                         direction=own['direction'],deadhead=own['deadhead'],distinguish_directions=True)
+        else:
+            state.update(manual_line_ids=own['selected_ids'],building_view=own['building_view'],
+                         building_classes=own['building_classes'],building_emphasis=own['building_emphasis'])
+        return state
+
+    def search(self,text):
+        if self.preset=='network':return self.canvas.search(text)
+        if self.query is None:return []
+        needle=str(text).strip().casefold()
+        if not needle:return []
+        results=[]
+        for route in self.query.snapshot.routes:
+            label=self.canvas.route_label(route)
+            identity=f'{label} · {route.company_name} [{route.company_id}]'
+            if needle not in identity.casefold() and needle!=str(route.id):continue
+            results.append(_SaveSearchResult('route',route.id,identity,self.query.snapshot.bounds,self.save_token))
+        return results
+
+    def _focus_search(self,result):
+        if getattr(result,'save_token',self.save_token)!=self.save_token:return False
+        if self.preset=='single' and result.kind=='route':
+            return self.show_route(result.id,self.save_token)
+        if self.preset=='planning' and result.kind=='route':
+            selected=set(self.presets.state('planning')['query']['selected_ids'])
+            selected.add(result.id)
+            self._preset_changed('planning',selected_ids=selected)
+            self._sync_preset_panels()
+            return True
+        return self.canvas.focus_result(result)
+
+    def show_route(self,route_id,save_key=None):
+        if save_key is not None:
+            if isinstance(save_key,(tuple,list)):
+                if tuple(save_key)!=self.save_token:return False
+            elif str(save_key)!=self.save_token[0]:return False
+        try:route_id=int(route_id)
+        except (TypeError,ValueError):return False
+        if self.query is not None and not any(r.id==route_id for r in self.query.snapshot.routes):return False
+        self._pending_route=(self.save_token,route_id)
+        self.set_preset('single')
+        self.presets.update('single',query={'route_id':route_id})
+        if self.query is not None:self._consume_pending_route()
+        else:self.ensure_loaded()
+        return True
+
+    def _consume_pending_route(self):
+        if self._pending_route is None or self.query is None:return
+        token,identity=self._pending_route
+        self._pending_route=None
+        if token!=self.save_token:return
+        route=next((r for r in self.query.snapshot.routes if r.id==identity),None)
+        if route is None:return
+        self.presets.update('single',query={'route_id':identity})
+        if self.preset=='single':
+            self._sync_preset_panels()
+            self._apply_current()
+            self.canvas.focus_result(MapSearchResult('route',identity,'',self.query.snapshot.bounds))
+
+    def show_building(self,building_id,global_pos):
+        if self.preset!='planning' or self._snapshot is None:return False
+        building=next((b for b in self._snapshot.buildings if b.id==building_id),None)
+        if building is None:return False
+        source=getattr(building,'service_lines',None)
+        known=bool(source is not None and source.known)
+        route_by_id={route.id:route for route in self._snapshot.routes}
+        ids=tuple(dict.fromkeys(source.route_ids)) if known else ()
+        candidates=[route_by_id[identity] for identity in ids if identity in route_by_id] if known else None
+        unresolved=tuple(getattr(source,'unresolved_refs',()))+tuple(identity for identity in ids if identity not in route_by_id)
+        self.planning_panel.open_building_menu(building,candidates,
+            self.presets.state('planning')['query']['selected_ids'],global_pos,
+            source_known=known,unresolved_refs=unresolved)
+        return True
+
+    def _close_building_menu(self):
+        if hasattr(self,'planning_panel') and self.planning_panel.building_menu is not None:
+            self.planning_panel.building_menu.hide()
 
     def set_session(self, session):
+        self._close_building_menu()
+        self.surface.results.clear()
+        self.surface.results.hide()
+        self._session_generation+=1
+        self._pending_route=None
+        self._switching=True
         source=Path(session.get('save_path','')) if session else None
         attached=bool(source and self._prefetch_path == source)
         if not attached:
@@ -169,7 +395,8 @@ class MapPage(QWidget):
             self._prefetch_path=None
             self._prefetch_snapshot=None
             self._prefetch_error=None
-        self.session=session
+        self.session=session or {}
+        self._snapshot=None
         self.query=None
         self.result=None
         self._requested=attached
@@ -178,14 +405,11 @@ class MapPage(QWidget):
         self.canvas.set_snapshot(MapSnapshot())
         self.surface.set_loading(False)
         self.status.clear()
-        # Selections are save-local; docking is application-local.
-        self.panel_set.set_state({'manual_line_ids':None,'company_ids':None,'modes':None,
-                                  'layer_modes':None,'road_levels':None,'building_classes':None,'building_uses':None,
-                                  'profit_statuses':None,'passenger_min':None,'passenger_max':None})
-        try:
-            saved=json.loads(str(self.settings.value('map/query/'+str(session.get('save_key','')),'{}')))
-            if saved:self.panel_set.set_state(saved)
-        except (ValueError,TypeError):pass
+        self.presets.load(self.save_token[0])
+        self.panel_set.set_state(self._network_defaults)
+        self.panel_set.set_state(self.presets.state('network')['query'])
+        self._sync_preset_panels()
+        self._switching=False
         if attached and self._prefetch_snapshot is not None:
             snapshot=self._prefetch_snapshot
             self._prefetch_snapshot=None
@@ -212,6 +436,12 @@ class MapPage(QWidget):
         worker.start()
 
     def cancel_prefetch(self):
+        self._close_building_menu()
+        self.surface.results.clear()
+        self.surface.results.hide()
+        self._session_generation+=1
+        self._pending_route=None
+        self._snapshot=None
         self._generation+=1
         for worker in self.workers:worker.requestInterruption()
         self._prefetch_path=None
@@ -224,6 +454,7 @@ class MapPage(QWidget):
         self._awaiting_frame=False
         self._panel_presentation=None
         self.canvas.set_snapshot(MapSnapshot())
+        self._sync_preset_panels()
         self.surface.set_loading(False)
         self.status.clear()
 
@@ -256,25 +487,21 @@ class MapPage(QWidget):
             self.surface.set_loading(True)
         self._prepare_hidden_layout()
         self.set_snapshot(snapshot)
-        self.canvas.fit_to_map()
-        # A replacement save can arrive while the canvas is hidden and already
-        # marked loaded. Keep its deferred resize fit for the actual dock size.
         if not self.canvas.isVisible():
             self.canvas._fit_pending=not isinstance(self.parentWidget(),QStackedWidget)
         self.canvas.prepare_frame()
         self.ready.emit()
 
     def _prepare_hidden_layout(self):
-        """Lay out a stacked page before prewarming its first visible frame."""
+        """Resolve the actual stacked shell bounds before hidden frame prewarming."""
         parent=self.parentWidget()
-        if self.isVisible() or not isinstance(parent,QStackedWidget):
-            return
+        if self.isVisible() or not isinstance(parent,QStackedWidget):return
         self.resize(parent.contentsRect().size())
         self.ensurePolished()
         self.layout().setGeometry(self.rect())
+        self.dock_stack.layout().setGeometry(self.dock_stack.rect())
+        self.dock.setGeometry(self.dock_stack.contentsRect())
         self.dock.layout().setGeometry(self.dock.rect())
-        # These are now the actual host bounds, so saved floating-panel clamps
-        # and collapsed-dock widths can be resolved before the page is shown.
         if self.dock._pending_layout is not None:
             saved=self.dock._pending_layout
             self.dock._pending_layout=None
@@ -293,6 +520,8 @@ class MapPage(QWidget):
             self.failed.emit(message)
 
     def set_snapshot(self,snapshot):
+        self._snapshot=snapshot
+        self._switching=True
         self._awaiting_frame=self._requested and any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops))
         if not self._awaiting_frame:
             self.surface.set_loading(False)
@@ -305,10 +534,16 @@ class MapPage(QWidget):
         present={road_display_level(road) for road in snapshot.roads}
         options['road_levels']=[{'id':key,'name':name,'color':ROAD_STYLES[key][0]}
                                 for key,name in names.items() if key in present]
+        options['simulated_datetime']=self.session.get('simulation_time')
         self._panel_options=options
         self.panel_set.set_options(options)
-        self._panel_presentation=(options['building_emphasis_effective'],self.panel_set.state().get('color_by','mode'))
-        self.apply_state(self.panel_set.state())
+        self._panel_presentation=self._network_presentation(self.panel_set.state(),options['building_emphasis_effective'])
+        self.presets.update('network',query=self.panel_set.state())
+        self._sync_preset_panels()
+        self._apply_current()
+        self._restore_view()
+        self._switching=False
+        self._consume_pending_route()
 
     def _frame_ready(self):
         if self._awaiting_frame:
@@ -321,29 +556,49 @@ class MapPage(QWidget):
         self.failed.emit(message)
 
     def apply_state(self,state):
-        if state!=self.panel_set.state():
-            self.panel_set.set_state(state)
-        if self.query is None:return
+        if state!=self.panel_set.state():self.panel_set.set_state(state)
+        self.presets.update('network',query=self.panel_set.state())
+        if self.save_token[0]:self.settings.setValue('map/query/'+self.save_token[0],_json(self.panel_set.state()))
+        if self.query is not None and self.preset=='network':self._apply_current()
+
+    @staticmethod
+    def _network_presentation(state,emphasis):
+        return (emphasis,state.get('color_by','mode'),state.get('service_time_mode','off'),
+                state.get('service_start'),state.get('service_end'))
+
+    def _apply_current(self):
+        state=self._current_state()
         self.result=self.query.select(state)
         self.canvas.set_snapshot(self.result.snapshot)
-        options={key: value for key,value in state.items() if key in self.canvas.options}
+        options={key:value for key,value in state.items() if key in self.canvas.options}
         options.update(route_colors=self.result.route_colors,building_colors=self.result.building_colors,
-                       legend_items=self.query.legend_items(state,self.result))
-        # Buildings were filtered in the immutable query; do not intersect the inactive category mode.
-        options.update(building_classes=None,building_uses=None)
+                       legend_items=self.query.legend_items(state,self.result),
+                       building_classes=None,building_uses=None)
         self.canvas.set_options(**options)
-        presentation=(self.result.building_emphasis,state.get('color_by','mode'))
-        if presentation!=self._panel_presentation:
-            self._panel_options.update(self.query.panel_options(self.session,state,self.result))
-            self.panel_set.set_options(self._panel_options)
-            self._panel_presentation=presentation
+        if self.preset=='network':
+            presentation=self._network_presentation(state,self.result.building_emphasis)
+            if presentation!=self._panel_presentation:
+                self._panel_options.update(self.query.panel_options(self.session,state,self.result))
+                self.panel_set.set_options(self._panel_options)
+                self._panel_presentation=presentation
+        elif self.preset=='single':
+            from map_line_facts import line_facts, geometry_lengths
+            identity=self.presets.state('single')['query']['route_id']
+            route=next((r for r in self.query.snapshot.routes if r.id==identity),None)
+            facts=line_facts(self.session,identity) if route is not None else None
+            lengths=geometry_lengths(route,state['direction'],state['deadhead']) if route is not None else None
+            self.single_panel.set_state(dict(self.presets.state('single')['query'],selected_route_id=identity))
+            self.single_panel.set_route(route,facts,
+                lengths.operating_km if lengths else None,lengths.deadhead_km if lengths else None)
+        else:
+            self.planning_panel.set_state(self.presets.state('planning')['query'])
+
         city=self.session.get('metadata',{}).get('地图名称','')
-        day=self._panel_options['passenger_date']
+        day=(self._panel_options['passenger_date'] if self.preset=='network' else
+             str(self.session.get('simulation_time') or '')[:10])
         modes=state.get('layer_modes')
         visible=sum(1 for route in self.result.routes if state.get('routes',True) and (modes is None or route.mode in modes))
         self.status.setText('   ·   '.join(str(v) for v in (city,day,f'显示 {visible} 条线路',f'已选 {len(self.result.routes)} 条') if v))
-        key=str(self.session.get('save_key',''))
-        if key:self.settings.setValue('map/query/'+key,_json(state))
 
     def showEvent(self,event):
         super().showEvent(event)

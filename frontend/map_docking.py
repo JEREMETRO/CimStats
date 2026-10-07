@@ -111,6 +111,20 @@ class MapDockHost(QWidget):
         self.preview.setStyleSheet(f'background:{tokens.ACCENT_SOFT};border:2px solid {tokens.ACCENT};border-radius:6px;'); self.preview.hide()
         if self._active:self.activate_panel(self._active)
 
+    def set_content(self, content):
+        """Move a shared map surface between preset hosts without rebuilding it."""
+        if content is self.content:
+            return
+        previous = self.content
+        item = self.layout().replaceWidget(previous, content)
+        if item is not None:
+            del item
+        previous.hide()
+        previous.setParent(self)
+        self.content = content
+        content.show()
+        self.layout().activate()
+
     def _emit(self):
         if not self._restoring and self._pending_layout is None:self.layoutChanged.emit(self.layout_state())
 

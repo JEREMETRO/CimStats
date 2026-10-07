@@ -1,5 +1,5 @@
 """Compact line query surfaces; the list may float over a stable detail pane."""
-from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QObject, QTimer, Slot
+from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QObject, QTimer, Slot, Signal
 from PySide6.QtGui import QAction, QPainter, QFont, QColor, QFontMetrics
 import re
 from decimal import Decimal
@@ -7,7 +7,7 @@ from display_rules import format_number, display_mode
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QScrollArea, QSizePolicy, QHeaderView, QTableWidget, QFrame, QStyle, QStyleOptionButton,
     QStyleOptionViewItem, QStyleOptionHeader, QToolTip)
-from qfluentwidgets import (CardWidget, CheckableMenu, DropDownPushButton,
+from qfluentwidgets import (CardWidget, PushButton, CheckableMenu, DropDownPushButton,
     LineEdit, ComboBox, TableWidget, TableItemDelegate, TransparentToolButton, FluentIcon, IconWidget, setCustomStyleSheet)
 from stats_motion import SurfaceMotion, CollapseMotion, animations_enabled
 from stats_controls import StatisticsScrollArea, configure_fluent_table, SummaryToggleButton
@@ -369,9 +369,12 @@ class CompactFactCard(QFrame):
 
 
 class LinesPage(QWidget):
+    mapRequested = Signal(object, object)
+
     def __init__(self, owner, schedule_factory):
         super().__init__()
         self.owner = owner
+        self.map_target = None
         self.setObjectName('linesPage')
         self.setStyleSheet(f'QWidget#linesPage {{background:{tokens.PAGE_BG};}}')
         self.expanded = False
@@ -475,6 +478,11 @@ class LinesPage(QWidget):
         self.detail_title.setStyleSheet(f'{emphasis_css(18)}color:{tokens.TEXT_PRIMARY};')
         apply_emphasis_font(self.detail_title, 18)
         head.addWidget(self.detail_title, 1)
+        self.map_show_button = PushButton('地图上展示', self.detail)
+        self.map_show_button.setFixedHeight(32)
+        self.map_show_button.setEnabled(False)
+        self.map_show_button.clicked.connect(self._request_map)
+        head.addWidget(self.map_show_button)
         self.fact_menu_button = DropDownPushButton('显示字段', self.detail)
         self.fact_menu_button.setFixedSize(max(104, self.fact_menu_button.sizeHint().width()),32)
         self.fact_menu = CheckableMenu(parent=self.fact_menu_button); self.fact_menu_button.setMenu(self.fact_menu)
@@ -509,6 +517,14 @@ class LinesPage(QWidget):
         self.left.installEventFilter(self)
         self._fit_filters()
         self.installEventFilter(self)
+
+    def set_map_target(self, route_id=None, save_token=None):
+        self.map_target = (route_id, save_token) if route_id is not None and save_token is not None else None
+        self.map_show_button.setEnabled(self.map_target is not None)
+
+    def _request_map(self):
+        if self.map_target is not None:
+            self.mapRequested.emit(*self.map_target)
 
     def _fit_filters(self):
         margins = self.left.layout().contentsMargins()

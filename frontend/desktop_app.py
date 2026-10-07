@@ -868,6 +868,7 @@ class MainWindow(FluentMainWindow):
         from line_query_page import LinesPage
         from line_schedule_view import SchedulePanel
         self.lines_page = LinesPage(self, SchedulePanel)
+        self.lines_page.mapRequested.connect(self._show_line_on_map)
         self.lines_tab = self.lines_page
         for name in ('query', 'line_company', 'line_mode', 'line_columns_button',
                      'line_columns_menu', 'line_count', 'line_table', 'detail_title',
@@ -875,6 +876,15 @@ class MainWindow(FluentMainWindow):
             setattr(self, name, getattr(self.lines_page, name))
         self.fact_cards = []
         self.pages.addWidget(self.lines_page)
+
+    def _show_line_on_map(self, route_id, save_token):
+        # Identity and epoch are captured when the detail is rendered, not clicked.
+        if tuple(save_token)!=self.map_page.save_token:
+            return False
+        if not self.map_page.show_route(route_id, save_token):
+            return False
+        self.navigate(1)
+        return True
 
     # ------------------------------------------------------------ import
     def check_install(self):
@@ -931,6 +941,7 @@ class MainWindow(FluentMainWindow):
     def _reset_line_page(self):
         self.selected_key = ''
         self._selected_line = None
+        self.lines_page.set_map_target()
         self.clear_fact_cards()
         self.clear_schedule_tabs()
         self.detail_title.setText('选择线路查看详情')
@@ -1253,6 +1264,12 @@ class MainWindow(FluentMainWindow):
         from line_query_page import CompactFactCard, shown, line_display_value, line_query_name
         from PySide6.QtGui import QAction
         self._selected_line = line
+        from display_rules import display_mode
+        identity=line.get('对象ID',line.get('原始字段',{}).get('对象ID'))
+        try:identity=int(identity)
+        except (TypeError,ValueError):identity=None
+        if display_mode(line.get('运输制式',''))=='水上巴士':identity=None
+        self.lines_page.set_map_target(identity,self.map_page.save_token)
         display_name = line_query_name(line, self.data.get('lines', ()))
         self.detail_title.setText(f"{display_name} · {line['公司名称']}")
         facts = [
