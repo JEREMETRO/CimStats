@@ -71,6 +71,13 @@ class NetworkChartPanel(ChartPanel):
             widget.show()
 
     def set_descriptor(self, descriptor, snapshot):
+        from chart_content_key import descriptor_key
+        content_key = descriptor_key(descriptor, snapshot)
+        if getattr(self, '_descriptor_content_key', None) == content_key:
+            self.descriptor, self.snapshot = descriptor, snapshot
+            self.companies = snapshot.companies
+            return
+        self._descriptor_content_key = content_key
         from stats_motion import settle_surface_motion
         settle_surface_motion(self)
         if descriptor is not self.descriptor:
@@ -96,6 +103,7 @@ class NetworkChartPanel(ChartPanel):
             self.surface_motion.reveal()
 
     def clear(self):
+        self._descriptor_content_key = None
         from stats_motion import settle_surface_motion
         settle_surface_motion(self)
         self._cancel_detail()

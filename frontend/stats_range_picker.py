@@ -20,6 +20,9 @@ class RangePicker(FluentDialog):
         self.setWindowTitle(title)
         self.setObjectName('statsRangePicker')
         self.setMinimumWidth(520)
+        timed = any(value.hour or value.minute or value.second for value in (start, end))
+        self._range = (start, end) if timed else (start, end + timedelta(days=1))
+        self._timed = timed
         attach_surface_reveal(self)
         self.setStyleSheet(
             f'QDialog#statsRangePicker {{ background: {CARD_BG}; color: {TEXT_PRIMARY}; '
@@ -73,10 +76,11 @@ class RangePicker(FluentDialog):
         actions.addWidget(self.apply_button)
         root.addLayout(actions)
         self.time_toggle.toggled.connect(self._time_mode_changed)
-        self.start_edit.dateTimeChanged.connect(self._validate)
-        self.end_edit.dateTimeChanged.connect(self._validate)
-        timed = any(value.hour or value.minute or value.second for value in (start, end))
+        self.start_edit.dateTimeChanged.connect(self._edited)
+        self.end_edit.dateTimeChanged.connect(self._edited)
+        self.time_toggle.blockSignals(True)
         self.time_toggle.setChecked(timed)
+        self.time_toggle.blockSignals(False)
         self._time_mode_changed(timed)
 
     def _edit(self, value: datetime) -> DateTimeEdit:
@@ -90,6 +94,19 @@ class RangePicker(FluentDialog):
         return edit
 
     def _time_mode_changed(self, enabled: bool) -> None:
+        self._timed = enabled
+        start, end = self._range
+        if not enabled:
+            start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Midnight exclusive boundaries represent the previous inclusive day.
+            if not (end.hour or end.minute or end.second or end.microsecond):
+                end -= timedelta(days=1)
+            end = end.replace(hour=0, minute=0, second=0, microsecond=0)
+        for edit, value, calendar in zip((self.start_edit, self.end_edit), (start, end), self.calendars):
+            edit.blockSignals(True)
+            edit.setDateTime(value)
+            edit.blockSignals(False)
+            self._sync_calendar(calendar, edit.date())
         fmt = 'yyyy-MM-dd HH:mm' if enabled else 'yyyy-MM-dd'
         for edit in (self.start_edit, self.end_edit):
             edit.setDisplayFormat(fmt)
@@ -106,12 +123,17 @@ class RangePicker(FluentDialog):
             picker.blockSignals(False)
 
     def selected_range(self) -> tuple[datetime, datetime] | None:
+        start, end = self._range
+        return (start, end) if start < end else None
+
+    def _edited(self, *_):
         start = self.start_edit.dateTime().toPython()
         end = self.end_edit.dateTime().toPython()
-        if not self.time_toggle.isChecked():
+        if not self._timed:
             start = start.replace(hour=0, minute=0, second=0, microsecond=0)
             end = end.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        return (start, end) if start < end else None
+        self._range = (start, end)
+        self._validate()
 
     def _validate(self, *_):
         valid = self.selected_range() is not None

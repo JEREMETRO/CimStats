@@ -351,6 +351,9 @@ class MainWindow(FluentMainWindow):
         center_startup_window(self)
         self._content_ready = False
         self._content_initializing = False
+        self._welcome_handoff_complete = False
+        self._welcome_handoff_gate = None
+        self._welcome_handoff_callbacks = []
         self.setAcceptDrops(False)
         QApplication.instance().installEventFilter(self)
         self._startup_surface = StartupSurface(icon_svg_path(BUNDLE_ROOT), self)
@@ -385,12 +388,43 @@ class MainWindow(FluentMainWindow):
         self._enable_mica()
         self.check_install()
         self._content_ready = True
+        self._content_initializing = False
         QApplication.instance().removeEventFilter(self)
         self.setAcceptDrops(True)
         if self._startup_surface is not None:
-            self._startup_surface.hide()
-            self._startup_surface.deleteLater()
-        self._startup_surface = None
+            # The welcome paints the same opaque logo frame above the retained
+            # cover. Keeping the cover above it would suppress backing-store
+            # paints forever; deleting it here would leave a construction gap.
+            self._startup_surface.stackUnder(self.empty_state)
+        if not self.property('startupHandoffPending'):
+            self.prepare_welcome_handoff(self._begin_welcome_if_allowed)
+
+    def _begin_welcome_if_allowed(self):
+        if not self.property('startupHandoffPending'):
+            self.begin_welcome_transition()
+
+    def prepare_welcome_handoff(self, ready):
+        from startup_readiness import FirstFrameGate
+        if self._welcome_handoff_complete:
+            ready()
+            return
+        self._welcome_handoff_callbacks.append(ready)
+        if self._welcome_handoff_gate is None:
+            self._welcome_handoff_gate = FirstFrameGate(
+                self, self._complete_welcome_handoff, surface=self.empty_state)
+        self.empty_state.update()
+
+    def _complete_welcome_handoff(self):
+        if getattr(self, '_closing_app', False):
+            return
+        cover, self._startup_surface = self._startup_surface, None
+        if cover is not None:
+            cover.hide()
+            cover.deleteLater()
+        self._welcome_handoff_complete = True
+        callbacks, self._welcome_handoff_callbacks = self._welcome_handoff_callbacks, []
+        for callback in callbacks:
+            callback()
 
     def initialize_content_async(self, ready, failed):
         if self._content_ready:
@@ -427,7 +461,10 @@ class MainWindow(FluentMainWindow):
             cover = self._startup_surface
             if cover is not None:
                 cover.setGeometry(self.centralWidget().rect())
-                cover.raise_()
+                if self._content_ready:
+                    cover.stackUnder(self.empty_state)
+                else:
+                    cover.raise_()
             QTimer.singleShot(0, self._startup_next)
         except Exception as exc:
             self._startup_failed(exc)
@@ -450,7 +487,10 @@ class MainWindow(FluentMainWindow):
         super().showEvent(event)
         self._enable_mica()
         if self._content_ready and not self.property('startupHandoffPending'):
-            self.begin_welcome_transition()
+            if self._welcome_handoff_complete:
+                self.begin_welcome_transition()
+            elif self._welcome_handoff_gate is None:
+                self.prepare_welcome_handoff(self._begin_welcome_if_allowed)
 
     def begin_welcome_transition(self):
         self.empty_state.begin_transition()
@@ -508,6 +548,10 @@ class MainWindow(FluentMainWindow):
             cover.setParent(shell)
             cover.setGeometry(shell.rect())
             cover.show()
+        # setCentralWidget defers showing a replacement central widget. Show
+        # it now so reparenting the only painted cover cannot hide that cover
+        # for the next asynchronous construction slice.
+        shell.show()
         outer = QHBoxLayout(shell)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -588,7 +632,8 @@ class MainWindow(FluentMainWindow):
         self.statistics_page.query_failed.connect(self._dashboard_failed)
 
     def _finish_ui(self):
-        self.loading_overlay = LoadingOverlay(self.centralWidget(), self.cancel_parse)
+        self.loading_overlay = LoadingOverlay(self.centralWidget(), self.cancel_parse,
+                                              prepare_destination=self._refresh_body)
         self._progress_predictor = None
         self._parse_stage = 0
         self._parse_stage_text = ''
@@ -1107,12 +1152,14 @@ class MainWindow(FluentMainWindow):
         return len(same_name) == 1 and str(row.get('公司名称', '')) == selected_name
 
     def filtered_lines(self):
+        from line_query_page import line_query_name
         query = self.query.text().strip().lower()
         company = self.line_company.currentData() or ""
         mode = self.line_mode.currentData() or ""
         return [x for x in self.data.get("lines", [])
                 if self._company_matches(x, company) and (not mode or x["运输制式"] == mode)
-                and (not query or query in " ".join(str(v) for v in x.values() if not isinstance(v, dict)).lower())]
+                and (not query or query in " ".join(str(v) for v in x.values() if not isinstance(v, dict)).lower()
+                     or query in line_query_name(x, self.data.get('lines', ())).lower())]
 
     def refresh_lines(self):
         if not hasattr(self, 'line_table'):
@@ -1127,7 +1174,7 @@ class MainWindow(FluentMainWindow):
         from stats_typography import ui_font
         body_font = ui_font(FONT_SIZE_BODY)
         for ri, row in enumerate(rows):
-            values = [line_display_value(row, name) for name in (
+            values = [line_display_value(row, name, self.data.get('lines', ())) for name in (
                 "公司名称", "运输制式", "线路名称", "地图里程", "折算里程", "单程时间", "核定速度", "今日客流",
                 "当日发班数", "理论最大车辆需求数", "每周收入", "每周支出", "今日平均单班人次", "今日平均车公里人次")]
             for ci, value in enumerate(values):
@@ -1174,10 +1221,10 @@ class MainWindow(FluentMainWindow):
             self.show_line(line)
 
     def show_line(self, line):
-        from line_query_page import CompactFactCard, shown, line_display_value
+        from line_query_page import CompactFactCard, shown, line_display_value, line_query_name
         from PySide6.QtGui import QAction
         self._selected_line = line
-        display_name = line.get('线路名称') or f"{line['线路号']}路"
+        display_name = line_query_name(line, self.data.get('lines', ()))
         self.detail_title.setText(f"{display_name} · {line['公司名称']}")
         facts = [
             (("线路车库", line.get("线路车库")), None),

@@ -344,6 +344,7 @@ class CollapseMotion(QObject):
         self.surface_end = 0
         self.on_progress = None
         self._frozen_layout = None
+        self._frozen_surface_layout = None
         if widget.parentWidget() is not None:
             widget.parentWidget().installEventFilter(self)
 
@@ -380,6 +381,12 @@ class CollapseMotion(QObject):
             content_height = self.widget.sizeHint().height()
             self.surface_end = (natural_height - content_height - self.surface.layout().spacing()
                                 if collapsed else natural_height)
+            outer = self.surface.layout()
+            if self._frozen_surface_layout is None and outer.isEnabled():
+                if start == 0:
+                    outer.setGeometry(QRect(0, 0, self.surface.width(), natural_height))
+                outer.setEnabled(False)
+                self._frozen_surface_layout = outer
         end = 0 if collapsed else self.widget.sizeHint().height()
         self.widget.setMaximumHeight(start)
         animation = QVariantAnimation(self)
@@ -410,6 +417,10 @@ class CollapseMotion(QObject):
             self._frozen_layout.setEnabled(True)
             self._frozen_layout.invalidate()
             self._frozen_layout = None
+        if self._frozen_surface_layout is not None:
+            self._frozen_surface_layout.setEnabled(True)
+            self._frozen_surface_layout.invalidate()
+            self._frozen_surface_layout = None
         if self.surface is not None:
             self.surface.setMinimumHeight(0)
             self.surface.setMaximumHeight(16777215)
@@ -424,11 +435,14 @@ class _ShowMotion(QObject):
     def __init__(self, widget, motion=None):
         super().__init__(widget)
         self.motion = motion or SurfaceMotion(widget)
+        self._shown = False
         widget.installEventFilter(self)
 
     def eventFilter(self, widget, event):
         if event.type() == QEvent.Type.Show:
-            self.motion.reveal(float_in=True)
+            if not self._shown:
+                self._shown = True
+                self.motion.reveal(float_in=True)
         elif event.type() == QEvent.Type.Hide:
             self.motion.finish()
         return False

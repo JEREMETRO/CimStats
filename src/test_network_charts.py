@@ -118,8 +118,7 @@ def test_category_palette_is_shared_by_stacks_lines_pies_and_legend():
     panel = NetworkChartPanel()
     panel.set_descriptor(descriptor(make_result(companies=('a',)), allowed=('trend-bar', 'line', 'pie')),
                          snapshot('overall'))
-    expected = {key: QColor(tokens.DATA_CATEGORY_COLORS[tokens.DATA_CATEGORY_GROUPS.index(key) % 6]).name()
-                for key in ('bus', 'tram')}
+    expected = {'bus': '#1976d2', 'tram': '#d32f2f'}
     assert {item.key: item.color.name() for item in chart(panel).series} == expected
     panel.set_mode('line')
     assert {item.key: item.color.name() for item in chart(panel).series} == expected

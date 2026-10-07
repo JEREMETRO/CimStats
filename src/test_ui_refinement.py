@@ -13,7 +13,7 @@ def test_filter_expander_is_accessible_icon(qt_application):
     page = StatisticsPage()
     assert isinstance(page.expand_filters_button, TransparentToolButton)
     assert page.expand_filters_button.accessibleName() == '收起筛选'
-    assert page.expand_filters_button.toolTip()
+    assert page.expand_filters_button.toolTip() == ''
 
 
 def test_summary_collapse_keeps_data_and_aligns_companies(qt_application):

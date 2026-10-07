@@ -279,8 +279,13 @@ def mode_color(mode):
 def short_line_name(name):
     """Show the serialized route designation, without its origin/destination suffix."""
     text = str(name)
-    match = re.match(r'^[A-Za-z]{0,3}\d+[A-Za-z]?(?:路)?', text)
+    match = re.match(r'^[A-Za-z]{0,3}\d+[A-Za-z]?(?:号线|路)?', text)
     return match.group(0) if match else text.split('·', 1)[0]
+
+
+def line_caption(name, mode, include_mode=True):
+    """Do not repeat a transport prefix already carried by the route name."""
+    return f'{mode} {name}'.strip() if include_mode and not str(name).startswith(str(mode)) else str(name)
 
 
 def complete_total(values):
@@ -377,9 +382,9 @@ class RankingRow(QFrame):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
         display_name = short_line_name(line.name)
-        self.name = label(f'{line.mode} {display_name}' if aggregate else display_name, size=12, parent=self)
+        self.name = label(line_caption(display_name, line.mode, aggregate), size=12, parent=self)
         self.name.setFixedWidth(112)
-        self.name.set_full_text(f'{line.mode} {line.name}' if aggregate else line.name)
+        self.name.set_full_text(line_caption(line.name, line.mode, aggregate))
         self.track = BarTrack(numeric(value), maximum, QColor(tokens.ACCENT) if aggregate else mode_color(line.mode), self)
         self.number = label(f'{shown(value)} {unit}', bold=True, parent=self)
         self.number.setFixedWidth(max(76, self.number.fontMetrics().horizontalAdvance(self.number.text()) + 2))
@@ -637,7 +642,7 @@ class ShareRow(QFrame):
         row.addWidget(self.dot)
         row.addSpacing(4)
         display_name = short_line_name(entry.name) if entry.line_key else entry.name
-        self.name = ShareNameLabel(f'{entry.mode} {display_name}'.strip(), self,
+        self.name = ShareNameLabel(line_caption(display_name, entry.mode), self,
                                    route_name=display_name if entry.line_key else '')
         if not entry.line_key:
             self.name.setFont(font())
@@ -647,7 +652,7 @@ class ShareRow(QFrame):
             self.name.setStyleSheet(f'color:{tokens.TEXT_PRIMARY};background:transparent;')
         if entry.line_key:
             self.name.setProperty('elideMode', 'middle')
-            self.name.set_full_text(f'{entry.mode} {entry.name}'.strip())
+            self.name.set_full_text(line_caption(entry.name, entry.mode))
         row.addWidget(self.name)
         row.addSpacing(4)
         self.identity_extra = QSpacerItem(0, 0, QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
@@ -663,7 +668,7 @@ class ShareRow(QFrame):
         self.share.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.share)
         self.setToolTip('')
-        self.setAccessibleName(f'{entry.mode} {entry.name} {shown(entry.value)} {unit} {self.share.text()}')
+        self.setAccessibleName(f'{line_caption(entry.name, entry.mode)} {shown(entry.value)} {unit} {self.share.text()}')
 
     def set_identity_gap(self, gap):
         extra = max(0, gap - 4)
@@ -968,7 +973,7 @@ class StructureAnalysis(CategoryCard):
         for i, line in enumerate(lines):
             row = RankingRow(line, getattr(line, self.attribute), maximum, i, self.prefix, self.unit, mode is None)
             if sum(other.name == line.name and other.mode == line.mode for other in lines) > 1:
-                row.name.set_full_text(f'{line.mode} {line.name}\n公司标识：{line.company_id}')
+                row.name.set_full_text(f'{line_caption(line.name, line.mode)}\n公司标识：{line.company_id}')
             row.line_requested.connect(self.line_requested.emit)
             self.ranking_rows.addWidget(row)
             row.show()
@@ -1006,7 +1011,7 @@ class StructureAnalysis(CategoryCard):
                                                         complete_total(getattr(line, self.attribute) for line in source))
         entries, total = line_share_data(source, self.attribute, expected)
         colors = {entry.key: mode_color(entry.mode) if entry.line_key else QColor(tokens.TEXT_DISABLED) for entry in entries}
-        labels = {entry.key: f'{entry.mode} {entry.name}'.strip() for entry in entries}
+        labels = {entry.key: line_caption(entry.name, entry.mode) for entry in entries}
         self.share_ring.set_data(tuple(ModeCount(entry.key, entry.value) for entry in entries), total, colors,
                                  caption='线路占比', display_labels=labels, unit=self.unit)
         self._header('line_share')
@@ -1016,7 +1021,7 @@ class StructureAnalysis(CategoryCard):
             row = ShareRow(entry, total, self.unit, i, colors[entry.key])
             if entry.line_key and sum(other.name == entry.name and other.mode == entry.mode for other in entries) > 1:
                 line = next(line for line in source if line.key == entry.line_key)
-                identity = f'{entry.mode} {entry.name}\n公司标识：{line.company_id}'
+                identity = f'{line_caption(entry.name, entry.mode)}\n公司标识：{line.company_id}'
                 row.name.set_full_text(identity)
                 self.share_ring.display_labels[entry.key] = identity
             row.line_requested.connect(self.line_requested.emit)

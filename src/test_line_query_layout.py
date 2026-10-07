@@ -1,5 +1,6 @@
 """Regression checks for the existing line query at whole-window size."""
 import copy
+import os
 import time
 from pathlib import Path
 import pytest
@@ -13,7 +14,8 @@ def lines_window(qt_application, monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_app, 'QSettings', lambda *a: QSettings(str(tmp_path/'line.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda self: None)
     window=desktop_app.MainWindow()
-    data=load_session(Path(__file__).resolve().parents[1]/'exports','望春市_test_运行时')
+    data=load_session(Path(os.environ.get('CIM2_LINE_TEST_SESSION_DIR', Path(__file__).resolve().parents[1]/'exports')),
+                      os.environ.get('CIM2_LINE_TEST_SESSION_TAG', '望春市_test_运行时'))
     if not data['lines']:
         pytest.skip('Local exported-save fixture is unavailable')
     data.update(history=[], save_path='TEST DATA.save', save_key='layout-test')
@@ -157,7 +159,11 @@ def test_navigation_interrupts_surface_motion_without_reflow(lines_window, qt_ap
     assert page.graphicsEffect() is None
     QTest.qWait(35)
     w.navigate(1)
-    QTest.qWait(320)
+    # Check natural completion with a bounded condition: a fixed 320 ms can
+    # expire between paint and animation ticks when the real-save UI is busy.
+    deadline = time.monotonic() + 2
+    while page.motion.running and time.monotonic() < deadline:
+        QTest.qWait(10)
     assert page.right_scroll.geometry() == before
     assert page.graphicsEffect() is None
     assert not page.motion.running
@@ -302,7 +308,8 @@ def test_fluent_delegate_draws_core_counts_at_shared_body_size(lines_window):
         assert QFontInfo(option.font).family() == FONT_FAMILY
         if column == 8:
             assert option.rect.width() >= QFontMetrics(option.font).horizontalAdvance('200') + 12
-    assert type(table.delegate).__name__ == 'TableItemDelegate'
+    from qfluentwidgets import TableItemDelegate
+    assert isinstance(table.delegate, TableItemDelegate)
 
 
 def test_main_pages_do_not_show_bottom_status_area(lines_window, qt_application):

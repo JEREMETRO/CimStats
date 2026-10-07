@@ -158,7 +158,8 @@ def test_long_selected_company_tags_do_not_expand_or_clip_selector(qt_applicatio
         assert inside(page.company_tag_host, tag)
         assert inside(tag, tag.close_button)
         assert inside(tag, tag.name_label)
-        assert tag.name_label.toolTip() in names
+        assert tag.name_label.toolTip() == ''
+        assert tag.name_label.accessibleName() in names
         assert tag.name_label.fontMetrics().horizontalAdvance(QLabel.text(tag.name_label)) <= tag.name_label.width()
         assert tag.close_button.text() == '' and not tag.close_button.icon().isNull()
     page.company_tags['0'].close_button.click()

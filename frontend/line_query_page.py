@@ -1,14 +1,14 @@
 """Compact line query surfaces; the list may float over a stable detail pane."""
-from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QObject
+from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QObject, QTimer, Slot
 from PySide6.QtGui import QAction, QPainter, QFont, QColor, QFontMetrics
 import re
 from decimal import Decimal
-from display_rules import format_number
+from display_rules import format_number, display_mode
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QScrollArea, QSizePolicy, QHeaderView, QTableWidget, QFrame, QStyle, QStyleOptionButton,
-    QStyleOptionViewItem, QToolTip)
+    QStyleOptionViewItem, QStyleOptionHeader, QToolTip)
 from qfluentwidgets import (CardWidget, CheckableMenu, DropDownPushButton,
-    LineEdit, ComboBox, TableWidget, TransparentToolButton, FluentIcon, IconWidget, setCustomStyleSheet)
+    LineEdit, ComboBox, TableWidget, TableItemDelegate, TransparentToolButton, FluentIcon, IconWidget, setCustomStyleSheet)
 from stats_motion import SurfaceMotion, CollapseMotion, animations_enabled
 from stats_controls import StatisticsScrollArea, configure_fluent_table, SummaryToggleButton
 from stats_elevation import attach_card_elevation
@@ -20,6 +20,56 @@ HEADERS = ['公司', '制式', '线路名称', '地图 km', '折算 km', '单程
            '今日平均单班人次', '今日平均车公里人次']
 CORE_COLUMNS = {2, 7, 8, 9, 10}
 QUERY_COLUMNS = frozenset(range(len(HEADERS))) - {4}
+TABLE_TEXT_PADDING = 16
+# QStyledItemDelegate's text/focus margin adds 3 px inside the Fluent inset.
+# Do not query its stylesheet proxy's item metrics: it can crash this Qt build.
+TABLE_TEXT_INSET = TABLE_TEXT_PADDING + 3
+# Qt reserves another focus margin when deciding whether to elide numeric
+# text. Include it in width measurement as well as the painted text inset.
+TABLE_CONTENT_MARGIN = 2 * TABLE_TEXT_INSET + 6
+
+
+def _column_alignment(column):
+    return (Qt.AlignmentFlag.AlignLeft if column < 3 else Qt.AlignmentFlag.AlignRight) | Qt.AlignmentFlag.AlignVCenter
+
+
+class LineTableDelegate(TableItemDelegate):
+    """Preserve Fluent selection/hover painting with explicit text anchors."""
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.displayAlignment = _column_alignment(index.column())
+
+
+class LineTableHeader(QHeaderView):
+    """Match the cell's text inset, independent of section position/sort state."""
+    def __init__(self, parent):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+
+    def paintSection(self, painter, rect, logical_index):
+        option = QStyleOptionHeader()
+        self.initStyleOptionForIndex(option, logical_index)
+        option.rect = rect
+        text = option.text
+        option.text = ''
+        painter.save()
+        painter.setClipRect(rect)
+        self.style().drawControl(QStyle.ControlElement.CE_HeaderSection, option, painter, self)
+        inset = TABLE_TEXT_INSET
+        text_rect = rect.adjusted(inset, 0, -inset, 0)
+        numeric = logical_index >= 3
+        if self.isSortIndicatorShown() and self.sortIndicatorSection() == logical_index:
+            # Put the arrow on the opposite edge from the text anchor; sorting
+            # never displaces the right edge of a numeric column's glyphs.
+            arrow = QStyleOptionHeader(option)
+            arrow.rect = QRect(rect.left() + 4 if numeric else rect.right() - 12,
+                               rect.center().y() - 4, 8, 8)
+            self.style().drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorHeaderArrow,
+                                      arrow, painter, self)
+        painter.setFont(self.font())
+        painter.setPen(QColor(tokens.TEXT_SECONDARY))
+        text = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, max(0, text_rect.width()))
+        painter.drawText(text_rect, _column_alignment(logical_index), text)
+        painter.restore()
 
 
 class LineFilterComboBox(ComboBox):
@@ -81,7 +131,66 @@ def shown(value, unit=''):
     return text + ((' ' + unit) if unit else '')
 
 
-def line_display_value(line, key):
+def _numbered_line_name(line):
+    """Recognize whole numbered templates only, never digits inside a custom name."""
+    mode = display_mode(line.get('运输制式', ''))
+    name = str(line.get('线路名称') or '').strip()
+    if not name:
+        number = line.get('线路号')
+        name = str(number) if number is not None and number != '' else ''
+    raw_mode = str(line.get('运输制式') or '').strip()
+    prefixes = {mode, raw_mode}
+    if mode == '单轨':
+        prefixes.add('单轨列车')
+    prefix = next((value for value in sorted(prefixes, key=len, reverse=True)
+                   if value and name.startswith(value)), '')
+    candidate = name[len(prefix):].strip() if prefix else name
+    match = re.fullmatch(r'(\d+[A-Za-z]?)(路|号线)?', candidate)
+    return mode, name, match.groups() if match else None
+
+
+def _line_company_identity(line):
+    identity = line.get('公司标识')
+    if identity is not None and identity != '':
+        return ('id', str(identity))
+    return ('name', str(line.get('原始公司名称') or line.get('公司名称') or ''))
+
+
+def line_query_name(line, all_lines=None):
+    """Display-only numbering within the complete save's company context.
+
+    Keep the source dictionary and the shared workbook formatter untouched.
+    A filtered subset must not replace ``all_lines`` when checking collisions.
+    """
+    mode, original, numbered = _numbered_line_name(line)
+    if numbered is None:
+        return original
+    identifier, suffix = numbered
+    if mode == '公交':
+        # Letter route codes already carry their established identity, e.g. 812E.
+        return identifier if not identifier.isdigit() and suffix is None else identifier + '路'
+    known_modes = {'有轨电车', '无轨电车', '地铁', '单轨', '水上巴士'}
+    if mode not in known_modes:
+        return original
+    company = _line_company_identity(line)
+    collision = False
+    for other in all_lines or ():
+        if _line_company_identity(other) != company:
+            continue
+        other_mode, _, other_numbered = _numbered_line_name(other)
+        if (other_numbered is not None and other_mode != mode
+                and other_mode in known_modes | {'公交'}
+                and other_numbered[0].casefold() == identifier.casefold()):
+            collision = True
+            break
+    if collision:
+        return mode + identifier + '号线'
+    if mode in ('地铁', '单轨') and identifier.isdigit():
+        return identifier + '号线'
+    return identifier + (suffix or ('路' if identifier.isdigit() else ''))
+
+
+def line_display_value(line, key, all_lines=None):
     availability = line.get('字段可用性') or {}
     if availability.get(key) is False:
         return None
@@ -89,6 +198,8 @@ def line_display_value(line, key):
         return None
     if key in ('当日发班数', '今日平均单班人次', '今日平均车公里人次') and line.get('班次数据完整', True) is False:
         return None
+    if key == '线路名称' and all_lines is not None:
+        return line_query_name(line, all_lines)
     return line.get(key)
 
 
@@ -301,9 +412,15 @@ class LinesPage(QWidget):
         self.line_count.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};font-family:"{tokens.FONT_FAMILY}";font-size:12px;')
         left_layout.addLayout(filters)
         self.line_table = TableWidget(self.left)
+        self.line_table.setHorizontalHeader(LineTableHeader(self.line_table))
+        old_delegate = self.line_table.itemDelegate()
+        self.line_table.setItemDelegate(LineTableDelegate(self.line_table))
+        old_delegate.deleteLater()
         self._table_tooltips = ElisionOnlyTableTooltips(self.line_table)
         self.line_table.viewport().installEventFilter(self._table_tooltips)
         self.line_table.setColumnCount(len(HEADERS)); self.line_table.setHorizontalHeaderLabels(HEADERS)
+        for column, text in enumerate(HEADERS):
+            self.line_table.horizontalHeaderItem(column).setToolTip(text)
         self.line_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.line_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.line_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -316,7 +433,7 @@ class LinesPage(QWidget):
         self.line_table.setObjectName('lineTable')
         table_style = (f'QTableView#lineTable {{font-family:"{tokens.FONT_FAMILY}";'
                        f'font-size:{tokens.FONT_SIZE_BODY}px;}} '
-                       'QTableView#lineTable::item {padding-left: 6px; padding-right: 6px;}')
+                       f'QTableView#lineTable::item {{padding-left: {TABLE_TEXT_PADDING}px; padding-right: {TABLE_TEXT_PADDING}px;}}')
         setCustomStyleSheet(self.line_table, table_style, table_style)
         header = self.line_table.horizontalHeader()
         header.setMinimumSectionSize(42); header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -378,6 +495,17 @@ class LinesPage(QWidget):
         right.addWidget(self.schedule_panel, 1)
         self.right_scroll.setWidget(self.right_host)
         self._apply_columns(); self._update_button()
+        self._content_widths = {}
+        self._sizing_columns = False
+        self._column_fit_timer = QTimer(self)
+        self._column_fit_timer.setSingleShot(True)
+        self._column_fit_timer.timeout.connect(self._fit_content_columns)
+        for signal in (self.line_table.model().dataChanged,
+                       self.line_table.model().rowsInserted,
+                       self.line_table.model().rowsRemoved,
+                       self.line_table.model().modelReset):
+            signal.connect(self._queue_content_fit)
+        header.sectionResized.connect(self._keep_content_width)
         self.left.installEventFilter(self)
         self._fit_filters()
         self.installEventFilter(self)
@@ -441,10 +569,60 @@ class LinesPage(QWidget):
     def _apply_columns(self):
         visible = QUERY_COLUMNS if self.expanded else self._saved_columns & QUERY_COLUMNS
         for i in range(len(HEADERS)): self.line_table.setColumnHidden(i, i not in visible)
-        widths = ([135,64,84,72,72,96,108,90,52,76,98,98,116,136] if self.expanded
-                  else [110,64,72,72,72,96,108,98,52,76,112,98,116,136])
-        for i, width in enumerate(widths): self.line_table.setColumnWidth(i,width)
-        self.line_table.horizontalHeader().setStretchLastSection(self.expanded)
+        if not getattr(self, '_column_widths_initialized', False):
+            widths = [135,64,84,72,72,96,108,98,52,76,112,98,116,136]
+            self._column_widths = dict(enumerate(widths))
+            for i, width in enumerate(widths):
+                self.line_table.setColumnWidth(i, width)
+            self._column_widths_initialized = True
+        # Tail space stays blank. Interactive widths/order remain the user's
+        # choices through expand, resize and visibility changes.
+        self.line_table.horizontalHeader().setStretchLastSection(False)
+
+    @Slot()
+    def _queue_content_fit(self):
+        self._column_fit_timer.start(0)
+
+    def _fit_content_columns(self):
+        """Values stay complete; captions may elide and expose their tooltip."""
+        table = self.line_table
+        self._sizing_columns = True
+        try:
+            for column in range(table.columnCount()):
+                width = 42
+                for row in range(table.rowCount()):
+                    item = table.item(row, column)
+                    if item is not None:
+                        font = item.data(Qt.ItemDataRole.FontRole) or table.font()
+                        width = max(width, QFontMetrics(font).horizontalAdvance(item.text()) + TABLE_CONTENT_MARGIN)
+                self._content_widths[column] = width
+                # Keep larger user widths; visibility/sort changes never reset
+                # them. Hidden sections get the same complete-content budget.
+                if table.isColumnHidden(column):
+                    target = max(width, self._column_widths[column])
+                    table.setColumnWidth(column, target)
+                    self._column_widths[column] = target
+                elif table.columnWidth(column) < width:
+                    table.setColumnWidth(column, width)
+                    self._column_widths[column] = width
+        finally:
+            self._sizing_columns = False
+
+    def _keep_content_width(self, column, old_size, new_size):
+        if self._sizing_columns:
+            return
+        if new_size == 0:
+            if old_size > 0:
+                self._column_widths[column] = old_size
+            return
+        minimum = self._content_widths.get(column, 42)
+        if new_size < minimum:
+            self._sizing_columns = True
+            try:
+                self.line_table.horizontalHeader().resizeSection(column, minimum)
+            finally:
+                self._sizing_columns = False
+        self._column_widths[column] = max(minimum, new_size)
 
     def _compact_width(self):
         return 436 if self.width() >= 1150 else (340 if self.width() >= 940 else 260)
@@ -471,6 +649,8 @@ class LinesPage(QWidget):
     def _finish_motion(self):
         self.left.setGeometry(self._left_rect())
         self._apply_columns()
+        if not self.expanded:
+            self.line_table.horizontalScrollBar().setValue(0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

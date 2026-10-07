@@ -87,15 +87,17 @@ class NetworkModelTask(QThread):
     ready = Signal(int, object, object)
     failed = Signal(int, str)
 
-    def __init__(self, token, source, options, companies, parent=None, *, lines=None):
+    def __init__(self, token, source, options, companies, parent=None, *, lines=None, prepared_charts=None):
         super().__init__(parent)
         self.token, self.source, self.options, self.companies = token, source, options, companies
         self.lines = lines
+        self.prepared_charts = prepared_charts
 
     def run(self):
         try:
             network = build_network_snapshot(self.source, self.options, self.companies,
-                                             self.isInterruptionRequested, lines=self.lines)
+                                             self.isInterruptionRequested, lines=self.lines,
+                                             prepared_charts=self.prepared_charts)
             if not self.isInterruptionRequested():
                 self.ready.emit(self.token, self.source, network)
         except Exception as exc:
@@ -300,6 +302,7 @@ class StatisticsPage(QWidget):
                                 if settings else default
                                 for key, default in zip(keys, (5, 20, 100)))
         self.token, self.workers = 0, []
+        self._requested_query_key = None
         self._closing, self._layout_mode, self._layout_signature = False, None, None
         self._filters_collapsed = False
         self._filter_animation = None
@@ -309,6 +312,8 @@ class StatisticsPage(QWidget):
         self.query_timer.timeout.connect(self._submit_query)
         self._build()
         configure_dashboard(self, self.settings)
+        from statistics_hover_policy import StatisticsHoverPolicy
+        self._hover_policy = StatisticsHoverPolicy(self)
 
     def _build(self):
         outer = QVBoxLayout(self)
@@ -441,6 +446,10 @@ class StatisticsPage(QWidget):
         mode_row.addWidget(self.network_mode_control)
         mode_row.addStretch()
         self.network_mode_control.hide()
+        # Both tabs reserve the same mode width so their preceding columns stay aligned.
+        mode_width = max(self.analysis_mode_control.sizeHint().width(),
+                         self.network_mode_control.sizeHint().width())
+        self.mode_host.setFixedWidth(mode_width)
         self.compare_combo = FluentComboBox(self.filter_card)
         self.compare_combo.setFixedHeight(CONTROL_HEIGHT)
         for key in ('previous', 'previous_week', 'previous_month', 'custom'):
@@ -844,6 +853,9 @@ class StatisticsPage(QWidget):
                 self._reflow_network()
                 self.export_button.setEnabled(True)
             return
+        prepared_charts = (self.network_snapshot.charts if self.network_snapshot is not None and
+                           getattr(self, '_network_source', None) is self.snapshot and
+                           self.network_snapshot.options.mode == self.network_options.mode else None)
         self.network_snapshot = None
         if self.tab_bar.currentRouteKey() == 'network':
             self.export_button.setEnabled(False)
@@ -852,7 +864,7 @@ class StatisticsPage(QWidget):
             worker.requestInterruption()
         worker = NetworkModelTask(self.network_model_token, self.snapshot,
                                   self._effective_network_options(), self._names(), self,
-                                  lines=self._network_lines)
+                                  lines=self._network_lines, prepared_charts=prepared_charts)
         worker.ready.connect(self._receive_network_model)
         worker.failed.connect(self._failed_network_model)
         worker.finished.connect(lambda w=worker: self._network_worker_finished(w))
@@ -878,6 +890,7 @@ class StatisticsPage(QWidget):
         if token != self.network_model_token or source is not self.snapshot or self._closing:
             return
         self.network_snapshot = network
+        self._network_source = source
         self.network_dashboard.set_snapshot(network)
         self._reflow_network()
         if self.tab_bar.currentRouteKey() == 'network':
@@ -1001,6 +1014,7 @@ class StatisticsPage(QWidget):
         self._update_compact_filter_summary()
 
     def clear_session(self):
+        self._requested_query_key = None
         self.token += 1
         self.query_timer.stop()
         for worker in self.workers:
@@ -1057,8 +1071,10 @@ class StatisticsPage(QWidget):
         self.snapshot = None
         self.network_snapshot = None
         self.city_snapshot = None
+        self.export_button.setEnabled(False)
         if had_snapshot:
-            self._clear_views(preserve_controls=True)
+            for panel in self.findChildren(ChartPanel):
+                panel._cancel_detail()
         self.snapshot_changed.emit(None)
 
     def set_session(self, data):
@@ -1104,17 +1120,31 @@ class StatisticsPage(QWidget):
 
     def schedule_query(self, *_):
         if self.store is not None and not self._closing:
+            start, end = self._range_window or preset_window(self.simulation_time, self.range_preset)
+            route = self.tab_bar.currentRouteKey()
+            try:
+                comparison = self._route_comparison(route) if route != 'city' else None
+            except ValueError:
+                comparison = ('invalid',)
+            key = (id(self.store), self.selected_companies(), start, end,
+                   self.grain_combo.currentData(), comparison, self.thresholds)
+            if key == self._requested_query_key:
+                if self.snapshot is not None:
+                    self._render_snapshot()
+                return
+            self._requested_query_key = key
             self._invalidate_snapshot()
             self.query_timer.start(80)
 
     def _submit_query(self):
         if self.store is None:
             return
-        self._invalidate_snapshot()
+        if self.snapshot is not None:
+            self._invalidate_snapshot()
         start, end = self._range_window or preset_window(self.simulation_time, self.range_preset)
         if start >= end:
             self.snapshot = None
-            self.export_button.setEnabled(False)
+            self._clear_views(preserve_controls=True)
             return
         comparison = None
         is_network = self.tab_bar.currentRouteKey() == 'network'
@@ -1154,12 +1184,14 @@ class StatisticsPage(QWidget):
                 snapshot, network = snapshot
         self.snapshot = snapshot
         self.network_snapshot = network
+        self._network_source = snapshot if network is not None else None
         self._render_snapshot()
         self.export_button.setEnabled(True)
         self.snapshot_changed.emit(snapshot)
 
     def _failed(self, token, _message):
         if token == self.token:
+            self._requested_query_key = None
             self.snapshot = None
             self.network_snapshot = None
             self.network_dashboard.clear()
@@ -1290,7 +1322,10 @@ class StatisticsPage(QWidget):
             self.filter_layout.setContentsMargins(
                 filter_padding, filter_padding, filter_padding, filter_padding)
             self.filter_layout.setSpacing(6 if width < 1400 else CONTROL_GAP)
-        columns = 4 if width >= 1100 else 2
+        # Two visible removable tags need their complete 32px close targets.
+        tag_budget = 300 if len(self.company_tags) > 1 else 180
+        common_minimum = tag_budget + 116 + 76 + self.mode_host.width() + 36 + 28
+        columns = 4 if width >= common_minimum else 2
         period = not self.compare_field.isHidden()
         signature = (columns, period, width >= 900, is_city)
         if signature == self._layout_signature:

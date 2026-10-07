@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path, PureWindowsPath
+from dataclasses import replace
 from math import ceil
 import sys
 
@@ -17,7 +18,7 @@ from latest_info_model import InfoValue, LatestInfoSnapshot
 from company_labels import company_selection_name
 from map_name_source import resolve_session_map_name
 from latest_info_charts import (DepartureStructure, PassengerRanking, font,
-                                FullLabel, label, numeric, short_line_name, shown)
+                                FullLabel, label, numeric, short_line_name, shown, line_caption)
 from statistics_model import parse_time
 from stats_charts import ChartPanel
 from stats_controls import ElidingComboBox, StatisticsScrollArea
@@ -368,8 +369,8 @@ class HighlightCard(QFrame):
 
     def set_line(self, line):
         self._line_key = line.key if line else None
-        self.name.setText(f'{line.mode} {short_line_name(line.name)}' if line else '—')
-        self.name.setToolTip(f'{line.mode} {line.name}' if line and line.name != short_line_name(line.name) else '')
+        self.name.setText(line_caption(short_line_name(line.name), line.mode) if line else '—')
+        self.name.setToolTip(line_caption(line.name, line.mode) if line and line.name != short_line_name(line.name) else '')
         self.name.setAccessibleName(self.name.text())
         values = (line.passengers, line.departures, line.passengers_per_departure,
                   line.passengers_per_vehicle_km) if line else (None,) * 4
@@ -714,6 +715,9 @@ class LatestInfoPage(QWidget):
             combo.blockSignals(False)
 
     def set_session(self, data: dict):
+        from line_query_page import line_query_name
+        lines = data.get('lines') or ()
+        self._line_display_names = {str(line.get('key') or ''): line_query_name(line, lines) for line in lines}
         from stats_motion import settle_surface_motion
         settle_surface_motion(self.board)
         self._workbook_availability = (False, False)
@@ -768,21 +772,27 @@ class LatestInfoPage(QWidget):
                 snapshot.company_id, snapshot.mode) != self.scope():
             return
         self._snapshot = snapshot
+        # Only UI copies receive display names; the controller/export snapshot
+        # and save dictionaries retain their serialized names and observations.
+        names = getattr(self, '_line_display_names', {})
+        display_line = lambda line: replace(line, name=names.get(line.key) or line.name) if line else None
+        display_lines = tuple(display_line(line) for line in snapshot.lines)
+        display_top10 = tuple(display_line(line) for line in snapshot.passenger_top10)
         self._populate_scopes(snapshot.companies, snapshot.modes, self.scope())
         self._set_city(snapshot.city_name, snapshot.simulation_time, snapshot.population, snapshot.save_name)
         metrics = {metric.key: metric for metric in snapshot.metrics}
         for key, widget in self.metric_cards.items():
             widget.set_value(metrics.get(key))
         for i, widget in enumerate(self.highlights):
-            widget.set_line(snapshot.highlights[i].line if i < len(snapshot.highlights) else None)
+            widget.set_line(display_line(snapshot.highlights[i].line) if i < len(snapshot.highlights) else None)
         company_names = dict(snapshot.companies)
         company_names['__selected__'] = company_selection_name(
             snapshot.companies, (snapshot.company_id,) if snapshot.company_id else tuple(company_names))
         self.trend.set_company_palette({key: tokens.DATA_COMPANY_COLORS[index % len(tokens.DATA_COMPANY_COLORS)]
                                        for index, key in enumerate(sorted(dict(snapshot.companies)))})
         self.trend.set_result(snapshot.company_trend, company_names)
-        self.passengers.set_data(snapshot.lines, snapshot.passenger_top10, snapshot.passenger_modes, scope_mode=snapshot.mode)
-        self.departures.set_data(snapshot.lines, snapshot.departure_modes, snapshot.total_departures, scope_mode=snapshot.mode)
+        self.passengers.set_data(display_lines, display_top10, snapshot.passenger_modes, scope_mode=snapshot.mode)
+        self.departures.set_data(display_lines, snapshot.departure_modes, snapshot.total_departures, scope_mode=snapshot.mode)
         self.scope_label.setText(snapshot.scope_text)
         if self._pending_chart_state is not None:
             self.restore_chart_state(self._pending_chart_state, allow_scope_change=True)

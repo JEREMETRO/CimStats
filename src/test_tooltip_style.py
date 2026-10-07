@@ -1,11 +1,12 @@
 """Native tooltip surface regression, using synthetic text."""
 import os
 import sys
+import time
 from pathlib import Path
 import pytest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'frontend'))
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, QAbstractAnimation
 from PySide6.QtWidgets import QApplication, QLabel, QToolTip
 from stats_style import initialize_theme
 
@@ -175,20 +176,25 @@ def test_navigation_menu_tip_tracks_expanded_and_collapsed_states(tmp_path, monk
     window = desktop_app.MainWindow()
     try:
         panel = window.sidebar.panel
+        def wait_navigation():
+            deadline = time.monotonic() + 3
+            while panel.expandAni.state() == QAbstractAnimation.State.Running and time.monotonic() < deadline:
+                QTest.qWait(10)
+            assert panel.expandAni.state() == QAbstractAnimation.State.Stopped
         panel.collapse()
-        QTest.qWait(250)
+        wait_navigation()
         assert panel.menuButton.toolTip() == '展开导航'
         panel.expand(useAni=False)
         application.processEvents()
         assert panel.menuButton.toolTip() == '收起导航'
         panel.collapse()
-        QTest.qWait(250)
+        wait_navigation()
         assert panel.menuButton.toolTip() == '展开导航'
         panel.expand()
-        QTest.qWait(250)
+        wait_navigation()
         assert panel.menuButton.toolTip() == '收起导航'
         panel.collapse()
-        QTest.qWait(250)
+        wait_navigation()
         assert panel.menuButton.toolTip() == '展开导航'
     finally:
         window.close()

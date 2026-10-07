@@ -6,6 +6,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 
 @pytest.fixture(scope='session')
@@ -16,11 +17,10 @@ def qt_application():
 
 @pytest.fixture(autouse=True)
 def clean_qt_test_windows(qt_application):
+    original = set(qt_application.topLevelWidgets())
     yield
     for window in qt_application.topLevelWidgets():
-        if type(window).__module__ in (
-            'stats_charts', 'stats_alerts', 'statistics_page', 'desktop_app'
-        ):
+        if isValid(window) and window not in original:
             window.close()
             window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

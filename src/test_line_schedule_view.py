@@ -124,7 +124,7 @@ def test_201_departures_have_explicit_overflow_and_final_item_can_be_reached(pan
     assert len(panel.matrix.entries) == 201
     assert panel.matrix.row_height == 24
     assert panel.matrix.minimumHeight() == 504
-    assert scroll.maximumHeight() == 480
+    assert scroll.height() < panel.matrix.height()
     assert scroll.horizontalScrollBar().maximum() == 0
     assert scroll.verticalScrollBar().maximum() > 0
     assert not panel.overflow_label.isHidden()
@@ -212,9 +212,12 @@ def test_panel_minimum_fits_parent_budget_and_small_width_never_clips_time(panel
     panel.resize(400, 544)
     qt_application.processEvents()
     assert panel.matrix_scroll.horizontalScrollBar().maximum() == 0
-    # A narrow parent can scroll the taller panel; the matrix itself stays complete.
-    assert panel.height() >= panel.minimumHeight()
-    assert len(panel.matrix.visible_indices()) == 140
+    # Narrow content overflows locally rather than growing the whole panel.
+    assert panel.height() == 544
+    assert panel.matrix_scroll.verticalScrollBar().maximum() > 0
+    panel.matrix_scroll.verticalScrollBar().setValue(panel.matrix_scroll.verticalScrollBar().maximum())
+    qt_application.processEvents()
+    assert 139 in panel.matrix.visible_indices()
     assert panel.matrix.cell_rect(139).width() >= panel.matrix.fontMetrics().horizontalAdvance('08:19') + 12
     assert panel.width() <= 400
 
@@ -442,10 +445,10 @@ def test_expansion_requests_parent_action_and_expanded_200_fit_without_scroll(pa
     qt_application.processEvents()
     assert panel.expanded is False
     assert len(panel.matrix.entries) == 200
-    assert panel.matrix.display_count == 140
+    assert 0 < panel.matrix.display_count < 200
     assert panel.matrix_scroll.verticalScrollBar().maximum() > 0
-    assert panel.overflow_label.isHidden()
-    assert panel.overflow_label.text() == ''
+    assert panel.overflow_label.isVisible()
+    assert '滚动' in panel.overflow_label.text()
     received = QSignalSpy(panel.expansionRequested)
     QTest.mouseClick(panel.expansion_button, Qt.MouseButton.LeftButton)
     assert received.count() == 1 and received.at(0) == [True]
@@ -465,8 +468,8 @@ def test_expansion_requests_parent_action_and_expanded_200_fit_without_scroll(pa
     panel.set_expanded(False)
     panel.resize(888, 458)
     qt_application.processEvents()
-    assert panel.matrix.cell_rect(0).height() == 20
-    assert panel.matrix.display_count == 140
+    assert panel.matrix.cell_rect(0).height() >= panel.matrix.fontMetrics().height() + 4
+    assert 0 < panel.matrix.display_count < 200
 
 
 @pytest.mark.parametrize('width', [888, 904])
@@ -498,14 +501,17 @@ def test_expanded_stride_fills_available_height_and_can_shrink_back(panel, qt_ap
     assert panel.height() == panel.minimumHeight()
     assert panel.matrix.minimumHeight() == 480
     assert panel.matrix.row_height == 24
-    assert panel.matrix.display_count == 200
+    assert panel.matrix.display_count < 200
+    panel.matrix_scroll.verticalScrollBar().setValue(panel.matrix_scroll.verticalScrollBar().maximum())
+    qt_application.processEvents()
+    assert 199 in panel.matrix.visible_indices()
     panel.set_expanded(False)
     panel.resize(width, 818)
     qt_application.processEvents()
-    assert panel.matrix.minimumHeight() == 400
-    assert panel.matrix.minimum_row_height == 20
-    assert panel.matrix.row_height == 20
-    assert panel.matrix.display_count == 140
+    assert panel.matrix.minimumHeight() <= panel.matrix_scroll.viewport().height()
+    assert panel.matrix.minimum_row_height >= panel.matrix.fontMetrics().height() + 4
+    assert panel.matrix.row_height == 30
+    assert panel.matrix.display_count == 200
 
 
 @pytest.mark.parametrize('width', [888, 904])
@@ -551,7 +557,7 @@ def test_expanded_summary_has_readable_values_and_complete_next_day_time(panel, 
     panel.resize(888, 818)
     qt_application.processEvents()
     assert panel.matrix.row_height == 30
-    assert panel.matrix.minimumHeight() == 280
+    assert panel.matrix.minimumHeight() <= panel.matrix_scroll.viewport().height()
     assert panel.matrix.display_count == 140
 
 

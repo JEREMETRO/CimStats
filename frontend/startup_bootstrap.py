@@ -83,8 +83,13 @@ def main(launcher: Path, *, root: Path | None = None, window_factory=None,
                 return
             def loaded():
                 record('desktop_import_finished', window_id=int(window.winId()))
-                gates.append(FirstFrameGate(window, ready, surface=getattr(window, 'empty_state', None)))
-                window.update()
+                handoff = getattr(window, 'prepare_welcome_handoff', None)
+                if handoff is not None:
+                    handoff(ready)
+                else:
+                    surface = getattr(window, 'empty_state', None)
+                    gates.append(FirstFrameGate(window, ready, surface=surface))
+                    (surface if surface is not None else window).update()
 
             def failed(exc):
                 record('startup_failed', reason=type(exc).__name__)

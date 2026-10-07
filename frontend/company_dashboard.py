@@ -2,14 +2,14 @@
 from __future__ import annotations
 from stats_typography import emphasis_css, apply_emphasis_font
 
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontMetricsF
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import CaptionLabel, ComboBox as FluentComboBox, FluentIcon, IconWidget
 
 from statistics_model import summarize_buckets
 from display_rules import format_number
-from stats_charts import ChartPanel, nice_axis
+from stats_charts import ChartPanel, nice_axis, shared_axis_budget
 from stats_controls import SummaryToggleButton
 from stats_text import label
 from stats_tokens import (BORDER, CARD_BG, CARD_PADDING, CHART_BLUE, CONTROL_GAP,
@@ -21,6 +21,7 @@ from stats_view_model import company_result
 from card_comparisons import company_comparison, CardComparison
 from card_comparison_label import ComparisonLabel
 from ui_kit import elision_tooltip
+from layout_reflow import grid_columns
 
 
 KPI_KEYS = ('cashflow', 'company-value', 'monthly-ticket', 'satisfaction-speed',
@@ -34,6 +35,7 @@ def _display(value) -> str:
 
 from stats_elevation import attach_card_elevation
 from stats_motion import CollapseMotion
+from shiboken6 import isValid
 
 
 class KpiCard(QFrame):
@@ -203,15 +205,9 @@ class CompanyGroup(QFrame):
         self.name_label.setToolTip(elision_tooltip(self.full_name, self.name_label.text(), self.company_id))
 
     def reflow(self, kpi_columns: int, chart_columns: int):
-        for tile in self.kpis.values():
-            self.kpi_grid.removeWidget(tile)
-        for index, key in enumerate(KPI_KEYS):
-            self.kpi_grid.addWidget(self.kpis[key], index // kpi_columns, index % kpi_columns)
+        grid_columns(self.kpi_grid, (self.kpis[key] for key in KPI_KEYS), kpi_columns)
         if self.chart_grid is not None:
-            for panel in self.panels.values():
-                self.chart_grid.removeWidget(panel)
-            for index, panel in enumerate(self.panels.values()):
-                self.chart_grid.addWidget(panel, index // chart_columns, index % chart_columns)
+            grid_columns(self.chart_grid, self.panels.values(), chart_columns)
 
     def set_summary_collapsed(self, collapsed):
         self.summary_button.set_collapsed(collapsed)
@@ -223,7 +219,7 @@ class CompanyGroup(QFrame):
         while dashboard is not None and not isinstance(dashboard, CompanyDashboard):
             dashboard = dashboard.parentWidget()
         if dashboard is not None:
-            dashboard.reflow(dashboard._content_width, dashboard._viewport_height)
+            dashboard.request_reflow()
 
     def chart_fit_chrome(self) -> int:
         """Height occupied by everything except the two chart rows."""
@@ -274,6 +270,8 @@ class CompanyDashboard(QWidget):
         root.addStretch()
 
     def clear(self):
+        self._axis_context = None
+        self._axis_budget_signature = None
         self._structure = None
         for grid in (self.group_grid, self.shared_grid):
             while grid.count():
@@ -287,6 +285,7 @@ class CompanyDashboard(QWidget):
 
     def clear_data(self):
         """Discard the old snapshot while retaining controls for the next query."""
+        self._axis_context = None
         for group in self.groups.values():
             for tile in group.kpis.values():
                 tile.set_result(None, group.company_id)
@@ -299,7 +298,7 @@ class CompanyDashboard(QWidget):
                palette: dict[str, str], mode: str, satisfaction: str,
                slots: tuple[str, ...], comparison_label: str = '对比'):
         structure = (tuple((owner, names.get(owner, owner), palette[owner]) for owner in company_ids),
-                     mode == 'companies', tuple(slots), satisfaction)
+                     mode == 'companies', tuple(slots))
         if structure != getattr(self, '_structure', None):
             self.clear()
             self._structure = structure
@@ -317,6 +316,9 @@ class CompanyDashboard(QWidget):
                 group.set_summary_collapsed(self._summary_collapsed)
                 group.summary_toggled.connect(self.set_summary_collapsed)
                 group.satisfaction_changed.connect(self.satisfaction_changed)
+            group.satisfaction_combo.blockSignals(True)
+            group.satisfaction_combo.setCurrentIndex(max(0, group.satisfaction_combo.findData(satisfaction)))
+            group.satisfaction_combo.blockSignals(False)
             for key, tile in group.kpis.items():
                 metric_key = satisfaction if key == 'satisfaction-speed' else key
                 tile.title.setText(label(metric_key))
@@ -376,14 +378,15 @@ class CompanyDashboard(QWidget):
                 other.set_hover_offset(seconds)
 
     def _align_axes(self, snapshot, satisfaction: str, mode: str):
+        self._axis_context = (snapshot, satisfaction, mode)
         for slot in self._slots:
             key = satisfaction if slot == 'satisfaction-speed' else slot
             result = snapshot.results.get(key)
             values = [bucket.value for source in ((result.series, result.comparison if mode == 'period' else {}) if result else ())
                       for buckets in source.values() for bucket in buckets if bucket.value is not None]
-            spec = nice_axis(values) if values else None
             panels = ([group.panels[slot] for group in self.groups.values()] if mode != 'companies'
                       else [self.shared_panels[slot]])
+            spec = nice_axis(values, max_ticks=shared_axis_budget(panels)) if values else None
             for panel in panels:
                 panel.set_axis_spec(spec)
 
@@ -394,15 +397,27 @@ class CompanyDashboard(QWidget):
         if not any(group.summary_motion.animation for group in self.groups.values()):
             self.reflow(self._content_width, self._viewport_height)
 
+    def request_reflow(self):
+        if getattr(self, '_reflow_pending', False):
+            return
+        self._reflow_pending = True
+        QTimer.singleShot(0, self._flush_reflow)
+
+    def _flush_reflow(self):
+        self._reflow_pending = False
+        if isValid(self):
+            self.reflow(self._content_width, self._viewport_height)
+
     def reflow(self, content_width: int, viewport_height: int | None = None):
+        if not getattr(self, '_axis_refresh_pending', False):
+            self._axis_refresh_pending = True
+            QTimer.singleShot(0, self._refresh_axis_budget)
         self._content_width = content_width
         if viewport_height is not None:
             self._viewport_height = viewport_height
         group_columns = 2 if content_width >= 720 and len(self.groups) > 1 else 1
-        for group in self.groups.values():
-            self.group_grid.removeWidget(group)
+        grid_columns(self.group_grid, self.groups.values(), group_columns)
         for index, group in enumerate(self.groups.values()):
-            self.group_grid.addWidget(group, index // group_columns, index % group_columns)
             fit_charts = (self._mode in ('default', 'period') and
                           self._viewport_height > 0 and len(self.groups) <= 2)
             dense = fit_charts and len(self.groups) == 2
@@ -419,7 +434,9 @@ class CompanyDashboard(QWidget):
                 tile.layout().setContentsMargins(10, 4 if dense else 6, 10, 4 if dense else 6)
             kpi_columns = (6 if len(self.groups) == 1 and content_width >= 1120 else
                            3 if content_width >= 1120 else
-                           1 if len(self.groups) > 1 and content_width < 850 else 2)
+                           3 if len(self.groups) == 1 and content_width >= 660 else
+                           2 if len(self.groups) > 1 and content_width >= 700 else
+                           1 if len(self.groups) > 1 and content_width < 700 else 2)
             chart_columns = 2 if (content_width >= 1120 or len(self.groups) == 1 and content_width >= 720) else 1
             group.setMinimumHeight(0)
             group.setMaximumHeight(16777215)
@@ -443,13 +460,11 @@ class CompanyDashboard(QWidget):
                             for view in panel.chart_views:
                                 view.setMinimumHeight(min(view.minimumHeight(), max(90, height - 112)))
                 group.setFixedHeight(chrome + 2 * height)
-        for panel in self.shared_panels.values():
-            self.shared_grid.removeWidget(panel)
         chart_columns = 2 if content_width >= 720 else 1
+        grid_columns(self.shared_grid, self.shared_panels.values(), chart_columns)
         fit_shared = (self._mode == 'companies' and chart_columns == 2 and
                       self._viewport_height > 0 and bool(self.shared_panels))
         for index, panel in enumerate(self.shared_panels.values()):
-            self.shared_grid.addWidget(panel, index // chart_columns, index % chart_columns)
             if not fit_shared:
                 panel.clear_compact_height()
                 panel.setMaximumHeight(16777215)
@@ -479,3 +494,15 @@ class CompanyDashboard(QWidget):
                         for view in panel.chart_views:
                             view.setMinimumHeight(min(view.minimumHeight(), max(90, chart_height - 112)))
         self.shared_host.setVisible(bool(self.shared_panels))
+
+    def _refresh_axis_budget(self):
+        self._axis_refresh_pending = False
+        if not isValid(self) or not getattr(self, '_axis_context', None):
+            return
+        if any(group.summary_motion.animation is not None for group in self.groups.values()):
+            return
+        panels = [p for g in self.groups.values() for p in g.panels.values()] + list(self.shared_panels.values())
+        signature = tuple((id(p), shared_axis_budget([p])) for p in panels)
+        if signature != getattr(self, '_axis_budget_signature', None):
+            self._axis_budget_signature = signature
+            self._align_axes(*self._axis_context)

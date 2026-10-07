@@ -21,6 +21,7 @@ class StartupWelcome(StartupSurface):
         self.animation = None
         self.reveal_progress = 0.
         self._started = False
+        self._content_budget = None
         self.drag_active = False
         self.content = QWidget(self)
         column = QVBoxLayout(self.content)
@@ -62,6 +63,9 @@ class StartupWelcome(StartupSurface):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, 'content'):
+            self._content_budget = None
+            if self.animation is not None:
+                self.finish_transition()
             self._place_content()
 
     def begin_transition(self):
@@ -82,16 +86,22 @@ class StartupWelcome(StartupSurface):
         animation.start()
 
     def _advance(self, progress):
+        previous_logo = self.logo_rect()
         self.reveal_progress = float(progress)
         if self.effect is not None:
             self.effect.setOpacity(self.reveal_progress)
         self._place_content()
-        self.update()
+        # Opacity and child geometry already invalidate the prompt. Only the
+        # moving logo needs its old/new bounds cleared; a full-window update
+        # would redraw the entire opaque background on every animation tick.
+        self.update(previous_logo.united(self.logo_rect()).adjusted(-2, -2, 2, 2).toAlignedRect())
 
     def _place_content(self):
         width = max(0, min(560, self.width() - 48))
-        self.content.setFixedWidth(width)
-        height = self.content.sizeHint().height()
+        if self._content_budget is None or self._content_budget[0] != width:
+            self.content.setFixedWidth(width)
+            self._content_budget = (width, self.content.sizeHint().height())
+        height = self._content_budget[1]
         # Center the final mark + prompt group as a single composition.
         offset = (height + 24) / 2
         self.logo_offset = offset * self.reveal_progress
@@ -129,6 +139,7 @@ class StartupWelcome(StartupSurface):
         self.note.setToolTip(full if shown != full else '')
         self.note.setAccessibleName(full)
         self.note.setVisible(bool(text))
+        self._content_budget = None
         self._place_content()
         self.update()
 

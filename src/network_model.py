@@ -440,7 +440,8 @@ def _chart_result(snapshot: DashboardResult, key: str, ids: tuple[str, ...],
 
 
 def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
-                           companies: dict[str, str], cancelled=None, *, lines=None) -> NetworkSnapshot:
+                           companies: dict[str, str], cancelled=None, *, lines=None,
+                           prepared_charts=None) -> NetworkSnapshot:
     """Build network summaries and chart descriptors from the same dashboard query."""
     _check_cancelled(cancelled)
     if options.mode not in ('overall', 'companies', 'period'):
@@ -509,6 +510,10 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
     keys = tuple(key for key in BASE_KEYS if not (hide_joint_coverage and key == 'coverage'))
     keys += (('company-passengers',) if options.mode == 'companies' else ())
     chart_ids = tuple((company,) for company in ids) if options.mode == 'period' else (ids,)
+    # Caller supplies these only for the same DashboardResult and chart mode.
+    if prepared_charts is not None:
+        _check_cancelled(cancelled)
+        return NetworkSnapshot(snapshot.filters, options, names, summaries, prepared_charts)
     charts = []
     for selected in chart_ids:
         for key in keys:

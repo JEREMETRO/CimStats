@@ -109,6 +109,30 @@ def child(page, name):
     return result
 
 
+def test_home_names_preserve_number_suffix_and_snapshot_source(page, qt_application):
+    from latest_info_charts import short_line_name, line_caption
+    from latest_info_model import LineHighlight
+    data = snapshot()
+    rows = [dict(key='bus-one', 运输制式='公交', 线路名称='1路', 线路号=1, 公司标识='company-a'),
+            dict(key='tram-one', 运输制式='有轨电车', 线路名称='1路', 线路号=1, 公司标识='company-a')]
+    source_session = session()
+    source_session['lines'] = rows
+    lines = tuple(replace(data.lines[i], key=row['key'], name=row['线路名称'], mode=row['运输制式'])
+                  for i, row in enumerate(rows))
+    data = replace(data, lines=lines, passenger_top10=lines,
+                   highlights=tuple(LineHighlight(title, lines[i % 2]) for i, title in enumerate(HIGHLIGHTS)))
+    page.set_session(source_session)
+    page.set_snapshot(data)
+    qt_application.processEvents()
+    assert page.highlights[1].name.text() == '有轨电车1号线'
+    page.passengers.ranking_button.click()
+    assert page.passengers.visible_ranking_rows()[1].line.name == '有轨电车1号线'
+    assert page._snapshot is data and data.lines[1].name == '1路'
+    assert rows[1]['线路名称'] == '1路'
+    assert short_line_name('1号线') == '1号线'
+    assert line_caption('有轨电车1号线', '有轨电车') == '有轨电车1号线'
+
+
 def test_city_name_and_clock_never_tip_after_session_snapshot_or_clipping(page, qt_application):
     assert all(not w.toolTip() for w in (page.city_name,page.city_date,page.city_clock))
     page.set_session(session())

@@ -24,6 +24,9 @@ SERIES_COLORS = {**MODE_COLORS, '平均': '#1677FF', 'WhiteCollar': '#F5A653',
 
 
 def series_color(group):
+    transport = tokens.transport_color(group)
+    if transport is not None:
+        return QColor(transport)
     return SERIES_COLORS.get(group, tokens.DATA_CATEGORY_COLORS[
         int.from_bytes(sha256(group.encode()).digest()[:4], 'big') % len(tokens.DATA_CATEGORY_COLORS)])
 

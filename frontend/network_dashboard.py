@@ -5,14 +5,14 @@ from stats_typography import emphasis_css, apply_emphasis_font
 from dataclasses import replace
 from decimal import Decimal
 
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtGui import QColor, QFontMetricsF
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, IconWidget
 
 from network_model import NetworkOptions, NetworkSnapshot, NetworkSummary, NetworkValue
 from display_rules import format_number, number_places
-from stats_charts import nice_axis
+from stats_charts import nice_axis, shared_axis_budget
 from stats_controls import FluentSegmentedControl, SummaryToggleButton
 from card_comparison_label import ComparisonLabel
 from stats_tokens import (BORDER, CARD_BG, CHART_BLUE, CONTROL_GAP,
@@ -53,6 +53,8 @@ def _clear_layout(layout):
 
 from stats_elevation import attach_card_elevation
 from stats_motion import CollapseMotion
+from shiboken6 import isValid
+from layout_reflow import grid_columns, place_grid
 
 
 class NetworkValueTile(QFrame):
@@ -124,14 +126,29 @@ class NetworkValueTile(QFrame):
         box.addLayout(number_row)
         self.comparison_label = ComparisonLabel(value.comparison, self, tooltip_target=self.number)
         box.addWidget(self.comparison_label)
-        if value.value is None and value.reason:
-            reason = QLabel(value.reason, self)
-            reason.setWordWrap(True)
-            reason.setStyleSheet(f'color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}px;')
-            box.addWidget(reason)
+        self.reason_label = QLabel('', self)
+        self.reason_label.setWordWrap(True)
+        self.reason_label.setStyleSheet(f'color: {TEXT_SECONDARY}; font-size: {FONT_SIZE_CAPTION}px;')
+        box.addWidget(self.reason_label)
+        self.set_value(value, options)
+
+    def set_value(self, value, options):
+        self.value_model = value
+        self.number.setText(_number(value.value, value.metric_id))
+        self.unit.setText(value.unit if value.value is not None else '')
+        self.comparison_label.set_comparison(value.comparison)
+        self.reason_label.setText(value.reason)
+        self.reason_label.setVisible(value.value is None and bool(value.reason))
+        if self.option_control is not None:
+            self.option_control.blockSignals(True)
+            self.option_control.setCurrentKey(getattr(options, SWITCHES[self.position][0]))
+            self.option_control.blockSignals(False)
+        elif self.metric_title is not None:
+            self.metric_title.setText(value.title)
         detail_text = '；'.join(f'{name}: {_number(amount, value.metric_id)}' for name, amount in value.details)
-        self.setToolTip('；'.join(dict.fromkeys(part for part in
-            (value.reason, detail_text) if part)))
+        description = '；'.join(dict.fromkeys(part for part in (value.reason, detail_text) if part))
+        self.setAccessibleDescription(description)
+        self.setToolTip(description)
 
     def _update_unit_baseline(self):
         delta = round(QFontMetricsF(self.number.font()).descent() - QFontMetricsF(self.unit.font()).descent())
@@ -206,13 +223,10 @@ class NetworkSummaryCard(QFrame):
         while dashboard is not None and not isinstance(dashboard, NetworkDashboard):
             dashboard = dashboard.parentWidget()
         if dashboard is not None and not dashboard._building_snapshot:
-            dashboard.reflow(dashboard._content_width, dashboard._viewport_height)
+            dashboard.request_reflow()
 
     def reflow(self, columns: int):
-        for tile in self.tiles:
-            self.tile_grid.removeWidget(tile)
-        for index, tile in enumerate(self.tiles):
-            self.tile_grid.addWidget(tile, index // columns, index % columns)
+        grid_columns(self.tile_grid, self.tiles, columns)
 
 
 class NetworkDashboard(QWidget):
@@ -341,7 +355,26 @@ class NetworkDashboard(QWidget):
 
     def set_snapshot(self, snapshot: NetworkSnapshot):
         self._building_snapshot = True
+        structure = (snapshot.options.mode, tuple(snapshot.companies.items()),
+                     tuple((s.company_id, s.title, tuple(VALUE_POSITIONS[v.metric_id] for v in s.values))
+                           for s in snapshot.summaries),
+                     tuple((c.company_id,c.key,c.allowed_modes) for c in snapshot.charts))
+        if self.snapshot is not None and structure == getattr(self, '_structure', None):
+            self.snapshot, self.options = snapshot, snapshot.options
+            for card, summary in zip(self.summary_cards, snapshot.summaries):
+                card.summary = summary
+                for tile, value in zip(card.tiles, summary.values):
+                    if tile.value_model != value or tile.option_control is not None:
+                        tile.set_value(value, snapshot.options)
+            for descriptor in snapshot.charts:
+                self.chart_panels[(descriptor.company_id,descriptor.key)].set_descriptor(descriptor,snapshot)
+            self._building_snapshot = False
+            self.reflow(self._content_width)
+            if snapshot.options.mode == 'period':
+                self._align_period_axes(snapshot)
+            return
         self.clear()
+        self._structure = structure
         self.snapshot = snapshot
         self.options = snapshot.options
         if snapshot.options.mode == 'period':
@@ -392,17 +425,20 @@ class NetworkDashboard(QWidget):
                 for source in (result.series, result.comparison):
                     if key in ('transport-by-type', 'transport-by-group', 'trip-types'):
                         totals = {}
-                        for buckets in source.values():
+                        for (company, _), buckets in source.items():
                             for index, bucket in enumerate(buckets):
-                                if bucket.value is not None and bucket.value > 0:
-                                    totals[index] = totals.get(index, Decimal(0)) + bucket.value
+                                if bucket.value is not None:
+                                    identity = (company,index,bucket.value < 0)
+                                    totals[identity] = totals.get(identity, Decimal(0)) + bucket.value
                         values.extend(totals.values())
                     else:
                         values.extend(bucket.value for buckets in source.values()
                                       for bucket in buckets if bucket.value is not None)
             if not values:
                 continue
-            spec = nice_axis(values)
+            panels = [self.chart_panels[(item.company_id, key)] for item in descriptors
+                      if (item.company_id, key) in self.chart_panels]
+            spec = nice_axis(values, max_ticks=shared_axis_budget(panels))
             for item in descriptors:
                 panel = self.chart_panels.get((item.company_id, key))
                 if panel is not None and panel.mode != 'pie':
@@ -415,7 +451,21 @@ class NetworkDashboard(QWidget):
         if not any(card.summary_motion.animation for card in self.summary_cards):
             self.reflow(self._content_width, self._viewport_height)
 
+    def request_reflow(self):
+        if getattr(self, '_reflow_pending', False):
+            return
+        self._reflow_pending = True
+        QTimer.singleShot(0, self._flush_reflow)
+
+    def _flush_reflow(self):
+        self._reflow_pending = False
+        if isValid(self):
+            self.reflow(self._content_width, self._viewport_height)
+
     def reflow(self, width: int, viewport_height: int | None = None):
+        if not getattr(self, '_axis_refresh_pending', False):
+            self._axis_refresh_pending = True
+            QTimer.singleShot(0, self._refresh_axis_budget)
         self._content_width = width
         if viewport_height is not None:
             self._viewport_height = viewport_height
@@ -426,17 +476,13 @@ class NetworkDashboard(QWidget):
             available_height -= self.notice.height() + self.layout().spacing()
         if self.snapshot.options.mode == 'period':
             columns = 2 if width >= 1120 and len(self._sections) > 1 else 1
+            grid_columns(self._period_grid, (s for s,_,_ in self._sections), columns)
             for section, grid, charts in self._sections:
                 section_width = (width - CONTROL_GAP) // 2 if columns == 2 else width
                 chart_columns = (4 if columns == 1 and section_width >= 1100 else
                                  2 if section_width >= 550 else 1)
-                for chart in charts:
-                    grid.removeWidget(chart)
-                for index, chart in enumerate(charts):
-                    grid.addWidget(chart, index // chart_columns, index % chart_columns)
-                self._period_grid.removeWidget(section)
+                grid_columns(grid, charts, chart_columns)
             for index, (section, _, _) in enumerate(self._sections):
-                self._period_grid.addWidget(section, index // columns, index % columns)
                 summary_columns = (6 if columns == 1 and section_width >= 1100 else
                                    3 if section_width >= 550 else 2)
                 self.summary_cards[index].reflow(summary_columns)
@@ -455,10 +501,8 @@ class NetworkDashboard(QWidget):
                         self._fit_chart_height(chart, chart_height)
         else:
             summary_columns = 2 if self.snapshot.options.mode == 'companies' and width >= 850 else 1
-            for card in self.summary_cards:
-                self._summary_grid.removeWidget(card)
+            grid_columns(self._summary_grid, self.summary_cards, summary_columns)
             for index, card in enumerate(self.summary_cards):
-                self._summary_grid.addWidget(card, index // summary_columns, index % summary_columns)
                 if self.snapshot.options.mode == 'overall':
                     wide_columns = len(card.tiles)
                     wide_minimum = 1100 if wide_columns == 6 else 1120
@@ -468,17 +512,11 @@ class NetworkDashboard(QWidget):
             chart_columns = 4 if width >= 1100 and self.snapshot.options.mode == 'overall' else (
                 3 if width >= 1120 else 2 if width >= 760 else 1)
             _, grid, charts = self._sections[0]
-            for chart in charts:
-                grid.removeWidget(chart)
-            for index, chart in enumerate(charts):
-                if (self.snapshot.options.mode == 'overall' and
-                        chart_columns == 4 and len(charts) == 7):
-                    if index < 4:
-                        grid.addWidget(chart, 0, index * 3, 1, 3)
-                    else:
-                        grid.addWidget(chart, 1, (index - 4) * 4, 1, 4)
-                else:
-                    grid.addWidget(chart, index // chart_columns, index % chart_columns)
+            if self.snapshot.options.mode == 'overall' and chart_columns == 4 and len(charts) == 7:
+                place_grid(grid, ((chart,0,index*3,1,3) if index<4 else
+                                  (chart,1,(index-4)*4,1,4) for index,chart in enumerate(charts)))
+            else:
+                grid_columns(grid, charts, chart_columns)
             if self.snapshot.options.mode == 'overall':
                 card = self.summary_cards[0]
                 summary_tile_columns = (wide_columns if width >= wide_minimum else
@@ -520,6 +558,17 @@ class NetworkDashboard(QWidget):
             target = max(target, card.minimumSizeHint().height())
         card.setFixedHeight(target)
         return target
+
+    def _refresh_axis_budget(self):
+        self._axis_refresh_pending = False
+        if not isValid(self) or self.snapshot is None or self.snapshot.options.mode != 'period':
+            return
+        if any(card.summary_motion.animation is not None for card in self.summary_cards):
+            return
+        signature = tuple((id(p), shared_axis_budget([p])) for p in self.chart_panels.values())
+        if signature != getattr(self, '_axis_budget_signature', None):
+            self._axis_budget_signature = signature
+            self._align_period_axes(self.snapshot)
 
     @staticmethod
     def _fit_chart_height(chart, height):

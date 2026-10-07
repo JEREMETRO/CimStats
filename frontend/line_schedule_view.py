@@ -4,8 +4,8 @@ Integrate ``SchedulePanel.set_line(line)`` and ``clear()``. The selected
 ``current_group``, prepared ``summary`` and painted ``matrix.entries`` are
 available for consumers. Calculation and operating-day ordering belong to
 ``line_schedule.prepare_schedule``; this module only presents its result.
-Narrow parents should put the panel in a scrollable container: it reflows
-columns and grows vertically rather than dropping or shrinking times.
+The panel reflows columns and scrolls its matrix when the available space
+cannot fit all rows, rather than dropping or shrinking times.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from math import ceil
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPainter
 from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
                               QScrollArea, QSizePolicy, QToolTip,
@@ -56,8 +56,8 @@ def _vehicle_type(entry):
 class ScheduleMatrix(QWidget):
     """One paint surface, with no per-departure widgets or click action.
 
-    ``row_height`` is the actual cell stride; ``minimum_row_height`` only
-    determines the layout minimum, so a spacious matrix can shrink again.
+    ``row_height`` is the actual cell stride; ``minimum_row_height`` keeps
+    glyphs readable when the matrix needs to scroll inside its viewport.
     ``row_offset`` remains zero, keeping the first row next to the summary.
     """
 
@@ -74,7 +74,7 @@ class ScheduleMatrix(QWidget):
             path = Path('C:/Windows/Fonts/msyh.ttc')
             _NUMBER_FONT_ID = QFontDatabase.addApplicationFont(str(path)) if path.is_file() else -1
         self.entries = []
-        self.capacity = 140
+        self._expanded = False
         self.minimum_row_height = 20
         self.row_height = 20
         self.row_offset = 0
@@ -92,7 +92,7 @@ class ScheduleMatrix(QWidget):
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
-        self.setMinimumHeight(self.BASE_HEIGHT)
+        self.setMinimumHeight(0)
         self.setAccessibleDescription('只读时刻表')
 
     @property
@@ -113,8 +113,7 @@ class ScheduleMatrix(QWidget):
         self.update()
 
     def set_expanded(self, expanded):
-        self.capacity = 200 if expanded else 140
-        self.minimum_row_height = 24 if expanded else 20
+        self._expanded = bool(expanded)
         self.base_height = 480 if expanded else 280
         self._update_geometry()
         self.update()
@@ -142,19 +141,23 @@ class ScheduleMatrix(QWidget):
         cell_width = self.fontMetrics().horizontalAdvance('23:59') + 24
         # A hidden QScrollArea does not yet resize its viewport/content, although
         # its own layout geometry is already correct. Avoid using that 100px stub.
-        width = (self._scroll.width() - 2 * self._scroll.frameWidth()
-                 if self._scroll is not None and not self.isVisible() else self.width())
+        viewport = self._scroll.viewport() if self._scroll is not None else None
+        width = (viewport.width() if viewport is not None else self.width())
+        if self._scroll is not None and not self.isVisible():
+            width = self._scroll.width() - 2 * self._scroll.frameWidth()
         self.columns = min(self.MAX_COLUMNS, max(1, width // cell_width))
-        height = max(self.base_height,
-                     ceil(len(self.entries) / self.columns) * self.minimum_row_height)
-        self.setMinimumHeight(height)
-        self.row_height = self.minimum_row_height
+        self.minimum_row_height = max(24 if self._expanded else self.ROW_HEIGHT,
+                                      self.fontMetrics().height() + 4)
+        rows = ceil(len(self.entries) / self.columns)
+        # Only the scroll area's child grows with the data. Its parent has a
+        # bounded minimum independent of count, so real overflow stays local.
+        self.setMinimumHeight(rows * self.minimum_row_height)
+        available = viewport.height() if viewport is not None else self.height()
+        self.row_height = min(self.MAX_ROW_HEIGHT,
+                              max(self.minimum_row_height, available // max(1, rows)))
         self.row_offset = 0
-        if len(self.entries) <= self.capacity:
-            capacity_rows = ceil(self.capacity / self.columns)
-            self.row_height = min(self.MAX_ROW_HEIGHT,
-                                  max(self.minimum_row_height, self.height() // capacity_rows))
         self.geometryChanged.emit()
+        self.update()
 
     def resizeEvent(self, event):
         self._hide_tooltip()
@@ -304,9 +307,9 @@ class SchedulePanel(QFrame):
     """Timetable card; ``set_line`` accepts the normalized line dictionary.
 
     ``period_rules`` is optional and is forwarded only to the pure model.
-    At normal widths the default 280-pixel matrix fits 140 entries. Expanded
-    mode uses 24–30-pixel rows and fits 200 entries. The parent owns hiding and
-    restoring the detail cards in response to ``expansionRequested(bool)``.
+    Actual viewport dimensions determine the readable row stride and overflow.
+    The parent owns hiding and restoring detail cards in response to
+    ``expansionRequested(bool)``.
     """
 
     currentGroupChanged = Signal(str)
@@ -353,7 +356,7 @@ class SchedulePanel(QFrame):
         apply_emphasis_font(self.title_label, tokens.FONT_SIZE_CHART_TITLE)
         self.title_label.setFixedHeight(24)
         heading.addWidget(self.title_label)
-        self.overflow_label = QLabel('超过 200 班 · 滚动查看全部', self)
+        self.overflow_label = QLabel('滚动查看全部班次', self)
         self.overflow_label.setObjectName('hint')
         self.overflow_label.setStyleSheet(
             f'font-family: "{tokens.FONT_FAMILY}"; color: {tokens.TEXT_SECONDARY}; '
@@ -432,15 +435,19 @@ class SchedulePanel(QFrame):
         self.matrix_scroll.setObjectName('scheduleScroll')
         self.matrix_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.matrix_scroll.setWidgetResizable(True)
-        self.matrix_scroll.setMinimumHeight(280)
+        self.matrix_scroll.setMinimumHeight(120)
         self.matrix_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.matrix_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.matrix_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.matrix_scroll.setStyleSheet('QScrollArea#scheduleScroll {background: white; border: 0;}')
         self.matrix = ScheduleMatrix()
         self.matrix._scroll = self.matrix_scroll
         self.matrix_scroll.setWidget(self.matrix)
         self.matrix.geometryChanged.connect(self._fit_matrix)
+        self._overflow_timer = QTimer(self)
+        self._overflow_timer.setSingleShot(True)
+        self._overflow_timer.timeout.connect(self._update_overflow)
         self.matrix_scroll.verticalScrollBar().valueChanged.connect(self._update_display)
+        self.matrix_scroll.verticalScrollBar().rangeChanged.connect(self._queue_overflow)
         self.matrix_scroll.verticalScrollBar().valueChanged.connect(lambda _value: self.matrix._hide_tooltip())
         self.matrix_scroll.viewport().installEventFilter(self)
         self._layout.addWidget(self.matrix_scroll, 1)
@@ -497,22 +504,16 @@ class SchedulePanel(QFrame):
         return QSize(320, self.minimumHeight())
 
     def sizeHint(self):
-        return QSize(904, self.minimumHeight())
+        return QSize(904, self.minimumHeight() + self.matrix.base_height - 120)
 
     def _fit_matrix(self):
-        overflow = len(self.matrix.entries) > self.matrix.capacity
-        height = self.matrix.base_height if overflow else self.matrix.minimumHeight()
-        self.matrix_scroll.setMaximumHeight(self.matrix.base_height if overflow else 16777215)
-        self.matrix_scroll.setMinimumHeight(height)
-        if self.expanded:
-            margins = self._layout.contentsMargins()
-            chrome = (margins.top() + margins.bottom() + 2 * self.frameWidth()
-                      + self._heading_layout.sizeHint().height() + self.group_host.height()
-                      + self.summary_host.height() + self.footer_host.height()
-                      + self._layout.spacing() * (self._layout.count() - 1))
-        else:
-            chrome = 146 + self.summary_host.height() - 40 + self.footer_host.height() - 18
-        self.setMinimumHeight(chrome + height)
+        margins = self._layout.contentsMargins()
+        chrome = (margins.top() + margins.bottom() + 2 * self.frameWidth()
+                  + self._heading_layout.sizeHint().height()
+                  + (self.group_host.height() if self.expanded else 0)
+                  + self.summary_host.height() + self.footer_host.height()
+                  + self._layout.spacing() * (4 if self.expanded else 3))
+        self.setMinimumHeight(chrome + 120)
         self._update_display()
 
     def _update_expansion_button(self):
@@ -560,16 +561,21 @@ class SchedulePanel(QFrame):
         self._layout.activate()
         self._update_display()
 
-    def _update_overflow(self):
-        total = len(self.matrix.entries)
-        overflow = total > self.matrix.capacity
-        self.overflow_label.setText('超过 200 班 · 滚动查看全部' if total > 200 else '')
-        self.overflow_label.setVisible(total > 200)
-        self.matrix_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded if overflow else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    def _update_overflow(self, *args):
+        # The hint occupies the heading row, so it cannot change the vertical
+        # budget it describes or oscillate between overflow/non-overflow.
+        overflow = bool(self.matrix.entries) and self.matrix_scroll.verticalScrollBar().maximum() > 0
+        self.overflow_label.setVisible(overflow)
+
+    @Slot()
+    def _queue_overflow(self):
+        # QScrollArea may issue nested range/layout notifications while an
+        # expanded card reflows. Read the final range after that layout settles.
+        self._overflow_timer.start(0)
 
     def _update_display(self, *args):
         self.display_label.setText(f'显示 {self.matrix.display_count} / {self.matrix.total_count}')
+        self._queue_overflow()
 
     def eventFilter(self, watched, event):
         if watched is getattr(self,'group_host',None) and event.type() == QEvent.Type.Resize:
@@ -577,6 +583,8 @@ class SchedulePanel(QFrame):
         scroll = getattr(self, 'matrix_scroll', None)
         if (scroll is not None and watched is scroll.viewport()
                 and event.type() == QEvent.Type.Resize and hasattr(self, 'display_label')):
+            self.matrix._update_geometry()
+            self._update_overflow()
             self._update_display()
         return super().eventFilter(watched, event)
 

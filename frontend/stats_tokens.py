@@ -61,6 +61,21 @@ DATA_CATEGORY_COLORS: tuple[str, ...] = (
     '#1677FF', '#F5A653', '#159A79', '#A477E6',
     '#C63864', '#72C7D9', '#B99027', '#6C85D8',
 )
+# Transport identities are independent of passenger demographics and companies.
+TRANSPORT_COLORS: dict[str, str] = {
+    'bus': '#1976D2', 'trolleybus': '#7B2CBF', 'tram': '#D32F2F',
+    'waterbus': '#F2C230', 'monorail': '#F06A24', 'metro': '#1E9E59',
+}
+TRANSPORT_ALIASES: dict[str, str] = {
+    '公交': 'bus', 'trolley': 'trolleybus', '无轨电车': 'trolleybus',
+    '有轨电车': 'tram', 'ferry': 'waterbus', '水上巴士': 'waterbus',
+    '单轨': 'monorail', '单轨列车': 'monorail', '地铁': 'metro',
+}
+
+def transport_color(group) -> str | None:
+    key = str(group).strip().lower()
+    return TRANSPORT_COLORS.get(TRANSPORT_ALIASES.get(key, key))
+
 DATA_CATEGORY_GROUPS: tuple[str, ...] = (
     'BlueCollar', 'WhiteCollar', 'BusinessPeople', 'Pensioner',
     'Student', 'Tourist', 'bus', 'tram', 'trolley', 'metro',

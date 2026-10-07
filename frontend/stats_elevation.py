@@ -6,7 +6,8 @@ The carrier clips out the source fill, preserving geometry and existing effects.
 """
 from __future__ import annotations
 import weakref
-from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt
+import sys
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget, QGraphicsDropShadowEffect, QAbstractScrollArea, QGraphicsOpacityEffect
 from qfluentwidgets import CardWidget
@@ -32,7 +33,17 @@ class _ShadowOnlyEffect(QGraphicsDropShadowEffect):
         super().draw(painter)
         painter.restore()
 
-class _ShadowSource(QWidget):
+class _InputTransparentDecoration(QWidget):
+    """Preserve input transparency even if Qt promotes this child to an HWND."""
+    def nativeEvent(self, event_type, message):
+        if sys.platform == 'win32' and event_type in (b'windows_generic_MSG', b'windows_dispatcher_MSG'):
+            from ctypes.wintypes import MSG
+            if MSG.from_address(int(message)).message == 0x84:  # WM_NCHITTEST
+                return True, -1  # HTTRANSPARENT: continue hit testing siblings
+        return super().nativeEvent(event_type, message)
+
+
+class _ShadowSource(_InputTransparentDecoration):
     def __init__(self, parent, radius):
         super().__init__(parent)
         self.radius=radius
@@ -67,7 +78,7 @@ class _StableDropShadowAnimation(DropShadowAnimation):
     def eventFilter(self,obj,event): return False
     def _onAniFinished(self): pass
 
-class _ElevationLayer(QWidget):
+class _ElevationLayer(_InputTransparentDecoration):
     def __init__(self,root):
         super().__init__(root)
         self.setObjectName('fluentElevationLayer')
@@ -75,6 +86,9 @@ class _ElevationLayer(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.controllers=weakref.WeakSet()
+        self.active=weakref.WeakSet()
+        self.dirty=weakref.WeakSet()
+        self._pending=False
         self.setGeometry(root.rect());root.installEventFilter(self);self.show()
 
     def eventFilter(self,obj,event):
@@ -83,13 +97,28 @@ class _ElevationLayer(QWidget):
         return False
 
     def refresh(self):
+        if not self._pending:
+            self._pending=True
+            QTimer.singleShot(0,self._refresh_now)
+
+    def _refresh_now(self):
+        if not isValid(self):return
+        self._pending=False
+        controllers=[c for c in self.active | self.dirty if isValid(c) and getattr(c,'widget',None) is not None and isValid(c.widget)]
+        self.dirty.clear()
+        if not controllers:return
         self.raise_()
-        controllers=[c for c in self.controllers if isValid(c) and getattr(c,'widget',None) is not None and isValid(c.widget)]
+        suppressed=set()
+        for controller in controllers:
+            if not controller.hovered:continue
+            ancestor=controller.widget.parentWidget()
+            while ancestor is not None and ancestor is not self.parentWidget():
+                suppressed.add(ancestor);ancestor=ancestor.parentWidget()
         for controller in controllers:
             source=getattr(controller,'carrier',None)
             if source is None or not isValid(source): continue
             card=controller.widget
-            nested=any(other is not controller and other.hovered and card.isAncestorOf(other.widget) for other in controllers)
+            nested=card in suppressed
             visible=card.isVisible() and controller.level>0 and not nested
             source.setVisible(visible)
             if visible:
@@ -128,7 +157,10 @@ class CardElevation(QObject):
         if layer is None or not isValid(layer):
             layer=_ElevationLayer(root);root._fluent_elevation_layer=layer
         if self.layer is not layer:
-            if self.layer is not None and isValid(self.layer):self.layer.controllers.discard(self)
+            if self.layer is not None and isValid(self.layer):
+                self.layer.controllers.discard(self)
+                self.layer.active.discard(self)
+                self.layer.dirty.discard(self)
             self.layer=layer;layer.controllers.add(self)
             if self.carrier is not None and isValid(self.carrier):self.carrier.deleteLater()
             self.carrier=_ShadowSource(layer,self.radius)
@@ -144,7 +176,10 @@ class CardElevation(QObject):
 
     def _advance(self,color):
         self.level=color.alphaF()/self.animation.hoverColor.alphaF() if self.animation else 0.
-        if self.layer is not None and isValid(self.layer):self.layer.refresh()
+        if self.layer is not None and isValid(self.layer):
+            if self.level:self.layer.active.add(self)
+            else:self.layer.active.discard(self)
+            self.layer.dirty.add(self);self.layer.refresh()
 
     def set_hovered(self,hovered):
         self.hovered=bool(hovered and self.widget.isEnabled() and self.widget.isVisible())
@@ -162,7 +197,8 @@ class CardElevation(QObject):
         self.hovered=False;self.level=0.
         if self.animation is not None and isValid(self.animation):
             self.animation.stop();self.animation.shadowEffect.setColor(self.animation.normalColor)
-        if self.layer is not None and isValid(self.layer):self.layer.refresh()
+        if self.layer is not None and isValid(self.layer):
+            self.layer.active.discard(self);self.layer.dirty.add(self);self.layer.refresh()
 
     def eventFilter(self,obj,event):
         widget=getattr(self,'widget',None)

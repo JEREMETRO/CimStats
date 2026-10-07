@@ -47,7 +47,7 @@ def test_nice_ticks_cover_range_with_round_steps(low, high):
     assert round((upper - lower) / step) + 1 <= 6
     mantissa = step / 10 ** (len(str(int(step))) - 1) if step >= 1 else round(step * 10 ** 6) / 10 ** (
         len(str(round(step * 10 ** 6))) - 1)
-    assert round(mantissa, 6) in (1, 2, 5)
+    assert round(mantissa, 6) in (1, 2, 2.5, 3, 4, 5, 6)
 
 
 def test_bars_start_at_zero_and_flat_lines_get_a_readable_padded_range():

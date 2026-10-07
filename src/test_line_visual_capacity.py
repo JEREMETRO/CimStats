@@ -1,5 +1,6 @@
 """Whole-shell capacity contracts; component tests alone cannot prove this budget."""
 import copy
+import os
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,8 @@ def visual_window(qt_application,monkeypatch,tmp_path):
     monkeypatch.setattr(desktop_app,'QSettings',lambda *a:QSettings(str(tmp_path/'qa.ini'),QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow,'check_install',lambda self:None)
     w=desktop_app.MainWindow()
-    data=load_session(Path(__file__).resolve().parents[1]/'exports','望春市_test_运行时')
+    data=load_session(Path(os.environ.get('CIM2_LINE_TEST_SESSION_DIR', Path(__file__).resolve().parents[1]/'exports')),
+                      os.environ.get('CIM2_LINE_TEST_SESSION_TAG', '望春市_test_运行时'))
     if not data['lines']:
         pytest.skip('Local exported-save fixture is unavailable')
     data.update(save_path='测试数据.save',save_key='capacity-test',history=[])
@@ -38,9 +40,13 @@ def visual_window(qt_application,monkeypatch,tmp_path):
     w.close();w.deleteLater()
 
 
-@pytest.mark.parametrize('count',[0,1,50,72,100,140])
+@pytest.mark.parametrize('count',[0,1,29,50,72,100,139,140,141,144])
 def test_actual_whole_shell_has_capacity_without_scroll(visual_window,count,qt_application):
     w=visual_window;p=w.lines_page
+    if count > 140:
+        # Fifteen readable rows need more vertical room than fourteen; use
+        # a real larger viewport rather than expecting rows to shrink.
+        w.resize(1436,940)
     line=copy.deepcopy(w.data['lines'][0]);line.pop('时刻表',None)
     line['班次']={'周一至周四':entries(count)}
     line['日组']=tuple(line['班次'])
@@ -79,6 +85,25 @@ def test_actual_whole_shell_has_capacity_without_scroll(visual_window,count,qt_a
         assert matrix.cell_rect(139).y()==13*matrix.row_height
 
 
+def test_overflow_hint_clears_when_whole_window_expansion_adds_room(visual_window):
+    w=visual_window;p=w.lines_page
+    line=max(w.data['lines'],key=lambda row:max((len(v) for v in row.get('班次',{}).values()),default=0))
+    w.show_line(line)
+    w.resize(960,680)
+    QTest.qWait(100)
+    assert p.schedule_panel.overflow_label.isVisible()
+    w.resize(1436,900)
+    QTest.qWait(100)
+    p.set_expanded(True,animated=False)
+    QTest.qWait(100)
+    p.set_expanded(False,animated=False)
+    p.set_schedule_expanded(True,animated=False)
+    QTest.qWait(100)
+    w.grab()
+    assert p.schedule_panel.matrix_scroll.verticalScrollBar().maximum()==0
+    assert p.schedule_panel.overflow_label.isHidden()
+
+
 def test_compact_fact_text_has_vertical_room(visual_window):
     w=visual_window;w.line_clicked(0,0);QTest.qWait(100)
     for card in w.fact_cards:
@@ -101,7 +126,7 @@ def test_folded_information_gives_200_departures_without_scroll_and_restores_car
     p.set_schedule_expanded(True,animated=False);QTest.qWait(400)
     panel=p.schedule_panel;matrix=panel.matrix
     assert p.schedule_expanded and panel.expanded and not p.detail.isVisible()
-    assert matrix.capacity==200 and matrix.minimum_row_height==24 and matrix.row_height==min(30,max(24,matrix.height()//20)) and matrix.display_count==200
+    assert matrix.minimum_row_height>=24 and matrix.row_height==min(30,max(matrix.minimum_row_height,matrix.height()//20)) and matrix.display_count==200
     assert 28<=matrix.row_height<=30 and 20*matrix.row_height<=matrix.height()
     assert matrix.row_offset==0 and matrix.cell_rect(0).top()==0
     assert 0<=matrix.height()-20*matrix.row_height<30
@@ -116,7 +141,7 @@ def test_folded_information_gives_200_departures_without_scroll_and_restores_car
     assert matrix.entries[-1]['time']=='00:54' and matrix.entries[-1]['next_day']
     panel.expansion_button.click();QTest.qWait(400)
     assert not p.schedule_expanded and p.detail.isVisible()
-    assert matrix.capacity==140 and len(w.fact_cards)==9 and all(c.isVisible() and c.height()==86 for c in w.fact_cards)
+    assert len(w.fact_cards)==9 and all(c.isVisible() and c.height()==86 for c in w.fact_cards)
     p.fact_fold_button.click();QTest.qWait(400)
     assert p.schedule_expanded and matrix.display_count==200
     panel.expansion_button.click();QTest.qWait(400)
@@ -180,6 +205,7 @@ def test_narrow_page_retains_fields_and_reaches_last_departure(visual_window):
     assert p.schedule_panel.matrix.total_count==200 and not p.detail.isVisible()
     p.right_scroll.verticalScrollBar().setValue(p.right_scroll.verticalScrollBar().maximum())
     p.right_scroll.horizontalScrollBar().setValue(p.right_scroll.horizontalScrollBar().maximum())
+    p.schedule_panel.matrix_scroll.verticalScrollBar().setValue(p.schedule_panel.matrix_scroll.verticalScrollBar().maximum())
     QTest.qWait(100)
     matrix=p.schedule_panel.matrix;last=matrix.cell_rect(199)
     viewport=p.right_scroll.viewport()

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QVBoxLayout, QWidget)
 from qfluentwidgets import FluentIcon, TransparentPushButton, TransparentToolButton
 
-from chart_canvas import AxisSpec, ChartCanvas, ChartData, Series, format_value
+from chart_canvas import AxisSpec, ChartCanvas, ChartData, Series, format_value, auto_axis
 from display_rules import number_places
 from chart_details import DetailSummary, InlineChartDetail
 from shiboken6 import isValid
@@ -47,34 +47,13 @@ def _ensure_chinese_font():
             _FONT_ID = QFontDatabase.addApplicationFont(str(font_path))
 
 
-def nice_axis(values) -> AxisSpec:
+def nice_axis(values, *, max_ticks=7, decimal_places=0) -> AxisSpec:
     """Zero-based shared integer axis used when several cards must align."""
-    numbers = [float(v) for v in values if v is not None]
-    low = min([0.0, *numbers])
-    high = max([0.0, *numbers])
-    magnitude = max(abs(low), abs(high))
-    scale, suffix = (100000000, '亿') if magnitude >= 100000000 else (
-        (10000, '万') if magnitude >= 10000 else (1, ''))
-    low /= scale
-    high /= scale
-    needed = max(high - low, 1)
-    candidates = sorted({n * 10 ** power for power in range(0, max(1, len(str(ceil(needed))) + 1))
-                         for n in (1, 2, 5)})
-    options = []
-    for step in candidates:
-        lower = floor(low / step) * step
-        upper = ceil(high / step) * step
-        if lower == upper:
-            upper += step
-        ticks = (upper - lower) // step + 1
-        if ticks > 7:
-            continue
-        score = (0 if 4 <= ticks <= 7 else 1, (upper - lower) - (high - low), abs(ticks - 5))
-        options.append((score, lower, upper, step))
-    _, lower, upper, step = min(options)
-    if lower == 0 and upper < 4 and high <= 2:
-        upper, step = 4, 1
-    return AxisSpec(lower, upper, step, scale, suffix)
+    return auto_axis(values, zero=True, max_ticks=max_ticks, decimal_places=decimal_places)
+
+
+def shared_axis_budget(panels):
+    return min((view.axis_tick_budget() for panel in panels for view in getattr(panel, 'chart_views', ())), default=7)
 
 
 _KNOWN_GROUP_COLORS = dict(zip(
@@ -92,6 +71,9 @@ def company_color(company_id: str) -> QColor:
 
 
 def category_color(group: str, palette: tuple[str, ...] | None = None) -> QColor:
+    transport = tokens.transport_color(group)
+    if transport is not None:
+        return QColor(transport)
     if palette is None:
         return (QColor(_KNOWN_GROUP_COLORS[group]) if group in _KNOWN_GROUP_COLORS
                 else _stable_color('category:' + group, tokens.CATEGORY_COLORS))
@@ -246,7 +228,10 @@ class ChartPanel(QFrame):
         self._mode_slot.addWidget(self.mode_selector)
 
     def set_mode_options(self, modes: tuple[str, ...]) -> None:
-        self._allowed_modes = self._validate_modes(modes)
+        modes = self._validate_modes(modes)
+        if self._restricted_modes and self._allowed_modes == modes and self.mode in modes:
+            return
+        self._allowed_modes = modes
         self._restricted_modes = True
         self._has_modes = True
         if self.mode not in self._allowed_modes:
@@ -261,6 +246,8 @@ class ChartPanel(QFrame):
         if any(mode not in self.ALL_MODES or not isinstance(name, str) or not name.strip()
                for mode, name in labels.items()):
             raise ValueError('chart mode labels')
+        if self._mode_labels == labels:
+            return
         self._mode_labels = dict(labels)
         if self._has_modes:
             modes = (self._allowed_modes if self._restricted_modes else
@@ -284,6 +271,13 @@ class ChartPanel(QFrame):
 
     # --------------------------------------------------------- data in
     def set_result(self, result, companies: dict[str, str] | None = None):
+        from chart_content_key import result_key
+        content_key = (result_key(result), tuple((companies or {}).items()))
+        if getattr(self, '_result_content_key', None) == content_key:
+            self.result = result
+            self.companies = companies or {}
+            return
+        self._result_content_key = content_key
         from stats_motion import settle_surface_motion
         settle_surface_motion(self)
         if result is not self.result:
@@ -304,10 +298,13 @@ class ChartPanel(QFrame):
     def set_axis_spec(self, spec: AxisSpec | None):
         if spec is not None and (spec.step <= 0 or spec.scale <= 0 or spec.upper <= spec.lower):
             raise ValueError('axis range')
+        if self._axis_override == spec:
+            return
         self._axis_override = spec
         self._render()
 
     def clear(self):
+        self._result_content_key = None
         from stats_motion import settle_surface_motion
         settle_surface_motion(self)
         self._cancel_detail()
@@ -319,6 +316,8 @@ class ChartPanel(QFrame):
         converted = {company: QColor(value) for company, value in palette.items()}
         if any(not color.isValid() for color in converted.values()):
             raise ValueError('company palette')
+        if self._company_palette == converted:
+            return
         self._company_palette = converted
         self._render()
 
@@ -327,6 +326,8 @@ class ChartPanel(QFrame):
             colors = tuple(colors)
             if len(colors) < 6 or any(not QColor(value).isValid() for value in colors):
                 raise ValueError('category palette')
+        if self._category_palette == colors:
+            return
         self._category_palette = colors
         self._render()
 

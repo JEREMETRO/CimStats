@@ -89,21 +89,34 @@ def nice_ticks(low: float, high: float, max_ticks: int = 6, *, min_step=0) -> tu
     if high - low < 1e-12:
         pad = abs(high) * .1 or 1.
         low, high = low - pad, high + pad
-    max_ticks = max(2, max_ticks)
+    max_ticks = max(3 if low < 0 < high else 2, max_ticks)
     span = high - low
     exponent = floor(log10(span / (max_ticks - 1)))
     if min_step:
         exponent = max(exponent, floor(log10(min_step)))
     decimal_low, decimal_high = Decimal(str(low)), Decimal(str(high))
+    quantum = Decimal(str(min_step))
+    quantum_ratio = quantum.as_integer_ratio() if quantum else None
+    options = []
     for power in range(exponent, exponent + 3):
-        for unit in (1, 2, 5):
+        for unit in (1, 2, Decimal('2.5'), 3, 4, 5, 6):
             step = Decimal(unit).scaleb(power)
-            if step < Decimal(str(min_step)):
+            if step < quantum:
                 continue
+            if quantum_ratio:
+                numerator, denominator = step.as_integer_ratio()
+                if (numerator * quantum_ratio[1]) % (denominator * quantum_ratio[0]):
+                    continue
             lower = (decimal_low / step).to_integral_value(rounding=ROUND_FLOOR) * step
             upper = (decimal_high / step).to_integral_value(rounding=ROUND_CEILING) * step
             if (upper - lower) / step + 1 <= max_ticks:
-                return float(lower), float(upper), float(step)
+                options.append((upper - lower, step, lower, upper))
+    if options:
+        # A sparse tick budget must not force 0..52 into 0..100 simply
+        # because 50 is the first eligible step. Prefer the tightest complete
+        # range, then the finer readable grid when ranges are equally tight.
+        _, step, lower, upper = min(options)
+        return float(lower), float(upper), float(step)
     step = Decimal(1).scaleb(exponent + 3)
     return (float((decimal_low / step).to_integral_value(rounding=ROUND_FLOOR) * step),
             float((decimal_high / step).to_integral_value(rounding=ROUND_CEILING) * step), float(step))
@@ -410,6 +423,12 @@ class ChartCanvas(QWidget):
     def _unit_caption(self) -> str:
         return (self.axis.unit_suffix + self.data.unit) if self.axis else self.data.unit
 
+    def axis_tick_budget(self):
+        """Use the same actual font/plot height for automatic and shared axes."""
+        line_height = self._metrics().height()
+        plot_height = max(10., self.height() - 20 - line_height * 2.5)
+        return max(2, min(7, int(plot_height / (line_height + max(8., line_height * .5))) + 1))
+
     def _paint_cartesian(self, painter: QPainter):
         data = self.data
         metrics = self._metrics()
@@ -417,7 +436,7 @@ class ChartCanvas(QWidget):
         line_height = metrics.height()
         top = rect.top() + line_height * 1.5 + 6
         bottom = rect.bottom() - line_height - 8
-        max_ticks = max(3, min(7, int((bottom - top) / 34) + 1))
+        max_ticks = self.axis_tick_budget()
         self.axis = self._resolve_axis(max_ticks)
         ticks = self._ticks()
         tick_labels = [_tick_text(value, self.axis.step, self.data.decimal_places) for value in ticks]
@@ -650,10 +669,16 @@ class ChartCanvas(QWidget):
             height = metrics.height()
             box = QRectF(label['x'] - width / 2, label['y'] - height / 2, width, height)
             centered = inside is not None and inside.adjusted(1, 1, -1, -1).contains(box)
+            # In a dense detail, a small segment cannot support an outside
+            # annotation without competing with its total or adjacent columns.
+            # Keep the observation in hit-testing/tooltip; only omit its label.
+            if (self.detailed and inside is not None and not centered
+                    and available < inside.width() + 2 * (width + 8)):
+                continue
             if not centered:
                 y = label['y'] - height - 3 if label['above'] else label['y'] + 3
                 box.moveTop(y)
-            candidates = [box]
+            candidates = [] if inside is not None and not centered else [box]
             if label.get('total'):
                 half_bar = label['bar_width'] / 2
                 candidates.extend((QRectF(label['x'] + half_bar + 5, label['y'] - height / 2, width, height),
@@ -666,9 +691,12 @@ class ChartCanvas(QWidget):
                         candidates.extend((QRectF(inside.right() + 5, label['y'] - height / 2 + offset, width, height),
                                            QRectF(inside.left() - width - 5, label['y'] - height / 2 + offset, width, height)))
             chosen = next((candidate for candidate in candidates
-                           if candidate.top() >= 0 and candidate.bottom() <= self.height()
-                           and candidate.left() >= self._plot.left() and candidate.right() <= self.width()
-                           and not any(candidate.intersects(other) for other in placed)), None)
+                           if self._plot.contains(candidate)
+                           and candidate.left() >= label['x'] - label['slot_width'] / 2 + 2
+                           and candidate.right() <= label['x'] + label['slot_width'] / 2 - 2
+                           and (inside is None or centered and candidate == box
+                                or not any(path.intersects(candidate) for _, _, path in self._bar_hits))
+                           and not any(candidate.adjusted(-1, -1, 1, 1).intersects(other) for other in placed)), None)
             if chosen is None:
                 continue
             centered = centered and chosen == box
@@ -741,31 +769,42 @@ class ChartCanvas(QWidget):
 
     def _tooltip_layout(self, title, rows):
         metrics = self._metrics(tooltip_font())
-        line = metrics.height() + 4
+        line = ceil(metrics.height()) + 4
         name_width = max(metrics.horizontalAdvance(name) for _, name, _, _ in rows)
-        value_width = max(metrics.horizontalAdvance(value) for _, _, value, _ in rows)
-        width = min(320., max(metrics.horizontalAdvance(title) + 24,
-                             name_width + value_width + 54,
-                             max((metrics.horizontalAdvance(note) + 38 for *_, note in rows), default=0)))
-        # Reserve enough room for numbers and units; long identities wrap.
-        value_width = min(value_width, (width - 54) * .55)
-        name_width = max(1., width - 54 - value_width)
+        # Fractional advances and CJK fallback glyphs need a little paint
+        # margin. The complete value and unit own this width; never reduce it
+        # to a percentage of the remaining name/value budget.
+        value_width = ceil(max(max(metrics.horizontalAdvance(value), metrics.boundingRect(value).width())
+                               for _, _, value, _ in rows)) + 4
+        screen_width = max(1., self.screen().availableGeometry().width() - 4.)
+        width = min(320., screen_width, ceil(max(metrics.horizontalAdvance(title) + 24,
+                                               name_width + value_width + 54,
+                                               max((metrics.horizontalAdvance(note) + 38
+                                                    for *_, note in rows), default=0))))
+        # Keep a useful name column when possible; otherwise put the whole
+        # value below the wrapped identity. Only unusually long values expand
+        # the overflow surface beyond the normal text budget.
+        stacked = width - 54 - value_width < min(name_width, 72.)
+        if stacked:
+            width = min(screen_width, max(width, value_width + 38))
+        name_width = max(1., width - (38 if stacked else 54 + value_width))
         flags = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
         def height(text, space):
-            return max(line, metrics.boundingRect(QRectF(0, 0, space, 10000), flags, text).height() + 4)
+            return max(line, ceil(metrics.boundingRect(QRectF(0, 0, space, 10000), flags, text).height()) + 4)
         title_height = height(title, width - 24)
         blocks, seen = [], set()
         for color, name, value, note in rows:
             note = note if note not in seen else ''
             seen.add(note)
+            name_height = height(name, name_width)
             blocks.append((color, name, value, note,
-                           max(height(name, name_width), height(value, value_width)),
-                           height(note, width - 38) if note else 0))
+                           name_height + line if stacked else name_height,
+                           height(note, width - 38) if note else 0, name_height))
         return (width, 16 + title_height + sum(row[4] + row[5] for row in blocks),
-                title, title_height, name_width, value_width, blocks)
+                title, title_height, name_width, value_width, blocks, stacked)
 
     def _draw_tooltip(self, painter, box, layout):
-        width, height, title, title_height, name_width, value_width, blocks = layout
+        width, height, title, title_height, name_width, value_width, blocks, stacked = layout
         x, y = box.x(), box.y()
         tip_font = tooltip_font()
         flags = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere | Qt.AlignmentFlag.AlignVCenter
@@ -778,17 +817,20 @@ class ChartCanvas(QWidget):
         cursor = y + 8
         painter.drawText(QRectF(x + 12, cursor, width - 24, title_height), flags, title)
         cursor += title_height
-        for color, name, value, note, row_height, note_height in blocks:
+        for color, name, value, note, row_height, note_height, name_height in blocks:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
-            painter.drawRoundedRect(QRectF(x + 12, cursor + row_height / 2 - 4, 8, 8), 2, 2)
+            painter.drawRoundedRect(QRectF(x + 12, cursor + name_height / 2 - 4, 8, 8), 2, 2)
             painter.setFont(tip_font)
             painter.setPen(QColor(tokens.TOOLTIP_TEXT))
-            painter.drawText(QRectF(x + 26, cursor, name_width, row_height), flags, name)
+            painter.drawText(QRectF(x + 26, cursor, name_width, name_height), flags, name)
             painter.setFont(tip_font)
             painter.setPen(QColor(tokens.TOOLTIP_TEXT))
-            painter.drawText(QRectF(x + width - 12 - value_width, cursor, value_width, row_height),
-                             flags | Qt.AlignmentFlag.AlignRight, value)
+            value_y = cursor + name_height if stacked else cursor
+            value_height = row_height - name_height if stacked else row_height
+            painter.drawText(QRectF(x + width - 12 - value_width, value_y, value_width, value_height),
+                             Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignVCenter
+                             | Qt.AlignmentFlag.AlignRight, value)
             cursor += row_height
             if note:
                 painter.setFont(tip_font)

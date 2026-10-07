@@ -47,3 +47,5 @@ py -3.12 -m venv .venv
 图表修改遵循[图表与对比模式需求](requirements/charts.md)。公司与同期色柱图例共用 `SeriesLegend`，不能用位置说明替代；更新共享绘图时同时验收普通图、放大图和导出。
 
 业务约定见[产品需求](requirements/product.md)，结构与共享接口见[架构](design/architecture.md)和[控件契约](design/controls.md)。[文档索引](README.md)列出全部必要文档；目录、链接、GitHub 协作入口及发布清单由 [test_repository_documentation.py](../src/test_repository_documentation.py)检查。协作边界见[AGENTS.md](../AGENTS.md)。
+
+线路真实整窗测试可通过 `CIM2_LINE_TEST_SESSION_DIR` 和 `CIM2_LINE_TEST_SESSION_TAG` 指向现有解析目录及文件前缀，只读复用；缺失时跳过并报告，不能用固定旧城市目录代替通用 fixture。Windows 原生命中回归需单独设置 `QT_QPA_PLATFORM=windows` 运行 `src/test_elevation_native_input.py`，完整测试默认离屏并明确报告该项 skip。

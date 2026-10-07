@@ -16,6 +16,13 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+def paint_startup(app):
+    # Handoff follows the completed destination paint via a queued callback;
+    # do not assert the animation before Qt dispatches that acknowledgement.
+    for _ in range(3):
+        app.processEvents()
+
+
 @pytest.fixture
 def window(app, monkeypatch, tmp_path):
     import desktop_app
@@ -45,6 +52,7 @@ def test_import_cover_crossfades_without_blocking_destination(window, app, monke
     app.processEvents()
     overlay = window.loading_overlay
     overlay.begin('准备读取存档')
+    paint_startup(app)
     assert overlay.isVisible() and overlay.cancel_button.isEnabled()
     fade = overlay.transition
     assert fade.isVisible() and fade.animation is not None
@@ -55,6 +63,7 @@ def test_import_cover_crossfades_without_blocking_destination(window, app, monke
     assert not overlay.isVisible() and fade.isVisible()
     window._refresh_body()
     assert fade.isVisible()
+    paint_startup(app)
     fade.animation.setCurrentTime(220)
     assert not fade.isVisible() and fade.snapshot is None
     overlay.begin('再次读取')
@@ -70,7 +79,7 @@ def test_import_cover_crossfades_without_blocking_destination(window, app, monke
 def test_welcome_covers_shell_and_reveals_open_without_blocking(window, app, monkeypatch):
     monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
     window.show()
-    app.processEvents()
+    paint_startup(app)
     welcome = window.empty_state
     assert welcome.geometry() == window.centralWidget().rect()
     assert welcome.isVisible()
@@ -92,7 +101,7 @@ def test_welcome_covers_shell_and_reveals_open_without_blocking(window, app, mon
 def test_reduced_motion_and_resize_reach_stable_welcome(window, app, monkeypatch):
     monkeypatch.setattr('stats_motion.animations_enabled', lambda: False)
     window.show()
-    app.processEvents()
+    paint_startup(app)
     welcome = window.empty_state
     assert welcome.reveal_progress == 1 and welcome.animation is None
     window.resize(1200, 760)
@@ -160,7 +169,7 @@ def test_legacy_helper_surface_matches_main_content_without_secondary_icon(windo
 def test_success_interrupts_transition_without_retaining_effect(window, app, monkeypatch):
     monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
     window.show()
-    app.processEvents()
+    paint_startup(app)
     welcome = window.empty_state
     assert welcome.animation is not None
     window.data = {'save_path': 'ready.save'}
@@ -175,7 +184,7 @@ def test_success_interrupts_transition_without_retaining_effect(window, app, mon
 def test_reduced_motion_environment_skips_welcome_motion(window, app, monkeypatch):
     monkeypatch.setenv('CIM2_REDUCED_MOTION', '1')
     window.show()
-    app.processEvents()
+    paint_startup(app)
     assert window.empty_state.reveal_progress == 1
     assert window.empty_state.content.graphicsEffect() is None
 

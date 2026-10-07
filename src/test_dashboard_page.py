@@ -77,6 +77,7 @@ def test_three_tabs_default_complete_week_and_all_companies(tmp_path):
 def test_change_invalidates_result_before_debounce_and_clear_rejects_old_token(tmp_path):
     page = loaded(tmp_path)
     snapshot, token = page.snapshot, page.token
+    page._range_window = (snapshot.filters.start, snapshot.filters.end + timedelta(days=1))
     page.schedule_query()
     assert page.token != token
     assert page.snapshot is None
