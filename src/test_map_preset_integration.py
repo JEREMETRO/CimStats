@@ -7,6 +7,30 @@ from map_query import MapQuery
 from semantic_colors import map_fill, color_for
 
 
+def test_network_service_filter_uses_saved_windows_and_intersects_manual_selection():
+    from dataclasses import replace
+    from map_model import MapRoute, RouteService, ServiceTimetable
+    hour = 36_000_000_000
+    # Sunday template spills into Monday; 00:30 is its final departure.
+    native = ServiceTimetable(1, 23*hour, 24*hour+hour//2, hour//2,
+                              (23*hour, 23*hour+hour//2, 24*hour, 24*hour+hour//2))
+    route = MapRoute(1, '夜线', 1, 'a', '甲', 'bus', (), (),
+                     service=RouteService(True, True, (native,)))
+    inactive = replace(route, id=2, service=RouteService(False, True, (native,)))
+    unknown = replace(route, id=3, service=RouteService())
+    query = MapQuery(MapSnapshot(routes=(route, inactive, unknown)))
+    state = {'service_time_mode': 'instant', 'service_start': '2013-05-27T00:30:00'}
+    assert [r.id for r in query.select(state).routes] == [1]
+    assert not query.select({**state, 'service_start': '2013-05-27T00:30:01'}).routes
+    assert not query.select({**state, 'manual_line_ids': [2]}).routes
+    assert {r.id for r in query.select({'service_time_mode': 'off'}).routes} == {1, 2, 3}
+    options = query.panel_options(state=state)
+    matches = {row['id']: row['service_matches'] for row in options['lines']}
+    assert matches == {1: True, 2: False, 3: None}
+    # A malformed persisted time filter never broadens to all lines silently.
+    assert not query.select({**state, 'service_start': 'broken'}).routes
+
+
 def test_building_click_uses_polygon_not_bounds_and_drag_does_not_select(qt_application):
     canvas = MapCanvas()
     canvas.resize(600, 400)

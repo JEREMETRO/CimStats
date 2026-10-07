@@ -91,6 +91,25 @@ class MapQuery:
         self._depot_lengths = {}
         self._route_selections = OrderedDict()
         self._stop_selections = OrderedDict()
+        self._service_selections = OrderedDict()
+
+    def _services_for(self, state):
+        mode = state.get('service_time_mode', 'off')
+        if mode == 'off':
+            return None
+        key = (mode, state.get('service_start'), state.get('service_end') if mode == 'range' else None)
+        def evaluate():
+            from map_service_time import route_operates
+            try:
+                if mode not in ('instant', 'range'):
+                    raise ValueError('Unknown service time mode')
+                start = datetime.fromisoformat(key[1])
+                end = datetime.fromisoformat(key[2]) if mode == 'range' else None
+                return {route.id: route_operates({}, route.id, start, end, route=route)
+                        for route in self.snapshot.routes}
+            except (TypeError, ValueError):
+                return {route.id: None for route in self.snapshot.routes}
+        return self._selection(self._service_selections, key, evaluate)
 
     @staticmethod
     def _selection(cache, key, make):
@@ -173,7 +192,10 @@ class MapQuery:
 
     def select(self, state):
         routes = []
+        service_matches = self._services_for(state)
         for route in self.snapshot.routes:
+            if service_matches is not None and service_matches[route.id] is not True:
+                continue
             data = self.stats.get(route.id, RouteStats())
             if not _selected(state, 'manual_line_ids', route.id):
                 continue
@@ -291,10 +313,13 @@ class MapQuery:
             date = ''
         # Callers populate mutable controls; keep each response independent.
         base = {key: [dict(item) for item in entries] for key, entries in self._base_options.items()}
+        service_matches = self._services_for(state)
         return {**base,
+                'simulated_datetime': (session or {}).get('simulation_time'),
                 'building_emphasis_effective': (result or self.select(state)).building_emphasis,
                 'lines': [{'id':route.id,'name':route.name,'mode':canonical_key('mode',route.mode),
                            'company_id':route.company_id,'passengers':self.stats.get(route.id,RouteStats()).passengers,
                            'profit':self.stats.get(route.id,RouteStats()).profit_status,
+                           'service_matches': True if service_matches is None else service_matches[route.id],
                            'color':self.route_color(route,state)} for route in self.snapshot.routes],
                 'passenger_date':date}
