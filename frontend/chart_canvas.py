@@ -359,7 +359,16 @@ class ChartCanvas(QWidget):
 
     def _resolve_axis(self, max_ticks: int) -> AxisSpec:
         if self.axis_override is not None:
-            return self.axis_override
+            spec = self.axis_override
+            if self.detailed:
+                # A detail inherits the shared range for comparison, not the
+                # sparse grid imposed by a short source card. Refine only an
+                # exactly matching range; never move its bounds or units.
+                lower, upper, step = nice_ticks(spec.lower, spec.upper, max_ticks,
+                                                min_step=10 ** -self.data.decimal_places)
+                if lower == spec.lower and upper == spec.upper and step < spec.step:
+                    return AxisSpec(lower, upper, step, spec.scale, spec.unit_suffix)
+            return spec
         data = self.data
         values = [float(value) for value in self._value_range_values()]
         zero = data.zero
