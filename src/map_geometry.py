@@ -5,7 +5,8 @@ thread. Runtime assemblies are only loaded inside a separate process.
 """
 from __future__ import annotations
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from contextlib import ExitStack
 import gzip
 import hashlib
 import json
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 from map_model import (GroupCount, GroupFunctionCount, MapBuilding, MapRoad, MapRoute, MapSnapshot,
                        MapStop, MapLane, MapJunction, MapJunctionConnection, RouteDirection, polygon_area,
@@ -375,7 +377,85 @@ def _route_service(data):
                         })) for t in tables))
 
 
-def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None):
+def _parallel_directions(jobs, directory, cancelled=None):
+    """Analyze independent operating lines in killable, CLR-free processes."""
+    count=min(4,len(jobs),os.cpu_count() or 1)
+    if count<2 or len(jobs)<8:
+        return {index:infer_direction(points,legs,names,lambda:_check(cancelled))
+                for index,points,legs,names in jobs}
+    batches=[[] for _ in range(count)]
+    weights=[0]*count
+    def weight(job):
+        _,points,legs,_=job
+        samples=sum(len(path) for leg in legs for path in leg)
+        return samples*samples*max(1,len(points)-2)
+    for job in sorted(jobs,key=weight,reverse=True):
+        target=min(range(count),key=lambda i:weights[i])
+        batches[target].append(dict(index=job[0],points=job[1],legs=job[2],names=job[3]))
+        weights[target]+=weight(job)
+    directory=FilePath(directory)
+    processes=[]
+    flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
+    env=os.environ.copy(); env['OPENBLAS_NUM_THREADS']='1'
+    with ExitStack() as stack:
+        try:
+            for i,batch in enumerate(batches):
+                _check(cancelled)
+                source=directory/f'direction-{i}.json'
+                output=directory/f'direction-{i}-result.json'
+                source.write_text(json.dumps(dict(jobs=batch,output=str(output)),ensure_ascii=False,
+                                             separators=(',',':')),encoding='utf-8')
+                log=stack.enter_context((directory/f'direction-{i}.log').open('w',encoding='utf-8'))
+                command=([sys.executable,'--map-direction-worker',str(source)] if getattr(sys,'frozen',False)
+                         else [sys.executable,str(FilePath(__file__).resolve()),'--direction-worker',str(source)])
+                processes.append((i,subprocess.Popen(command,stdout=log,stderr=log,
+                                                     creationflags=flags,env=env),output))
+            pending={i for i,_,_ in processes}
+            while pending:
+                _check(cancelled)
+                for i,process,_ in processes:
+                    if i not in pending: continue
+                    code=process.poll()
+                    if code is None: continue
+                    if code:
+                        raise RuntimeError(f'Map direction analysis failed in batch {i}: '+
+                                           (directory/f'direction-{i}.log').read_text(encoding='utf-8')[-3000:])
+                    pending.remove(i)
+                if pending: time.sleep(.05)
+            _check(cancelled)
+            results={}
+            for _,_,output in processes:
+                for item in json.loads(output.read_text(encoding='utf-8')):
+                    value=item['direction']
+                    value['paired_stations']=tuple(tuple(pair) for pair in value['paired_stations'])
+                    results[item['index']]=RouteDirection(**value)
+            if set(results)!={job[0] for job in jobs}:
+                raise RuntimeError('Map direction worker returned incomplete results')
+            return results
+        finally:
+            for _,process,_ in processes:
+                if process.poll() is None:
+                    process.terminate()
+            for _,process,_ in processes:
+                try: process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill(); process.wait(timeout=10)
+
+
+def direction_worker_main(config_path):
+    """Dispatch from the frozen launcher before Qt or CLR is imported."""
+    config=json.loads(FilePath(config_path).read_text(encoding='utf-8'))
+    output=[]
+    for item in config['jobs']:
+        result=infer_direction(item['points'],item['legs'],item.get('names'))
+        output.append(dict(index=item['index'],direction=asdict(result)))
+    target=FilePath(config['output'])
+    staging=target.with_suffix('.tmp')
+    staging.write_text(json.dumps(output,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+    os.replace(staging,target)
+
+
+def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None, *, direction_worker_dir=None):
     roads=[]; diagnostics=list(data.get('diagnostics',()))
     raw_roads=data['roads']
     connection_lookup={}
@@ -423,7 +503,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None)
     stops={int(s['id']):MapStop(int(s['id']),s.get('name',''),tuple(s['position']))
            for s in data.get('stops',{}).values() if s.get('position') is not None}
     depots={b['id'] for b in data.get('buildings',()) if b.get('kind')=='DepotData'}
-    routes=[]
+    routes=[]; direction_jobs=[]
     for line in data.get('lines',()):
         _check(cancelled)
         records=line.get('stops',())
@@ -485,15 +565,24 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None)
             if leg.get('dirty'):
                 issues.append(f'dirty_path:{index}')
         points=tuple(tuple(s['position']) for s in operational if s.get('position') is not None)
-        direction=RouteDirection() if issues or len(points)!=len(operational) else infer_direction(
-            points,tuple(analysis_legs),[s.get('name','') for s in operational],lambda:_check(cancelled))
+        if not issues and len(points)==len(operational):
+            direction_jobs.append((len(routes),points,tuple(analysis_legs),
+                                   [s.get('name','') for s in operational]))
         routes.append(MapRoute(line['id'],format_line_name(line.get('number',0),line.get('name','')),line.get('number',0),line.get('company_id',''),
                                line.get('company',''),line.get('mode',''),tuple(s['id'] for s in operational),
-                               tuple(p for leg in legs for p in leg),direction,tuple(legs),tuple(depot_paths),
+                               tuple(p for leg in legs for p in leg),RouteDirection(),tuple(legs),tuple(depot_paths),
                                ';'.join(dict.fromkeys(issues)) or None,line.get('company_index'),
                                line.get('previous_day_passengers'),line.get('passenger_date'),
                                line.get('passenger_diagnostic','no_serialized_previous_day_line_passengers'),
                                _route_service(line.get('service'))))
+    if direction_jobs:
+        if direction_worker_dir is None:
+            directions={index:infer_direction(points,legs,names,lambda:_check(cancelled))
+                        for index,points,legs,names in direction_jobs}
+        else:
+            directions=_parallel_directions(direction_jobs,direction_worker_dir,cancelled)
+        for index,direction in directions.items():
+            routes[index]=replace(routes[index],direction=direction)
     allpoints=[p for r in roads for path in r.paths for p in path]
     allpoints.extend(b.position for b in buildings)
     allpoints.extend(j.position for j in junctions)
@@ -527,6 +616,74 @@ def _decode_snapshot(d):
                                       'direction':direction, 'service':_route_service(r.get('service'))})))
     return MapSnapshot(**(d|{'roads':roads,'buildings':buildings,'stops':stops,'routes':tuple(routes),
                             'diagnostics':tuple(d['diagnostics']),'bounds':tuple(d['bounds']),'junctions':junctions}))
+
+
+_GEOMETRY_IPC_FIELDS=('roads','buildings','stops','lines','diagnostics','junctions')
+_GEOMETRY_IPC_DICTS=frozenset(('roads','stops'))
+
+
+def _write_geometry_ndjson(data,path):
+    """Write only this worker's temporary geometry handoff, in saved order."""
+    if set(data)!=set(_GEOMETRY_IPC_FIELDS):
+        raise ValueError('Unexpected map geometry fields')
+    counts={kind:len(data[kind]) for kind in _GEOMETRY_IPC_FIELDS}
+    target=FilePath(path); staging=target.with_suffix('.tmp')
+    with staging.open('w',encoding='utf-8') as f:
+        f.write(json.dumps(dict(kind='_header',schema=SCHEMA_VERSION,counts=counts),separators=(',',':'))+'\n')
+        for kind in _GEOMETRY_IPC_FIELDS:
+            values=data[kind]
+            if (kind in _GEOMETRY_IPC_DICTS)!=isinstance(values,dict):
+                raise ValueError(f'Invalid map geometry collection: {kind}')
+            items=values.items() if isinstance(values,dict) else enumerate(values)
+            for key,value in items:
+                record=dict(kind=kind,value=value)
+                record['key' if isinstance(values,dict) else 'index']=key
+                f.write(json.dumps(record,ensure_ascii=False,separators=(',',':'))+'\n')
+        f.write(json.dumps(dict(kind='_end',counts=counts),separators=(',',':'))+'\n')
+    os.replace(staging,target)
+
+
+def _read_geometry_ndjson(path,cancelled=None):
+    """Reject incomplete or reordered worker output before building a snapshot."""
+    with FilePath(path).open('r',encoding='utf-8') as f:
+        _check(cancelled)
+        try: header=json.loads(f.readline())
+        except ValueError as error: raise ValueError('Invalid map geometry header') from error
+        counts=header.get('counts') if isinstance(header,dict) else None
+        if (not isinstance(header,dict) or header.get('kind')!='_header' or header.get('schema')!=SCHEMA_VERSION or
+                not isinstance(counts,dict) or tuple(counts)!=_GEOMETRY_IPC_FIELDS or
+                any(type(value) is not int or value<0 for value in counts.values())):
+            raise ValueError('Invalid map geometry header')
+        data={kind:{} if kind in _GEOMETRY_IPC_DICTS else [] for kind in _GEOMETRY_IPC_FIELDS}
+        seen={kind:0 for kind in _GEOMETRY_IPC_FIELDS}
+        field_index=0
+        for line in f:
+            _check(cancelled)
+            record=json.loads(line)
+            if not isinstance(record,dict): raise ValueError('Invalid map geometry record')
+            kind=record.get('kind')
+            if kind=='_end':
+                if record.get('counts')!=counts or seen!=counts or f.readline():
+                    raise ValueError('Incomplete map geometry stream')
+                return data
+            while (field_index<len(_GEOMETRY_IPC_FIELDS) and
+                   seen[_GEOMETRY_IPC_FIELDS[field_index]]==counts[_GEOMETRY_IPC_FIELDS[field_index]]):
+                field_index+=1
+            if field_index==len(_GEOMETRY_IPC_FIELDS) or kind!=_GEOMETRY_IPC_FIELDS[field_index]:
+                raise ValueError('Reordered or excessive map geometry record')
+            if 'value' not in record: raise ValueError('Missing map geometry value')
+            value=data[kind]
+            if isinstance(value,dict):
+                key=record.get('key')
+                if not isinstance(key,str) or key in value:
+                    raise ValueError('Invalid map geometry key')
+                value[key]=record['value']
+            else:
+                if type(record.get('index')) is not int or record['index']!=len(value):
+                    raise ValueError('Invalid map geometry index')
+                value.append(record['value'])
+            seen[kind]+=1
+    raise ValueError('Incomplete map geometry stream')
 
 
 def _discover_bundles(runtime_data, managed):
@@ -571,7 +728,9 @@ class MapGeometryService:
 
     def _asset_signature(self,cancelled=None):
         files=sorted(self.managed.glob('*.dll'))
-        files.extend(self.runtime_data/p for p in ('Assembly-CSharp.probe.dll','UnityEngine.dll'))
+        # The map worker generates its own probe. The statistics parser may
+        # rebuild the shared derived probe while this independent job runs.
+        files.extend((self.runtime_data/'UnityEngine.dll',probe_script()))
         if self.bundles:
             files.extend(sorted(self.bundles.rglob('*.bundle')))
         elif self.asset_catalog.is_file():
@@ -587,7 +746,13 @@ class MapGeometryService:
         self._asset_state,self._asset_hash=state,signature
         return signature
 
-    def load(self,save_path,cancelled=None):
+    def load(self,save_path,cancelled=None,*,use_disk_cache=True):
+        """Load a snapshot; fresh mode keeps only the current in-memory result.
+
+        Fresh mode still uses a self-cleaning temporary directory to transfer
+        geometry from the isolated worker, but never reads or publishes a
+        persistent snapshot or asset catalog cache.
+        """
         _check(cancelled)
         save=FilePath(save_path).resolve()
         source_hash=_digest(save,cancelled); asset_signature=self._asset_signature(cancelled)
@@ -597,7 +762,7 @@ class MapGeometryService:
         if snapshot is not None:
             _check(cancelled); return snapshot
         target=self.cache_dir/f'{key}.json.gz'
-        if target.is_file():
+        if use_disk_cache and target.is_file():
             try:
                 with gzip.open(target,'rt',encoding='utf-8') as f: snapshot=_decode_snapshot(json.load(f))
                 if (snapshot.source_hash,snapshot.asset_signature,snapshot.schema_version)!=(source_hash,asset_signature,SCHEMA_VERSION):
@@ -607,13 +772,16 @@ class MapGeometryService:
                 return snapshot
             except (OSError,EOFError,ValueError,TypeError,KeyError):
                 pass  # Corrupt cache is rebuilt from the real input.
-        self.cache_dir.mkdir(parents=True,exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='map-job-',dir=self.cache_dir) as job:
+        if use_disk_cache:
+            self.cache_dir.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='map-job-',dir=self.cache_dir if use_disk_cache else None) as job:
             job=FilePath(job)
             config=dict(save=str(save),managed=str(self.managed),runtime_data=str(self.runtime_data),
                         bundles=str(self.bundles) if self.bundles else None,job=str(job),
                         asset_catalog=str(self.asset_catalog) if self.asset_catalog.is_file() else None,
-                        catalog_cache=str(self.cache_dir/f'assets-v{SCHEMA_VERSION}-{asset_signature}.json'))
+                        geometry_format='json' if use_disk_cache else 'ndjson',
+                        catalog_cache=str(self.cache_dir/f'assets-v{SCHEMA_VERSION}-{asset_signature}.json'
+                                          if use_disk_cache else job/'assets-cache.json'))
             config_path=job/'config.json'; config_path.write_text(json.dumps(config),encoding='utf-8')
             flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
             with (job/'worker.log').open('w',encoding='utf-8') as log:
@@ -634,18 +802,21 @@ class MapGeometryService:
             if code:
                 raise RuntimeError('Map runtime extraction failed: '+(job/'worker.log').read_text(encoding='utf-8')[-5000:])
             _check(cancelled)
-            data=json.loads((job/'geometry.json').read_text(encoding='utf-8'))
-            snapshot=snapshot_from_data(data,source_hash,asset_signature,cancelled)
+            data=(json.loads((job/'geometry.json').read_text(encoding='utf-8')) if use_disk_cache else
+                  _read_geometry_ndjson(job/'geometry.ndjson',cancelled))
+            snapshot=snapshot_from_data(data,source_hash,asset_signature,cancelled,direction_worker_dir=job)
             if _digest(save,cancelled)!=source_hash:
                 raise RuntimeError('Save changed during map extraction')
             if self._asset_signature(cancelled)!=asset_signature:
                 raise RuntimeError('Map assets changed during extraction')
             _check(cancelled)
-            staging=job/'snapshot.json.gz'
-            with gzip.open(staging,'wt',encoding='utf-8',compresslevel=3) as f:
-                json.dump(asdict(snapshot),f,ensure_ascii=False,separators=(',',':'))
+            if use_disk_cache:
+                staging=job/'snapshot.json.gz'
+                with gzip.open(staging,'wt',encoding='utf-8',compresslevel=3) as f:
+                    json.dump(asdict(snapshot),f,ensure_ascii=False,separators=(',',':'))
+                _check(cancelled)
+                os.replace(staging,target)
             _check(cancelled)
-            os.replace(staging,target)
         with self._lock: self._memory[key]=snapshot
         return snapshot
 
@@ -803,7 +974,10 @@ def _worker(config):
     print(f'assets:{len(catalog)}',flush=True)
     root,_=e.load_root(True); print('deserialized',flush=True)
     data=_extract_objects(e,root,catalog)
-    (job/'geometry.json').write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+    if config.get('geometry_format')=='ndjson':
+        _write_geometry_ndjson(data,job/'geometry.ndjson')
+    else:
+        (job/'geometry.json').write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
 
 
 def _extract_objects(e,root,catalog):
@@ -815,8 +989,16 @@ def _extract_objects(e,root,catalog):
         if obj is None: return None
         key=(type(obj),name)
         if key not in field_cache:
-            field_cache[key]=obj.GetType().GetField(name,e.FLAGS)
-        metadata=field_cache[key]
+            metadata=obj.GetType().GetField(name,e.FLAGS)
+            # pythonnet's direct getter is cheaper for value types and text.
+            # References must keep reflection so their concrete managed type
+            # remains intact for subsequent metadata lookup and identity.
+            direct=metadata is not None and (metadata.FieldType.IsValueType or metadata.FieldType.FullName=='System.String')
+            field_cache[key]=(metadata,direct)
+        metadata,direct=field_cache[key]
+        if direct:
+            try: return getattr(obj,name)
+            except AttributeError: pass
         return metadata.GetValue(obj) if metadata is not None else None
     array=e.array_values
     def optional_int(obj, name):
@@ -1021,6 +1203,8 @@ def worker_main(config_path):
 if __name__=='__main__':
     if len(sys.argv)==3 and sys.argv[1]=='--worker':
         worker_main(sys.argv[2])
+    elif len(sys.argv)==3 and sys.argv[1]=='--direction-worker':
+        direction_worker_main(sys.argv[2])
     else:
         raise SystemExit('map_geometry is a library; use MapGeometryService.load')
 

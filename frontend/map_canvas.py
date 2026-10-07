@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import OrderedDict
 import math
 from pathlib import Path
 
@@ -667,7 +668,7 @@ class _MapDrawing:
                     painter.drawEllipse(point,radius,radius)
             if self.options['stops'] and self.options['stop_names'] and self.zoom>=.15:
                 self._label(painter,point,stop.name,occupied)
-        if self._highlight:
+        if self._highlight and self._highlight[0] != 'route':
             kind,identity = self._highlight
             index = self._indexes.get(kind+'s')
             if index:
@@ -815,6 +816,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._fit_pending = False
         self._drag = None
         self._indexes = {}
+        self._index_cache = {}
         self._stops = {}
         self._highlight = None
         self._world_polygons = {}
@@ -848,6 +850,10 @@ class MapCanvas(_MapDrawing, QWidget):
     def set_snapshot(self, snapshot):
         previous=self.snapshot
         self.snapshot = snapshot
+        if (snapshot.source_hash != previous.source_hash or snapshot.asset_signature != previous.asset_signature
+                or snapshot.roads is not previous.roads or snapshot.junctions is not previous.junctions
+                or not any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops,snapshot.junctions))):
+            self._index_cache.clear()
         # Published index dictionaries must remain stable for an in-flight frame.
         self._indexes=dict(self._indexes)
         self._boxes=dict(self._boxes)
@@ -866,10 +872,20 @@ class MapCanvas(_MapDrawing, QWidget):
             self._connection_boxes = {c.id:_bounds(p for path in c.paths for p in path)
                                       for j in snapshot.junctions for c in j.connections}
         for name in ('roads','buildings','routes','stops','junctions'):
-            if getattr(snapshot,name) is getattr(previous,name) and name in self._indexes:
+            items=getattr(snapshot,name)
+            stop_dependency=snapshot.stops if name=='routes' else None
+            if (items is getattr(previous,name) and name in self._indexes and snapshot.bounds==previous.bounds
+                    and (name!='routes' or snapshot.stops is previous.stops)):
+                continue
+            cache=self._index_cache.setdefault(name,OrderedDict())
+            key=(id(items),id(stop_dependency),snapshot.bounds)
+            cached=cache.get(key)
+            if cached is not None:
+                cache.move_to_end(key)
+                self._indexes[name],self._boxes[name]=cached[2:]
                 continue
             entries = []
-            for item in getattr(snapshot,name):
+            for item in items:
                 if name in ('roads','routes','junctions'):
                     points = [p for path in item.paths for p in path]
                     if name == 'routes':
@@ -886,6 +902,11 @@ class MapCanvas(_MapDrawing, QWidget):
                     entries.append((item,box))
             self._indexes[name] = _SpatialIndex(entries,snapshot.bounds)
             self._boxes[name] = {item.id:box for item,box in entries}
+            # Retain tuple owners to prevent id reuse; published indexes are
+            # immutable, including while an older frame is still rendering.
+            cache[key]=(items,stop_dependency,self._indexes[name],self._boxes[name])
+            if len(cache)>4:
+                cache.popitem(last=False)
         if not self._loaded and any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops)):
             self._loaded = True
             self.fit_to_map()

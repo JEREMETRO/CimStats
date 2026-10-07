@@ -11,6 +11,30 @@ from map_model import (GroupFunctionCount, MapBuilding, MapRoute, MapSnapshot,
 from map_query import MapQuery
 
 
+def test_normal_map_worker_prepares_fresh_snapshot_without_disk_cache(monkeypatch, tmp_path):
+    import map_geometry
+    import map_page
+
+    calls = []
+    snapshot = MapSnapshot()
+
+    class Service:
+        def __init__(self, cache_dir=None):
+            pass
+
+        def load(self, source, cancelled, *, use_disk_cache=True):
+            calls.append((source, use_disk_cache, cancelled()))
+            return snapshot
+
+    monkeypatch.setattr(map_geometry, 'MapGeometryService', Service)
+    worker = map_page.MapWorker(7, tmp_path / 'city.save', tmp_path)
+    completed = []
+    worker.completed.connect(lambda generation, result: completed.append((generation, result)))
+    worker.run()
+    assert calls == [(tmp_path / 'city.save', False, False)]
+    assert completed == [(7, snapshot)]
+
+
 def test_capacity_projection_reuses_equal_records_and_keeps_filter_semantics(monkeypatch):
     import map_query
 
@@ -239,6 +263,15 @@ def test_normal_open_starts_map_prefetch_and_cancel_discards_it(tmp_path, monkey
     source = tmp_path / 'normal.save'
     window.start_parse(source)
     assert started == [source]
-    window.on_failed('已取消解析')
+    window.cancel_parse()
+    assert window.worker.cancel_requested
     assert cancelled == [True]
+    window.on_failed('已取消解析')
+    assert cancelled == [True, True]
+    replacement = tmp_path / 'replacement.save'
+    window.start_parse(replacement)
+    assert started == [source, replacement]
+    stopped = []
+    monkeypatch.setattr(window.map_page, 'stop_workers', lambda: stopped.append(True) or True)
     window.close()
+    assert stopped == [True]

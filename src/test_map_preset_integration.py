@@ -5,6 +5,122 @@ from map_canvas import MapCanvas
 from map_model import MapBuilding, MapSnapshot, GroupFunctionCount, SOCIAL_GROUPS
 from map_query import MapQuery
 from semantic_colors import map_fill, color_for
+import pytest
+
+
+def test_preset_revisit_reuses_immutable_layer_indexes(qt_application, tmp_path):
+    from PySide6.QtCore import QSettings
+    from map_page import MapPage
+    from map_model import MapRoute
+    route = MapRoute(1, 'A', 1, 'a', '甲', 'bus', (), (((0., 0., 0.), (100., 0., 0.)),))
+    building = MapBuilding(2, 'house', '', (10., 0., 10.), ((0., 0., 0.), (20., 0., 0.), (0., 0., 20.)))
+    page = MapPage(QSettings(str(tmp_path/'index.ini'), QSettings.Format.IniFormat))
+    page.set_session({'save_key': 'A'})
+    page.set_snapshot(MapSnapshot(routes=(route,), buildings=(building,), source_hash='A'))
+    try:
+        page.show_route(1, page.save_token)
+        indexes = {}
+        for preset in ('single', 'network', 'planning'):
+            page.set_preset(preset)
+            indexes[preset] = dict(page.canvas._indexes)
+        for preset in ('single', 'network', 'planning'):
+            page.set_preset(preset)
+            assert all(page.canvas._indexes[key] is index for key, index in indexes[preset].items())
+    finally:
+        page.close()
+
+
+def test_route_bounds_follow_changed_stop_positions_without_reusing_stale_index(qt_application):
+    from map_model import MapRoute, MapStop
+    route = MapRoute(1, 'A', 1, 'a', '甲', 'bus', (3,), ())
+    routes = (route,)
+    canvas = MapCanvas()
+    try:
+        first = MapSnapshot(routes=routes, stops=(MapStop(3, 'S', (1., 0., 1.)),))
+        second = MapSnapshot(routes=routes, stops=(MapStop(3, 'S', (50., 0., 50.)),))
+        canvas.set_snapshot(first)
+        old = canvas._indexes['routes']
+        canvas.set_snapshot(second)
+        assert canvas._boxes['routes'][1] == (50., 50., 50., 50.)
+        assert canvas._indexes['routes'] is not old
+    finally:
+        canvas.close()
+
+
+def test_inflight_frame_keeps_original_indexes_after_eviction_and_clear(qt_application):
+    from dataclasses import replace
+    from map_canvas import _FrameSurface
+    building = MapBuilding(2, 'house', '', (10., 0., 10.))
+    initial = MapSnapshot(buildings=(building,), source_hash='A', bounds=(0., 0., 100., 100.))
+    canvas = MapCanvas()
+    try:
+        canvas.set_snapshot(initial)
+        frame = _FrameSurface(canvas)
+        old_index, old_boxes = frame._indexes['buildings'], dict(frame._boxes['buildings'])
+        for i in range(1, 6):
+            current = replace(initial, buildings=(replace(building, position=(20.*i, 0., 20.*i)),))
+            canvas.set_snapshot(current)
+        assert len(canvas._index_cache['buildings']) <= 4
+        last_index = canvas._indexes['buildings']
+        canvas.set_snapshot(replace(current, bounds=(0., 0., 1000., 1000.)))
+        assert canvas._indexes['buildings'] is not last_index
+        canvas.set_snapshot(MapSnapshot())
+        assert all(not items and not dependencies
+                   for layer in canvas._index_cache.values()
+                   for items, dependencies, _, _ in layer.values())
+        assert frame._indexes['buildings'] is old_index
+        assert frame._boxes['buildings'] == old_boxes
+        assert list(old_index.query((0., 0., 15., 15.))) == [building]
+    finally:
+        canvas.close()
+
+
+@pytest.mark.parametrize('paths', [(), (((0., 0., 0.), (0., 10., 0.)),)])
+def test_visible_search_and_detail_reject_unusable_geometry(qt_application, tmp_path, paths):
+    from PySide6.QtCore import QSettings
+    from map_page import MapPage
+    from map_model import MapRoute
+    route = MapRoute(9, 'No geometry', 9, 'a', '甲', 'bus', (), paths)
+    page = MapPage(QSettings(str(tmp_path/'unusable.ini'), QSettings.Format.IniFormat))
+    page.set_session({'save_key': 'A'})
+    page.set_snapshot(MapSnapshot(routes=(route,)))
+    try:
+        page.surface.search.setText('No geometry')
+        page.surface._search()
+        item = page.surface.results.item(0)
+        assert item.data(Qt.ItemDataRole.UserRole).id == 9
+        assert not item.flags() & Qt.ItemFlag.ItemIsEnabled
+        assert not page._focus_search(item.data(Qt.ItemDataRole.UserRole))
+        assert not page.show_route(9, page.save_token)
+        assert page.preset == 'network'
+        page.set_session({'save_key': 'B'})
+        assert page.show_route(9, page.save_token)
+        page.set_snapshot(MapSnapshot(routes=(route,)))
+        assert page.presets.state('single')['query']['route_id'] is None
+        assert not page.result.routes
+    finally:
+        page.close()
+
+
+def test_surface_search_from_filtered_network_opens_single_without_changing_network(qt_application, tmp_path):
+    from PySide6.QtCore import QSettings
+    from map_page import MapPage
+    from map_model import MapRoute
+    route = MapRoute(7, 'Central', 7, 'a', '甲', 'bus', (),
+                     (((0., 0., 0.), (100., 0., 0.)),))
+    page = MapPage(QSettings(str(tmp_path/'search.ini'), QSettings.Format.IniFormat))
+    page.set_session({'save_key': 'A'})
+    page.set_snapshot(MapSnapshot(routes=(route,)))
+    page.apply_state({**page.panel_set.state(), 'manual_line_ids': []})
+    try:
+        matches = page.search('Central')
+        assert [match.id for match in matches] == [7]
+        page._focus_search(matches[0])
+        assert page.preset == 'single'
+        assert [r.id for r in page.result.routes] == [7]
+        assert page.presets.state('network')['query']['manual_line_ids'] == set()
+    finally:
+        page.close()
 
 
 def test_network_service_filter_uses_saved_windows_and_intersects_manual_selection():
@@ -56,6 +172,29 @@ def test_building_click_uses_polygon_not_bounds_and_drag_does_not_select(qt_appl
         canvas.set_options(buildings=False)
         QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=inside)
         assert selected.count() == 1
+    finally:
+        canvas.close()
+
+
+def test_line_navigation_never_paints_its_rectangular_bounds(qt_application):
+    from PySide6.QtGui import QImage, QPainter
+    from map_model import MapRoute
+    canvas = MapCanvas()
+    canvas.resize(500, 400)
+    route = MapRoute(7, 'Diagonal', 7, 'a', '甲', 'bus', (),
+                     (((0., 0., 0.), (100., 0., 100.)),))
+    canvas.set_snapshot(MapSnapshot(routes=(route,), bounds=(0., 0., 100., 100.)))
+    canvas.focus_result(canvas.search('Diagonal')[0])
+    def rendered():
+        image = QImage(canvas.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        painter = QPainter(image)
+        canvas._paint(painter)
+        painter.end()
+        return image
+    try:
+        focused = rendered()
+        canvas._highlight = None
+        assert focused == rendered()
     finally:
         canvas.close()
 

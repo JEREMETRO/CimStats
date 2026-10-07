@@ -11,6 +11,8 @@ from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QListWidgetItem
 from qfluentwidgets import BodyLabel, CheckBox, LineEdit, PushButton, TransparentPushButton
 
 from line_schedule import TICKS_PER_SECOND
+from display_rules import format_number
+from map_visibility import usable_paths as _usable_paths
 from map_panels import _ChoiceGroup, _OptionGrid, _WrappedList, _style_control
 from stats_controls import StatisticsScrollArea
 from stats_typography import ui_font
@@ -30,11 +32,7 @@ def _number(value, unit, precision=0):
         return '—'
     if not isfinite(number) or number < 0:
         return '—'
-    return f'{number:,.{precision}f}'.rstrip('0').rstrip('.') + f' {unit}' if precision else f'{number:,.0f} {unit}'
-
-
-def _usable_paths(paths):
-    return any(any(a[0] != b[0] or a[2] != b[2] for a, b in zip(path, path[1:])) for path in paths or ())
+    return f'{format_number(number, places=precision)} {unit}'
 
 
 def _catalog(routes):
@@ -281,15 +279,15 @@ class SingleLinePanel(_PresetPanel):
         total = self._operating_km
         if self._state['deadhead']:
             total = None if total is None or self._deadhead_km is None else total + self._deadhead_km
-        self.fact_labels['geometry_km'].setText(_number(total, 'km', 3))
-        self.fact_labels['operating_km'].setText(_number(self._operating_km, 'km', 3))
-        self.fact_labels['deadhead_km'].setText(_number(self._deadhead_km, 'km', 3))
+        self.fact_labels['geometry_km'].setText(_number(total, 'km', 2))
+        self.fact_labels['operating_km'].setText(_number(self._operating_km, 'km', 2))
+        self.fact_labels['deadhead_km'].setText(_number(self._deadhead_km, 'km', 2))
         for key in ('operating_km', 'deadhead_km'):
             for widget in getattr(self, f'_{key}_widgets'): widget.setVisible(self._state['deadhead'])
         ticks = _field(self._facts, 'approved_duration_ticks')
         duration = ticks / TICKS_PER_SECOND / 60 if ticks is not None else _field(self._facts, 'duration_minutes')
         today = _field(self._facts, 'today_passengers', _field(self._facts, 'transported_today'))
-        self.fact_labels['duration_minutes'].setText(_number(duration, '分钟', 1))
+        self.fact_labels['duration_minutes'].setText(_number(duration, '分钟', 2))
         self.fact_labels['transported_today'].setText(_number(today, '人次'))
         self.fact_labels['scheduled_departures'].setText(_number(_field(self._facts, 'scheduled_departures'), '班次'))
 

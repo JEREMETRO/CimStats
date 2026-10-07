@@ -622,14 +622,17 @@ def test_component_shell_readiness_waits_for_home_snapshot(component):
 def test_component_shell_failure_invalidates_home(component, qt_application):
     from types import SimpleNamespace as NS
     _page, controller = ready_component(component, qt_application)
+    map_cancelled=[]
     widget = NS(setEnabled=lambda _v: None, setText=lambda _v: None, setToolTip=lambda _v: None, hide=lambda: None)
     shell = NS(_awaiting_dashboards=False, _ready_timer=NS(stop=lambda: None), loading_overlay=NS(finish=lambda: None),
                _progress_timer=NS(stop=lambda: None), cancel_action=widget, progress=widget,
                latest_info_controller=controller, statistics_page=NS(clear_session=lambda: None),
+               map_page=NS(cancel_prefetch=lambda:map_cancelled.append(True)),
                data=controller.data, header=NS(save_chip=NS(set_context=lambda *_: None)),
                empty_state=NS(set_note=lambda _v: None), _refresh_body=lambda: None,
                _refresh_exports=lambda: None)
     shell_method('on_failed')(shell, '已取消解析')
+    assert map_cancelled==[True]
     assert controller.snapshot is None and controller.alerts_snapshot is None
 
 

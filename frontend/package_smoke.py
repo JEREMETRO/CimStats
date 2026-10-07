@@ -160,12 +160,12 @@ def _exercise(win, desktop_app, args):
     assert not page.network_mode_control._buttons['companies'].isEnabled()
     for width, height in ((960, 680), (1600, 900)):
         win.resize(width, height)
-        for index, label in ((0, 'home'), (1, 'lines'), (2, 'stats')):
+        for index, label in ((0, 'home'), (2, 'lines'), (3, 'stats')):
             win.navigate(index)
             settle()
-            if index == 1 and data.get('lines'):
+            if index == 2 and data.get('lines'):
                 win.line_clicked(0, 0)
-            if index != 2:
+            if index != 3:
                 capture(f'{label}-{width}x{height}')
             else:
                 for family in ('company', 'network', 'city'):
@@ -180,8 +180,40 @@ def _exercise(win, desktop_app, args):
         win.header._show_export_menu()
         capture(f'export-{width}x{height}', win.header.export_menu)
         win.header.export_menu.close()
+    map_page = win.map_page
+    map_errors = []
+    map_page.failed.connect(map_errors.append)
+    win.navigate(1)
+    wait_until(lambda: bool(map_errors) or map_page.result is not None, 360)
+    assert not map_errors, map_errors
+    route = next(route for route in map_page.query.snapshot.routes
+                 if route.mode != 'waterbus' and any(len(path) > 1 for path in route.paths))
+    map_facts = {}
+    for width, height in ((1440, 960), (960, 680)):
+        win.resize(width, height)
+        settle()
+        for preset in ('single', 'network', 'planning'):
+            map_page.set_preset(preset)
+            if preset == 'single':
+                map_page.show_route(route.id, map_page.save_token)
+            elif preset == 'planning':
+                map_page.planning_panel.selectionChanged.emit({route.id})
+                assert map_page.planning_panel.state()['building_emphasis'] is True
+            map_page.canvas.prepare_frame()
+            wait_until(lambda: bool(map_errors) or (
+                map_page.canvas._frame_key == map_page.canvas._render_key()
+                and map_page.canvas._frame_view == (*map_page.canvas.center, map_page.canvas.zoom)), 120)
+            assert not map_errors, map_errors
+            capture(f'map-{preset}-{width}x{height}')
+            if preset == 'single':
+                map_facts = {key: label.text() for key, label in map_page.single_panel.fact_labels.items()}
+            elif preset == 'network':
+                for panel in ('filters', 'display'):
+                    map_page.dock.activate_panel(panel)
+                    capture(f'map-network-{panel}-{width}x{height}')
+                map_page.dock.activate_panel('layers')
     win.resize(960, 680)
-    win.navigate(2)
+    win.navigate(3)
     page.tab_bar.setCurrentItem('network')
     page._tab_changed('network')
     wait_until(lambda: page.network_snapshot is not None)
@@ -272,7 +304,7 @@ def _exercise(win, desktop_app, args):
     capture('compact-400x190', compact)
     compact.close()
     for family in ('company', 'network', 'city', 'home'):
-        win.navigate(0 if family == 'home' else 2)
+        win.navigate(0 if family == 'home' else 3)
         if family != 'home':
             page.tab_bar.setCurrentItem(family)
             page._tab_changed(family)
@@ -515,5 +547,9 @@ def _exercise(win, desktop_app, args):
               'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True,
               'comparison_bars':bar_evidence, 'exported_workbooks':workbooks, 'cases':records}
     report['home_structure'] = home_structure
+    report['map'] = {'schema': map_page.query.snapshot.schema_version,
+                     'route_id': route.id, 'single_facts': map_facts,
+                     'routes': len(map_page.query.snapshot.routes),
+                     'buildings': len(map_page.query.snapshot.buildings)}
     report['home_structure_responsive'] = home_structure_responsive
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

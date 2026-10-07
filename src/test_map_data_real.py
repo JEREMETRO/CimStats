@@ -5,7 +5,7 @@ import os
 import math
 from pathlib import Path
 import pytest
-from map_geometry import MapGeometryService
+from map_geometry import MapGeometryService, SCHEMA_VERSION
 from map_model import SOCIAL_GROUPS,building_function_values
 
 ROOT=Path(os.environ.get('CIM2_MAP_REFERENCE_ROOT',''))
@@ -21,11 +21,11 @@ def test_thirty_real_line_regressions(save_name,batch):
     save=SAVES/save_name
     before=hashlib.sha256(save.read_bytes()).hexdigest()
     service=MapGeometryService(cache_dir=Path('jobs/map-implementation/real-test-cache'))
-    snapshot=service.load(save)
+    snapshot=service.load(save,use_disk_cache=False)
     assert snapshot.source_hash==before
     assert hashlib.sha256(save.read_bytes()).hexdigest()==before
     assert snapshot.buildings and snapshot.roads
-    assert snapshot.schema_version==9
+    assert snapshot.schema_version==SCHEMA_VERSION
     assert all(tuple(r.group for r in b.function_capacities)==SOCIAL_GROUPS for b in snapshot.buildings)
     assert all(isinstance(v,int) and v>=0 for b in snapshot.buildings
                for r in b.function_capacities for v in (r.home,r.work,r.leisure))
@@ -75,7 +75,7 @@ def test_thirty_real_line_regressions(save_name,batch):
             stops={s.id:s for s in snapshot.stops}
             assert stops[route.stop_ids[13]].name=='东北转车站E2'
         results.append(dict(id=route.id,kind=route.direction.kind,terminal=route.direction.terminal_index))
-    # Disk cache restores a deep immutable, numerically identical snapshot.
-    cached=MapGeometryService(cache_dir=service.cache_dir).load(save)
-    assert cached==snapshot
+    # Normal operation reuses only this service's current in-memory snapshot.
+    cached=service.load(save,use_disk_cache=False)
+    assert cached is snapshot
     Path(f'jobs/map-implementation/regression-{batch}.json').write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')

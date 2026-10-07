@@ -1032,6 +1032,7 @@ class MainWindow(FluentMainWindow):
             self.on_failed('已取消解析')
         elif self.worker:
             self.worker.cancel()
+            self.map_page.cancel_prefetch()
             self.status_text = "正在取消…"
             self.loading_overlay.cancel_button.setEnabled(False)
             self.loading_overlay.update_progress("正在取消…")

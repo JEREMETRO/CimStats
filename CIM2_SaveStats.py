@@ -25,6 +25,11 @@ if len(sys.argv) == 3 and sys.argv[1] == '--map-geometry-worker':
     worker_main(sys.argv[2])
     raise SystemExit(0)
 
+if len(sys.argv) == 3 and sys.argv[1] == '--map-direction-worker':
+    from map_geometry import direction_worker_main
+    direction_worker_main(sys.argv[2])
+    raise SystemExit(0)
+
 FRONTEND = ROOT / "frontend"
 if str(FRONTEND) not in sys.path:
     sys.path.insert(0, str(FRONTEND))

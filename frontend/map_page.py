@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from copy import deepcopy
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from map_docking import MapDockHost
 from map_model import MapSnapshot, road_display_level
 from map_query import MapQuery, stats_from_session
 from map_presets import PresetStore, PRESETS, valid_view
+from map_visibility import route_has_geometry
 
 
 def _json(value):
@@ -25,6 +27,7 @@ def _json(value):
 @dataclass(frozen=True, slots=True)
 class _SaveSearchResult(MapSearchResult):
     save_token: tuple[str, int]
+    selectable: bool = True
 
 
 class MapWorker(QThread):
@@ -37,8 +40,23 @@ class MapWorker(QThread):
 
     def run(self):
         from map_geometry import MapGeometryService, MapCancelled
+        last_yield = time.monotonic()
+
+        def cancelled():
+            nonlocal last_yield
+            if self.isInterruptionRequested():
+                return True
+            # Native widget updates repeatedly enter Python callbacks. Give
+            # them a turn while constructing the full map in this QThread.
+            now = time.monotonic()
+            if now - last_yield >= .001:
+                time.sleep(.001)
+                last_yield = time.monotonic()
+            return self.isInterruptionRequested()
+
         try:
-            snapshot = MapGeometryService(cache_dir=self.cache).load(self.source, self.isInterruptionRequested, use_disk_cache=False)
+            snapshot = MapGeometryService(cache_dir=self.cache).load(
+                self.source, cancelled, use_disk_cache=False)
             if not self.isInterruptionRequested():
                 self.completed.emit(self.generation, snapshot)
         except MapCancelled:
@@ -60,8 +78,8 @@ class _MapSurface(QWidget):
         self.loading.stop()
         self.loading.hide()
         self.search = SearchLineEdit(self)
-        self.search.setPlaceholderText('搜索线路、站点或建筑')
-        self.search.setAccessibleName('搜索线路、站点或建筑')
+        self.search.setPlaceholderText('搜索单条线路')
+        self.search.setAccessibleName('搜索单条线路')
         self.search.setFixedHeight(36)
         setCustomStyleSheet(self.search, f'SearchLineEdit {{ background: {tokens.CARD_BG}; color: {tokens.TEXT_PRIMARY}; }}', f'SearchLineEdit {{ background: {tokens.CARD_BG}; color: {tokens.TEXT_PRIMARY}; }}')
         self.results = ListWidget(self)
@@ -99,6 +117,9 @@ class _MapSurface(QWidget):
         for result in self._search_provider(self.search.text()):
             item=QListWidgetItem(result.label)
             item.setData(Qt.ItemDataRole.UserRole,result)
+            if not getattr(result,'selectable',True):
+                item.setText(result.label+'\n无地图路径')
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable)
             self.results.addItem(item)
         self.results.setVisible(bool(self.results.count()))
         self.results.raise_()
@@ -253,7 +274,7 @@ class MapPage(QWidget):
             self.preset_pivot.setCurrentItem(preset)
             self.preset_pivot.blockSignals(False)
             self.presets.activate(preset)
-            self.surface.search.setPlaceholderText('搜索线路、站点或建筑' if preset=='network' else '搜索线路')
+            self.surface.search.setPlaceholderText('搜索单条线路')
             self.surface.search.setAccessibleName(self.surface.search.placeholderText())
             self.surface.search.clear()
             self.surface.results.hide()
@@ -309,7 +330,6 @@ class MapPage(QWidget):
         return state
 
     def search(self,text):
-        if self.preset=='network':return self.canvas.search(text)
         if self.query is None:return []
         needle=str(text).strip().casefold()
         if not needle:return []
@@ -318,19 +338,14 @@ class MapPage(QWidget):
             label=self.canvas.route_label(route)
             identity=f'{label} · {route.company_name} [{route.company_id}]'
             if needle not in identity.casefold() and needle!=str(route.id):continue
-            results.append(_SaveSearchResult('route',route.id,identity,self.query.snapshot.bounds,self.save_token))
+            results.append(_SaveSearchResult('route',route.id,identity,self.query.snapshot.bounds,
+                                            self.save_token,route_has_geometry(route)))
         return results
 
     def _focus_search(self,result):
         if getattr(result,'save_token',self.save_token)!=self.save_token:return False
-        if self.preset=='single' and result.kind=='route':
+        if result.kind=='route':
             return self.show_route(result.id,self.save_token)
-        if self.preset=='planning' and result.kind=='route':
-            selected=set(self.presets.state('planning')['query']['selected_ids'])
-            selected.add(result.id)
-            self._preset_changed('planning',selected_ids=selected)
-            self._sync_preset_panels()
-            return True
         return self.canvas.focus_result(result)
 
     def show_route(self,route_id,save_key=None):
@@ -340,10 +355,10 @@ class MapPage(QWidget):
             elif str(save_key)!=self.save_token[0]:return False
         try:route_id=int(route_id)
         except (TypeError,ValueError):return False
-        if self.query is not None and not any(r.id==route_id for r in self.query.snapshot.routes):return False
+        if self.query is not None and not route_has_geometry(next(
+                (r for r in self.query.snapshot.routes if r.id==route_id),None)):return False
         self._pending_route=(self.save_token,route_id)
         self.set_preset('single')
-        self.presets.update('single',query={'route_id':route_id})
         if self.query is not None:self._consume_pending_route()
         else:self.ensure_loaded()
         return True
@@ -354,7 +369,7 @@ class MapPage(QWidget):
         self._pending_route=None
         if token!=self.save_token:return
         route=next((r for r in self.query.snapshot.routes if r.id==identity),None)
-        if route is None:return
+        if not route_has_geometry(route):return
         self.presets.update('single',query={'route_id':identity})
         if self.preset=='single':
             self._sync_preset_panels()
