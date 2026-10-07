@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal, Slot, QTimer, QObject, QRunnable, QThreadPool
 from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget, QApplication
+from shiboken6 import isValid
 
 import stats_tokens as tokens
 from stats_typography import ui_font
@@ -770,6 +771,15 @@ class _FrameJob(QRunnable):
         self.surface,self.key,self.view=surface,key,view
         self.signals=_FrameSignals()
 
+    def _emit(self,name,*values):
+        # Application teardown can destroy the signal receiver/source while
+        # an independent QImage is finishing. There is then nothing to publish.
+        try:
+            getattr(self.signals,name).emit(*values)
+        except RuntimeError:
+            if isValid(self.signals):
+                raise
+
     def run(self):
         surface=self.surface
         image=QImage(round(surface.width()*surface.ratio),round(surface.height()*surface.ratio),QImage.Format.Format_ARGB32_Premultiplied)
@@ -778,11 +788,11 @@ class _FrameJob(QRunnable):
         try:
             surface._paint(painter,overlays=False)
         except Exception as error:
-            self.signals.failed.emit(self.key,str(error))
+            self._emit('failed',self.key,str(error))
             return
         finally:
             painter.end()
-        self.signals.completed.emit(self.key,self.view,image,surface)
+        self._emit('completed',self.key,self.view,image,surface)
 
 
 class MapCanvas(_MapDrawing, QWidget):
@@ -848,10 +858,13 @@ class MapCanvas(_MapDrawing, QWidget):
             self._continuous_cache={}
             self._path_keys={}
             self._path_bounds={}
-        self._stops = {s.id:s for s in snapshot.stops}
-        self._roads = {r.id:r for r in snapshot.roads}
-        self._connection_boxes = {c.id:_bounds(p for path in c.paths for p in path)
-                                  for j in snapshot.junctions for c in j.connections}
+        if snapshot.stops is not previous.stops:
+            self._stops = {s.id:s for s in snapshot.stops}
+        if snapshot.roads is not previous.roads:
+            self._roads = {r.id:r for r in snapshot.roads}
+        if snapshot.junctions is not previous.junctions:
+            self._connection_boxes = {c.id:_bounds(p for path in c.paths for p in path)
+                                      for j in snapshot.junctions for c in j.connections}
         for name in ('roads','buildings','routes','stops','junctions'):
             if getattr(snapshot,name) is getattr(previous,name) and name in self._indexes:
                 continue
@@ -1043,7 +1056,7 @@ class MapCanvas(_MapDrawing, QWidget):
         view = (*self.center,self.zoom)
         if key==self._failed_frame_key:
             return
-        if self._frame is None or key!=self._frame_key or (view!=self._frame_view and not self._render_timer.isActive()):
+        if self._frame is None or key!=self._frame_key or (view!=self._frame_view and (self._async_render or not self._render_timer.isActive())):
             if self._async_render:
                 if self._frame_job is None:
                     job=_FrameJob(_FrameSurface(self),key,view)
@@ -1081,7 +1094,8 @@ class MapCanvas(_MapDrawing, QWidget):
             self._base_cache=surface._base_cache
             for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
                 setattr(self,name,getattr(surface,name))
-            self.frame_ready.emit()
+            if view==(*self.center,self.zoom):
+                self.frame_ready.emit()
         self.update()
         if not self.isVisible() and (key!=self._render_key() or view!=(*self.center,self.zoom)):
             self.prepare_frame()

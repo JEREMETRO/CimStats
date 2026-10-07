@@ -69,3 +69,40 @@ def test_large_frame_render_does_not_block_ui_and_drops_stale_options(qt_applica
     assert max(b-a for a,b in zip(ticks,ticks[1:]))<.15
     assert canvas._frame_key[0]==canvas._revision
     canvas.close()
+
+
+def test_finished_image_can_be_discarded_after_ui_signal_teardown(qt_application):
+    from map_canvas import _FrameSurface,_FrameJob
+    from shiboken6 import delete
+    canvas=MapCanvas();canvas.resize(200,150)
+    job=_FrameJob(_FrameSurface(canvas),canvas._render_key(),(*canvas.center,canvas.zoom))
+    delete(job.signals)
+    job.run()
+    canvas.close()
+
+
+def test_hidden_page_prewarms_at_actual_stack_size(qt_application,tmp_path):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QStackedWidget,QWidget
+    from map_page import MapPage
+    from map_model import MapRoad
+    stack=QStackedWidget();stack.resize(1200,800)
+    stack.addWidget(QWidget())
+    page=MapPage(QSettings(str(tmp_path/'warm.ini'),QSettings.Format.IniFormat))
+    stack.addWidget(page);stack.show();qt_application.processEvents()
+    page._requested=True
+    road=MapRoad(1,'road','',(((0.,0.,0.),(100.,0.,100.)),))
+    page._loaded(page._generation,MapSnapshot(roads=(road,),bounds=(0.,0.,100.,100.)))
+    assert page.canvas.width()>700
+    before=(page.canvas._frame_key,page.canvas._frame_view)
+    stack.setCurrentWidget(page);qt_application.processEvents()
+    assert (page.canvas._frame_key,page.canvas._frame_view)==before
+    stack.close()
+
+
+def test_page_does_not_override_geometry_service_persistent_cache(qt_application,tmp_path):
+    from PySide6.QtCore import QSettings
+    from map_page import MapPage
+    page=MapPage(QSettings(str(tmp_path/'cache.ini'),QSettings.Format.IniFormat))
+    assert page.cache_dir is None
+    page.close()
