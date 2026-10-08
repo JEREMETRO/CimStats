@@ -9,7 +9,8 @@ def profile_loading(win, args):
     from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance()
-    win.resize(1440, 960)
+    from package_smoke import _resize_for_workarea, _window_workarea_evidence
+    _resize_for_workarea(win, 1440, 960)
     win.set_sidebar_collapsed(True)
     assert abs(win.devicePixelRatioF()-args.expected_dpr) < .001
     page, canvas = win.map_page, win.map_page.canvas
@@ -85,6 +86,7 @@ def profile_loading(win, args):
               'frozen':bool(getattr(sys,'frozen',False)), 'executable':sys.executable,
               'platform':app.platformName(), 'dpr':win.devicePixelRatioF(),
               'size':[win.width(),win.height()], 'schema':page._snapshot.schema_version,
+              'workarea':_window_workarea_evidence(win),
               'process_id':process.pid, 'peak_rss_mib':peak_rss[0]/2**20,
               'max_child_processes':child_count[0], 'sampled_cpu_seconds':sum(cpu_samples.values()),
               'child_processes_after_ready':[child.pid for child in process.children(recursive=True)]}

@@ -15,6 +15,31 @@ import time
 import traceback
 
 
+def _resize_for_workarea(window, width, height):
+    from PySide6.QtCore import QSize
+    from window_workarea import fit_window_to_workarea
+    window._smoke_requested_size = [width, height]
+    fit_window_to_workarea(window, requested_size=QSize(width, height))
+
+
+def _window_workarea_evidence(widget):
+    from PySide6.QtCore import QPoint, QRect
+    window = widget.window()
+    screen = window.screen()
+    available, full, frame = screen.availableGeometry(), screen.geometry(), window.frameGeometry()
+    def rectangle(rect):
+        return [rect.x(), rect.y(), rect.width(), rect.height()]
+    visible = QRect(window.mapToGlobal(QPoint(0, 0)), window.size()) if window.isMaximized() else frame
+    inside = available.contains(visible)
+    assert inside, ('window exceeds available workarea', rectangle(visible), rectangle(available))
+    return dict(requested_size=getattr(window, '_smoke_requested_size', None),
+                actual_window_size=[window.width(), window.height()],
+                available_geometry=rectangle(available), screen_geometry=rectangle(full),
+                frame_geometry=rectangle(frame), visible_geometry=rectangle(visible),
+                within_available_geometry=inside,
+                dpr=window.devicePixelRatioF())
+
+
 def main(launcher: Path, argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -43,7 +68,7 @@ def main(launcher: Path, argv):
         desktop_app.QSettings = lambda *_args: settings
         desktop_app.JOBS = args.output / 'parsed-jobs'
         window = desktop_app.MainWindow()
-        window.resize(960, 680)
+        _resize_for_workarea(window, 960, 680)
 
         def begin():
             if window.property('startupHandoffPending'):
@@ -56,7 +81,7 @@ def main(launcher: Path, argv):
                 else:
                     _exercise(window, desktop_app, args)
                 if args.keep_open:
-                    window.resize(960, 680)
+                    _resize_for_workarea(window, 960, 680)
                     window.navigate(0)
                     window.show()
                     return
@@ -386,6 +411,7 @@ def _exercise(win, desktop_app, args):
                     assert pixels.save(str(composited))
         records.append({'case':name, 'size':[widget.width(), widget.height()],
                         'screenshot':str(path), 'composited':str(composited) if composited else None})
+        records[-1]['workarea'] = _window_workarea_evidence(widget)
         if name.startswith('map-'):
             canvas=win.map_page.canvas
             assert canvas.can_export(), 'map capture must use the current complete frame'
@@ -438,7 +464,7 @@ def _exercise(win, desktop_app, args):
     assert not page.analysis_mode_control._buttons['companies'].isEnabled()
     assert not page.network_mode_control._buttons['companies'].isEnabled()
     for width, height in ((960, 680), (1600, 900)):
-        win.resize(width, height)
+        _resize_for_workarea(win, width, height)
         for index, label in ((0, 'home'), (2, 'lines'), (3, 'stats')):
             win.navigate(index)
             settle()
@@ -469,7 +495,7 @@ def _exercise(win, desktop_app, args):
                  if route.mode != 'waterbus' and any(len(path) > 1 for path in route.paths))
     map_facts = {}
     for width, height in ((1440, 960), (960, 680)):
-        win.resize(width, height)
+        _resize_for_workarea(win, width, height)
         settle()
         for preset in ('single', 'network', 'planning'):
             map_page.set_preset(preset)
@@ -491,12 +517,12 @@ def _exercise(win, desktop_app, args):
                     map_page.dock.activate_panel(panel)
                     capture(f'map-network-{panel}-{width}x{height}')
                 map_page.dock.activate_panel('layers')
-    win.resize(1440,960)
+    _resize_for_workarea(win, 1440, 960)
     settle()
     map_native_inputs = _exercise_map_inputs(win,map_page,settle,wait_until,capture)
     assert not map_errors, map_errors
     map_current_export = _map_current_export(map_page,args.output/'map-current.png')
-    win.resize(960, 680)
+    _resize_for_workarea(win, 960, 680)
     win.navigate(3)
     page.tab_bar.setCurrentItem('network')
     page._tab_changed('network')
@@ -583,7 +609,7 @@ def _exercise(win, desktop_app, args):
     compact.set_category_palette(company._category_palette)
     compact.set_result(company.result, company.companies)
     compact.set_compact_height(190)
-    compact.resize(400, 190)
+    _resize_for_workarea(compact, 400, 190)
     compact.show()
     capture('compact-400x190', compact)
     compact.close()
@@ -592,7 +618,7 @@ def _exercise(win, desktop_app, args):
         if family != 'home':
             page.tab_bar.setCurrentItem(family)
             page._tab_changed(family)
-        win.resize(960, 680)
+        _resize_for_workarea(win, 960, 680)
         settle()
         if family == 'home':
             source = win.latest_info_page.trend
@@ -626,12 +652,12 @@ def _exercise(win, desktop_app, args):
         assert source._hidden_groups == hidden
     win.navigate(0)
     win.showNormal()
-    win.resize(960, 680)
+    _resize_for_workarea(win, 960, 680)
     settle()
     # A previous detail/activation can leave native geometry pending.
-    win.resize(960, 680)
+    _resize_for_workarea(win, 960, 680)
     settle()
-    assert (win.width(), win.height()) == (960, 680)
+    _window_workarea_evidence(win)
     home_structure = {}
     for name, panel in (('passengers', win.latest_info_page.passengers),
                         ('departures', win.latest_info_page.departures)):
@@ -677,12 +703,20 @@ def _exercise(win, desktop_app, args):
     # Compare both real model-backed cards at identical narrow/medium/wide
     # widths, rather than inferring the narrow case from a wide screenshot.
     from PySide6.QtWidgets import QWidget, QVBoxLayout
+    from stats_controls import StatisticsScrollArea
     from latest_info_charts import PassengerRanking, DepartureStructure
     home_structure_responsive = []
     snapshot = win.latest_info_controller.snapshot
     for width in (400, 520, 864):
-        host = QWidget(win, Qt.WindowType.Tool)
-        layout = QVBoxLayout(host)
+        host = QWidget(win, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        outer = QVBoxLayout(host)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = StatisticsScrollArea(host)
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
+        layout = QVBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         passengers, departures = PassengerRanking(), DepartureStructure()
@@ -691,11 +725,15 @@ def _exercise(win, desktop_app, args):
         for panel in (passengers, departures):
             panel.show_line_share()
             layout.addWidget(panel)
-        host.setFixedSize(width, passengers.height() + departures.height() + 12)
+        content_height = passengers.height() + departures.height() + 12
+        scrollbar_width = scroll.verticalScrollBar().sizeHint().width()
+        _resize_for_workarea(host, width + scrollbar_width, content_height)
         host.show()
         settle()
         geometries = []
-        for panel in (passengers, departures):
+        for name, panel in (('passengers', passengers), ('departures', departures)):
+            scroll.ensureWidgetVisible(panel)
+            settle()
             rows = panel.visible_share_rows()
             assert rows and all(row.number.isVisible() and row.share.isVisible() for row in rows)
             assert all(field.width() >= field.fontMetrics().horizontalAdvance(field.text())
@@ -708,7 +746,7 @@ def _exercise(win, desktop_app, args):
             ring_right = panel.share_ring.mapTo(panel.line_share, panel.share_ring.rect().bottomRight()).x()
             ring_gap = dot_left - ring_right - 1
             name_gap = rows[0].number.x() - rows[0].name.geometry().right() - 1
-            if width >= 520:
+            if panel.width() >= 520:
                 assert max(left, right, ring_gap, name_gap) - min(left, right, ring_gap, name_gap) <= 2
             else:
                 assert ring_gap >= 16 and name_gap >= 4
@@ -717,7 +755,8 @@ def _exercise(win, desktop_app, args):
             assert all(panel.rect().contains(row.mapTo(panel, row.rect().bottomRight())) for row in rows)
             geometries.append({'left':left, 'right':right, 'ring_gap':ring_gap, 'name_gap':name_gap,
                                'name_width':rows[0].name.width(), 'count_width':rows[0].number.width(),
-                               'share_width':rows[0].share.width()})
+                               'share_width':rows[0].share.width(), 'actual_card_width':panel.width()})
+            capture('home-line-share-' + name + '-workarea-' + str(width), host)
         assert geometries[0] == geometries[1]
         capture('home-line-share-responsive-' + str(width), host)
         home_structure_responsive.append({'width':width, 'passengers':geometries[0], 'departures':geometries[1]})
