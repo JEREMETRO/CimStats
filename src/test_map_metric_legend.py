@@ -7,7 +7,7 @@ from map_canvas import MapCanvas
 from semantic_colors import metric_legend
 
 
-@pytest.mark.parametrize('metric', ['interval', 'passengers'])
+@pytest.mark.parametrize('metric', ['interval', 'interval_peak', 'passengers'])
 @pytest.mark.parametrize('ratio', [1., 1.25, 2.])
 def test_complete_metric_legend_has_separate_scale_and_control_space(metric, ratio):
     app = QApplication.instance() or QApplication([])
