@@ -84,6 +84,58 @@ def test_map_icon_resolves_frozen_bundle(monkeypatch,tmp_path):
     monkeypatch.setattr(sys,'_MEIPASS',str(tmp_path),raising=False)
     assert MAP_ICON.path()==str(tmp_path/'frontend/static/cimstats/map.svg')
 
+def test_desktop_map_export_follows_current_frame_and_save(tmp_path, monkeypatch):
+    import desktop_app
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setattr(desktop_app,'QSettings',lambda *_:QSettings(str(tmp_path/'export.ini'),QSettings.Format.IniFormat))
+    monkeypatch.setattr(desktop_app.MainWindow,'check_install',lambda _:None)
+    window=desktop_app.MainWindow()
+    window.navigate(1)
+    page=window.map_page
+    page.set_session({'save_key':'A'})
+    route=MapRoute(1,'1',1,'a','公司','bus',(),(((0.,0.,0.),(100.,0.,0.)),))
+    page.set_snapshot(MapSnapshot(routes=(route,),source_hash='A'))
+    refresh=[]
+    original=window.header.set_exports
+    monkeypatch.setattr(window.header,'set_exports',lambda items:(refresh.append(items),original(items)))
+    dialogs=[]
+    monkeypatch.setattr(desktop_app.QFileDialog,'getSaveFileName',lambda *args:(dialogs.append(True) or ('','')))
+
+    def enabled():return next(item[3] for item in window._export_items() if item[0]=='map-png')
+
+    try:
+        assert not page.canvas.can_export()
+        assert not enabled()
+        window._export_action('map-png')
+        assert not dialogs
+        page.canvas.prepare_frame()
+        assert page.canvas.can_export() and enabled()
+        assert refresh and next(item[3] for item in refresh[-1] if item[0]=='map-png')
+        page.canvas.zoom_out()
+        assert not enabled()
+        assert not next(item[3] for item in refresh[-1] if item[0]=='map-png')
+        page.canvas._render_timer.stop()
+        page.canvas.prepare_frame()
+        output=tmp_path/'current.png'
+        monkeypatch.setattr(desktop_app.QFileDialog,'getSaveFileName',lambda *args:(str(output),''))
+        window._export_action('map-png')
+        assert output.is_file()
+
+        stale=tmp_path/'stale.png'
+        def change_save(*args):
+            page.set_session({'save_key':'B'})
+            page.set_snapshot(MapSnapshot(routes=(route,),source_hash='B'))
+            page.canvas.prepare_frame()
+            return str(stale),''
+        monkeypatch.setattr(desktop_app.QFileDialog,'getSaveFileName',change_save)
+        window._export_action('map-png')
+        assert not stale.exists()
+        page.set_session({'save_key':'C'})
+        assert not enabled()
+    finally:
+        window.close(); app.processEvents()
+
+
 def test_normal_map_open_shows_loading_until_worker_finishes(tmp_path, monkeypatch):
     import map_page
     from PySide6.QtCore import QObject, Signal

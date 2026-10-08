@@ -728,7 +728,8 @@ class MainWindow(FluentMainWindow):
                       ('latest-png', '首页图片 PNG', FluentIcon.PHOTO, ready),
                       ('latest-copy', '复制当前摘要', FluentIcon.COPY, ready), (None, '', None, False)]
         elif index == 1:
-            items += [('map-png', '地图图片 PNG', FluentIcon.PHOTO, self.map_page.result is not None), (None, '', None, False)]
+            ready = self.map_page.result is not None and self.map_page.canvas.can_export()
+            items += [('map-png', '地图图片 PNG', FluentIcon.PHOTO, ready), (None, '', None, False)]
         elif index == 3:
             items += [('stats-report', '统计报表（PNG + XLSX）', FluentIcon.DOCUMENT,
                        self.statistics_page.export_button.isEnabled()), (None, '', None, False)]
@@ -743,8 +744,12 @@ class MainWindow(FluentMainWindow):
     def _export_action(self, key):
         controller = self.latest_info_controller
         if key == 'map-png':
+            page = self.map_page
+            if page.result is None or not page.canvas.can_export():return
+            result, token = page.result, page.save_token
             path, _ = QFileDialog.getSaveFileName(self, '导出地图', '地图.png', 'PNG 图片 (*.png)')
-            if path and not self.map_page.export_image(path):
+            if page.result is not result or page.save_token != token or not page.canvas.can_export():return
+            if path and not page.export_image(path):
                 self._notify('导出失败', '无法写入地图图片', error=True)
         elif key == 'latest-xlsx':
             controller._export('xlsx')
@@ -819,6 +824,7 @@ class MainWindow(FluentMainWindow):
         self.map_page = MapPage(self.settings, self.pages, cache_dir=JOBS / 'map-cache')
         self.map_page.failed.connect(lambda message: self._notify('地图读取失败', message, error=True))
         self.map_page.ready.connect(self._refresh_exports)
+        self.map_page.canvas.export_availability_changed.connect(lambda _:self._refresh_exports())
         self.pages.addWidget(self.map_page)
 
     def build_overview(self):
