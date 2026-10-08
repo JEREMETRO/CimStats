@@ -6,6 +6,8 @@ from PySide6.QtCore import QSettings, QEventLoop, QTimer
 
 @pytest.fixture
 def map_page(qt_application, tmp_path):
+    from stats_style import initialize_theme
+    initialize_theme(qt_application)
     from map_page import MapPage
     from map_model import MapSnapshot, MapRoute, MapRoad, MapBuilding, BuildingServiceLines, RouteDirection
     from map_query import RouteStats
@@ -50,6 +52,10 @@ def test_smoke_passenger_real_return_slider_and_confirm(map_page):
 
 def test_smoke_map_real_interactions_and_stable_captures(map_page,tmp_path):
     from package_smoke import _exercise_map_inputs
+    from PySide6.QtGui import QColor
+    from qfluentwidgets import qconfig
+    from stats_tokens import ACCENT
+    assert qconfig.get(qconfig.themeColor).rgba()==QColor(ACCENT).rgba()
     captures=[]
     def capture(name,*_):
         assert map_page.canvas.can_export()
