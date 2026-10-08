@@ -38,6 +38,7 @@ from network_dashboard import NetworkDashboard
 from city_dashboard import CityDashboard
 from city_model import build_city_snapshot
 from ui_kit import elision_tooltip
+from stats_icons import colored_icon
 from filter_summary import CompactFilterSummary, summary_window
 import stats_motion as motion_policy
 from stats_tokens import (ACCENT, ACCENT_SOFT, BORDER, CARD_BG, DATA_COMPANY_COLORS,
@@ -327,8 +328,8 @@ class StatisticsPage(QWidget):
                                    ('network', '网络数据', FluentIcon.BUS),
                                    ('city', '城市数据', FluentIcon.GLOBE)):
             self.tab_bar.addItem(route, title,
-                                        icon=icon.icon(color=QColor(ACCENT if route == 'company'
-                                                                   else TEXT_SECONDARY)))
+                                        icon=colored_icon(icon, ACCENT if route == 'company'
+                                                          else TEXT_SECONDARY))
         configure_navigation_pivot(self.tab_bar,self._tab_icons)
         self.tab_bar.currentItemChanged.connect(self._tab_changed)
         self.tab_bar.setCurrentItem('company')
@@ -542,7 +543,7 @@ class StatisticsPage(QWidget):
         badge_layout = QHBoxLayout(badge)
         badge_layout.setContentsMargins(6, 6, 6, 6)
         glyph = IconWidget(badge)
-        glyph.setIcon(icon.icon(color=QColor(CARD_BG)))
+        glyph.setIcon(colored_icon(icon, CARD_BG))
         glyph.setFixedSize(16, 16)
         badge_layout.addWidget(glyph)
         header.addWidget(badge)

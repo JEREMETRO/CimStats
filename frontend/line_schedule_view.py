@@ -24,6 +24,7 @@ from qfluentwidgets import (ComboBox, FluentIcon, IconWidget, TogglePushButton,
 from line_schedule import PERIOD_LABELS, prepare_schedule, timetable_entry_inactive
 import stats_tokens as tokens
 from stats_typography import ui_font
+from stats_icons import colored_icon
 from stats_typography import emphasis_css, apply_emphasis_font
 from stats_controls import FluentSegmentedControl, StatisticsScrollArea
 from stats_elevation import attach_card_elevation
@@ -346,7 +347,7 @@ class SchedulePanel(QFrame):
         self._heading_layout = heading
         heading.setSpacing(8)
         self.title_icon = IconWidget(self)
-        self.title_icon.setIcon(FluentIcon.CALENDAR.icon(color=QColor(tokens.ACCENT)))
+        self.title_icon.setIcon(colored_icon(FluentIcon.CALENDAR, tokens.ACCENT))
         self.title_icon.setFixedSize(18, 18)
         heading.addWidget(self.title_icon, 0, Qt.AlignmentFlag.AlignVCenter)
         self.title_label = QLabel('发班时刻表', self)
@@ -519,7 +520,7 @@ class SchedulePanel(QFrame):
     def _update_expansion_button(self):
         text = '显示线路数据' if self.expanded else '展开时刻表'
         icon = FluentIcon.CHEVRON_DOWN_MED if self.expanded else FluentIcon.FULL_SCREEN
-        self.expansion_button.setIcon(icon.icon(color=QColor(tokens.TEXT_SECONDARY)))
+        self.expansion_button.setIcon(colored_icon(icon, tokens.TEXT_SECONDARY))
         self.expansion_button.setToolTip(text)
         self.expansion_button.setAccessibleName(text)
 

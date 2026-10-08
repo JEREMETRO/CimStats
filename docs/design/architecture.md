@@ -21,6 +21,7 @@ CimStats 是 Python 3.12、PySide6 与 PySide6-Fluent-Widgets 桌面应用。保
 ## 共享界面与布局
 
 - [app_shell.py](../../frontend/app_shell.py)统一导航、页面标题、文件区和子选项卡；[ui_kit.py](../../frontend/ui_kit.py)、[stats_controls.py](../../frontend/stats_controls.py)统一控件。
+- [stats_icons.py](../../frontend/stats_icons.py)统一带颜色的 Fluent SVG 图标，保持原始几何与颜色，由 Qt 原生 SVG 图标引擎按设备像素比绘制。按内容缓存的 SVG 临时文件保留到应用退出，避免惰性加载时丢失资源，也避免 Python 图标引擎在循环引用回收时发生所有权释放冲突。
 - [stats_tokens.py](../../frontend/stats_tokens.py)和[stats_typography.py](../../frontend/stats_typography.py)是颜色、尺寸及字体入口，不复制局部主题。
 - [startup_surface.py](../../frontend/startup_surface.py)提供主窗口初始 Logo 遮罩与欢迎层共用的窗口预算、背景及标志坐标，不导入 Fluent 或业务模块。[startup_welcome.py](../../frontend/startup_welcome.py)在中央窗口覆盖导航和页面顶栏，负责首次打开入口与标志上移动效；`app_shell.py` 的正常页面顶栏保持独立。
 - [startup_bootstrap.py](../../frontend/startup_bootstrap.py)先创建轻量主窗口，在[首帧门控](../../frontend/startup_readiness.py)确认 Logo 遮罩完成绘制后才调用 `initialize_content_async()`。后台准备依赖与类定义，主题和全部控件仍在主线程按事件回合构建；Logo 遮罩保持覆盖至所有页面就绪，再在欢迎层首帧绘制后启动过渡。构建期间仅窗口系统按钮可操作，业务输入和拖放在就绪后启用。同一原生窗口从 Logo 持续到欢迎与业务页面；正常启动不运行独立 helper。不透明子表面可能使 Qt 省略外层窗口绘制事件，门控必须覆盖这一分支。[启动传输](../../frontend/startup_transport.py)仅保留兼容诊断入口的鉴权与回收。解析与图表准备覆盖欢迎层，成功准备后显示页面，失败或取消返回欢迎层；取消后已经排队的完成结果不得重新载入。

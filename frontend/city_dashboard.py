@@ -1,6 +1,7 @@
 """Five city KPI positions and six charts sharing one immutable query snapshot."""
 from __future__ import annotations
 from stats_typography import emphasis_css, apply_emphasis_font
+from stats_icons import colored_icon
 from decimal import Decimal
 from hashlib import sha256
 from PySide6.QtCore import Qt, QSize, QEvent
@@ -46,7 +47,7 @@ class CityTile(QFrame):
         box.setContentsMargins(10, 8, 10, 8)
         box.setSpacing(4)
         heading = QHBoxLayout()
-        image = IconWidget(icon.icon(color=QColor(tokens.CHART_BLUE)), self)
+        image = IconWidget(colored_icon(icon, tokens.CHART_BLUE), self)
         image.setFixedSize(18, 18)
         heading.addWidget(image)
         self.title = QLabel(title)

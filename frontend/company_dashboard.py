@@ -1,6 +1,7 @@
 """Company KPI groups and four-slot charts for the three analysis modes."""
 from __future__ import annotations
 from stats_typography import emphasis_css, apply_emphasis_font
+from stats_icons import colored_icon
 
 from PySide6.QtCore import Qt, Signal, QEvent, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontMetricsF
@@ -62,7 +63,7 @@ class KpiCard(QFrame):
         self.header_layout.setContentsMargins(0, 0, 0, 0)
         self.header_layout.setSpacing(6)
         self.icon = IconWidget(self)
-        self.icon.setIcon(self._ICONS.get(metric_key, FluentIcon.PIE_SINGLE).icon(color=QColor(color)))
+        self.icon.setIcon(colored_icon(self._ICONS.get(metric_key, FluentIcon.PIE_SINGLE), color))
         self.icon.setFixedSize(18, 18)
         self.title = QLabel(title, self)
         self.title.setStyleSheet(f'color: {TEXT_SECONDARY}; font-family: "{FONT_FAMILY}"; font-size: {FONT_SIZE_CAPTION}px;')

@@ -23,6 +23,7 @@ from statistics_model import parse_time
 from stats_charts import ChartPanel
 from stats_controls import ElidingComboBox, StatisticsScrollArea
 from stats_typography import numeric_font
+from stats_icons import colored_icon
 from stats_elevation import attach_card_elevation
 from stats_motion import SurfaceMotion
 import stats_tokens as tokens
@@ -473,7 +474,7 @@ class LatestInfoPage(QWidget):
             module_header = QHBoxLayout()
             module_header.setSpacing(tokens.SPACE_SM)
             icon = IconWidget(module)
-            icon.setIcon(MODULE_ICONS[group].icon(color=QColor(tokens.ACCENT)))
+            icon.setIcon(colored_icon(MODULE_ICONS[group], tokens.ACCENT))
             icon.setFixedSize(16, 16)
             module_header.addWidget(icon)
             heading = label(title, size=14, bold=True, parent=module)
@@ -573,7 +574,7 @@ class LatestInfoPage(QWidget):
         icon_box = QHBoxLayout(icon_base)
         icon_box.setContentsMargins(9, 9, 9, 9)
         icon = IconWidget(icon_base)
-        icon.setIcon(FluentIcon.HOME.icon(color=QColor(tokens.ACCENT)))
+        icon.setIcon(colored_icon(FluentIcon.HOME, tokens.ACCENT))
         icon.setFixedSize(22, 22)
         icon_box.addWidget(icon)
         row.addWidget(icon_base)

@@ -1,6 +1,7 @@
 """Network statistics content built from one audited NetworkSnapshot."""
 from __future__ import annotations
 from stats_typography import emphasis_css, apply_emphasis_font
+from stats_icons import colored_icon
 
 from dataclasses import replace
 from decimal import Decimal
@@ -78,7 +79,7 @@ class NetworkValueTile(QFrame):
         heading.setContentsMargins(0, 0, 0, 0)
         heading.setSpacing(4 if dense else 6)
         icon = IconWidget(self)
-        icon.setIcon(ICONS[position].icon(color=QColor(color)))
+        icon.setIcon(colored_icon(ICONS[position], color))
         icon.setFixedSize(18, 18)
         heading.addWidget(icon)
         self.option_control = None

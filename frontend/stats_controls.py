@@ -11,6 +11,7 @@ from qfluentwidgets import PushButton, PrimaryPushButton
 
 import stats_tokens as tokens
 from stats_typography import ui_font
+from stats_icons import colored_icon
 import stats_motion as motion_policy
 
 _FONT_ID = -1
@@ -27,8 +28,8 @@ class _NavigationPivotStyle(QObject):
 
     def update_icons(self,route):
         for key,icon in self.icons.items():
-            self.pivot.items[key].setIcon(icon.icon(
-                color=QColor(tokens.ACCENT if key==route else tokens.TEXT_SECONDARY)))
+            self.pivot.items[key].setIcon(colored_icon(
+                icon, tokens.ACCENT if key==route else tokens.TEXT_SECONDARY))
 
     def eventFilter(self,watched,event):
         if (event.type()==QEvent.Type.DynamicPropertyChange

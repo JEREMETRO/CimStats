@@ -9,6 +9,7 @@ from qfluentwidgets import Action, FluentIcon, IconWidget, PrimaryPushButton, Pu
 import stats_tokens as tokens
 from stats_typography import apply_emphasis_font, emphasis_css
 from ui_kit import elision_tooltip
+from stats_icons import colored_icon
 
 HEADER_HEIGHT = 64
 PAGE_GUTTER = 24
@@ -61,7 +62,7 @@ class SaveChip(QFrame):
         row.setContentsMargins(10, 4, 12, 4)
         row.setSpacing(8)
         self.icon = IconWidget(self)
-        self.icon.setIcon(FluentIcon.DOCUMENT.icon(color=QColor(tokens.ACCENT)))
+        self.icon.setIcon(colored_icon(FluentIcon.DOCUMENT, tokens.ACCENT))
         self.icon.setFixedSize(16, 16)
         row.addWidget(self.icon)
         column = QVBoxLayout()
@@ -144,7 +145,7 @@ class AppHeader(QWidget):
 
     def set_page(self, title: str, icon: FluentIcon, widget: QWidget | None = None):
         self.title.setText(title)
-        self.icon.setIcon(icon.icon(color=QColor(tokens.ACCENT)))
+        self.icon.setIcon(colored_icon(icon, tokens.ACCENT))
         if self._page_widget is not None and self._page_widget is not widget:
             self.page_slot.removeWidget(self._page_widget)
             self._page_widget.hide()
@@ -259,7 +260,7 @@ class EmptyState(QWidget):
         badge_row = QHBoxLayout(badge)
         badge_row.setContentsMargins(20, 20, 20, 20)
         icon = IconWidget(badge)
-        icon.setIcon(FluentIcon.FOLDER_ADD.icon(color=QColor(tokens.ACCENT)))
+        icon.setIcon(colored_icon(FluentIcon.FOLDER_ADD, tokens.ACCENT))
         badge_row.addWidget(icon)
         column.addWidget(badge, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addSpacing(6)

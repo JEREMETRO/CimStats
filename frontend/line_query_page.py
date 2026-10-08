@@ -14,6 +14,7 @@ from stats_controls import StatisticsScrollArea, configure_fluent_table, Summary
 from stats_elevation import attach_card_elevation
 import stats_tokens as tokens
 from stats_typography import emphasis_font, emphasis_css, apply_emphasis_font
+from stats_icons import colored_icon
 
 HEADERS = ['公司', '制式', '线路名称', '地图 km', '折算 km', '单程时间 min',
            '核定速度 km/h', '今日客流', '发班', '最大需求', '每周收入', '每周支出',
@@ -323,7 +324,7 @@ class CompactFactCard(QFrame):
         self.header_host.setFixedHeight(18)
         header_row = QHBoxLayout(self.header_host); header_row.setContentsMargins(0,0,0,0); header_row.setSpacing(6)
         self.icon = IconWidget(self.header_host); self.icon.setFixedSize(18,18)
-        self.icon.setIcon(self.ICONS.get(primary[0],FluentIcon.PIE_SINGLE).icon(color=QColor(tokens.DATA_COMPANY_COLORS[0])))
+        self.icon.setIcon(colored_icon(self.ICONS.get(primary[0],FluentIcon.PIE_SINGLE), tokens.DATA_COMPANY_COLORS[0]))
         self.label = FullTextLabel(str(primary[0]), self.header_host)
         header_row.addWidget(self.icon); header_row.addWidget(self.label,1)
         self.label.setStyleSheet(f'color:{tokens.TEXT_SECONDARY};font-family:"{tokens.FONT_FAMILY}";font-size:{tokens.FONT_SIZE_CAPTION}px;')
