@@ -198,7 +198,7 @@ def test_metric_choices_are_exclusive_and_survive_option_refresh():
     from map_panels import MapPanelSet
     app=QApplication.instance() or QApplication([])
     panel=MapPanelSet();query=MapQuery(MapSnapshot(routes=(route(1),)),
-        {1:RouteStats(passengers=3000,average_interval_minutes=12.5)})
+        {1:RouteStats(passengers=3000,average_interval_minutes=12.5,daytime_interval_minutes=12.5)})
     panel.set_options(query.panel_options());spy=QSignalSpy(panel.stateChanged)
     for mode in ('interval','passengers'):
         panel.controls['color_by'].buttons[mode].click()

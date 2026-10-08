@@ -22,7 +22,7 @@ from map_canvas import ROAD_STYLES
 _SET_KEYS = ('road_levels', 'building_classes', 'building_uses', 'layer_modes', 'modes', 'company_ids', 'manual_line_ids', 'profit_statuses')
 _DEFAULTS = dict(roads=True, buildings=True, routes=True, **{k:None for k in _SET_KEYS},
     passenger_min=None, passenger_max=None, building_color_by='class', building_class_target=None,
-    building_metric='density', direction='whole', color_by='mode', priority_by='mode',
+    building_metric='density', direction='whole', color_by='mode', interval_mode='daytime', priority_by='mode',
     passenger_desc=True, mode_order=[], company_order=[], deadhead=False, stops=True,
     stop_names=False, line_numbers=False, mode_widths={}, distinguish_directions=False, building_emphasis=None,
     service_time_mode='off', service_start=None, service_end=None)
@@ -589,7 +589,17 @@ class MapPanelSet(QWidget):
         direction=self._section(layout)
         self._choices(direction,'direction','线路显示', [('whole','整条线路显示'),('up','仅显示环行与上行线'),('down','仅显示环行与下行线')])
         self._check(direction,'distinguish_directions','区分上下行线形')
-        self._choices(self._section(layout),'color_by','线路染色',[('mode','按制式染同色'),('profit','按盈亏染同色'),('company','按公司染同色'),('line','每条线路都不同颜色'),('interval','按平均间隔染色'),('passengers','按客流染色')],1)
+        colors=self._section(layout)
+        self._choices(colors,'color_by','线路染色',[('mode','按制式染同色'),('profit','按盈亏染同色'),('company','按公司染同色'),('line','每条线路都不同颜色'),('interval','按平均间隔染色'),('passengers','按客流染色')],1)
+        interval=QWidget(); interval_layout=QVBoxLayout(interval)
+        interval_layout.setContentsMargins(26,0,0,0);interval_layout.setSpacing(0)
+        self._combo(interval_layout,'interval_mode','',[('daytime','日间平均间隔'),('peak','高峰平均间隔'),('all_day','全日平均间隔')])
+        self.control_labels['interval_mode'].hide()
+        grid=self.controls['color_by'].layout()
+        grid.addWidget(self.controls['color_by'].buttons['passengers'],6,0)
+        grid.addWidget(interval,5,0)
+        interval.setVisible(False)
+        self.controls['color_by'].buttons['interval'].toggled.connect(interval.setVisible)
         width=self._section(layout); self.width_section=width.parentWidget()
         row=QHBoxLayout(); self._label(row,'线路粗细',True)
         self.reset_widths=_style_control(TransparentPushButton('默认')); self.reset_widths.setFixedWidth(54)

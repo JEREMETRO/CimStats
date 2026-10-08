@@ -13,7 +13,7 @@ from report_model import display_company
 from map_line_labels import resolve_line_labels
 from semantic_colors import (SOCIAL, category, canonical_key, color_for,
                              company_palette, line_palette, map_fill, building_function_fill,
-                             METRIC_SCALES,metric_color,metric_legend)
+                             metric_color,metric_legend)
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,8 @@ class RouteStats:
     opened_at: str | None = None
     simulated_date: str | None = None
     passenger_source: str | None = None
+    daytime_interval_minutes: float | None = None
+    peak_interval_minutes: float | None = None
 
     @property
     def profit_status(self):
@@ -77,7 +79,8 @@ def stats_from_session(session, routes):
             except (TypeError,ValueError):pass
         result[route.id]=RouteStats(_passenger_value(line,source),
             by_id.get(route.id),schedule['average_interval'] if schedule is not None else None,
-            schedule['count'] if schedule is not None else None,opened,day.isoformat() if day else None,source)
+            schedule['count'] if schedule is not None else None,opened,day.isoformat() if day else None,source,
+            _daytime_interval(schedule),_weekday_peak_interval(line,day))
     return result
 
 
@@ -108,10 +111,10 @@ def _passenger_value(line,source):
     return average if average is not None and average>=0 else None
 
 
-def _schedule_for_day(line,day):
-    """Confirm one natural simulated day before using prepare_schedule's minutes."""
+def _day_entries(line,day):
+    """Native rows belonging to one confirmed natural calendar day."""
     from map_service_time import session_departures,DAY_TICKS
-    from line_schedule import optional_integer,running_day_mask,prepare_schedule
+    from line_schedule import optional_integer,running_day_mask
     if line is None or day is None or line.get('班次数据完整') is False:return None
     entries=session_departures(line)
     if entries is None:return None
@@ -123,9 +126,70 @@ def _schedule_for_day(line,day):
         if mask is None or tick is None or tick<0 or tick>=2*DAY_TICKS:return None
         anchor=day-timedelta(days=tick//DAY_TICKS)
         if mask & (1<<((anchor.weekday()+1)%7)):
+            if not row.get('running_day_valid',True):return None
             selected.append(dict(row,发班_tick=tick%DAY_TICKS))
+    return selected
+
+
+def _schedule_for_day(line,day):
+    """Confirm native calendar rows before the shared schedule calculation."""
+    from line_schedule import prepare_schedule
+    selected=_day_entries(line,day)
+    if selected is None:return None
     prepared=prepare_schedule(selected)
     return prepared if prepared['data_complete'] else None
+
+
+def _period_windows(periods):
+    from line_schedule import PERIOD_RULES,_ranges
+    windows=sorted((low,high) for period in periods for low,high,_ in _ranges(PERIOD_RULES,period))
+    merged=[]
+    for low,high in windows:
+        if merged and low<=merged[-1][1]:merged[-1]=(merged[-1][0],max(high,merged[-1][1]))
+        else:merged.append((low,high))
+    return merged
+
+
+def _period_gaps(entries,windows):
+    """Reuse shared half-open windows and stop-gap rules on native tick pairs."""
+    from line_schedule import DAY_TICKS,STOP_GAP_TICKS,_pair_in_range
+    ticks=sorted(row['发班_tick'] for row in entries)
+    if len(ticks)<2:return []
+    gaps=[]
+    for index,start in enumerate(ticks):
+        end=ticks[(index+1)%len(ticks)]+(DAY_TICKS if index==len(ticks)-1 else 0)
+        gap=end-start
+        if gap<STOP_GAP_TICKS and any(_pair_in_range(start,gap,low,high) for low,high in windows):
+            gaps.append(gap)
+    return gaps
+
+
+def _gap_mean(gaps):
+    from line_schedule import TICKS_PER_SECOND
+    return sum(gaps)/len(gaps)/TICKS_PER_SECOND/60 if gaps else None
+
+
+def _daytime_interval(schedule):
+    if schedule is None:return None
+    if not schedule['all_day']:return schedule['average_interval']
+    return _gap_mean(_period_gaps(schedule['entries'],_period_windows(('peak','offpeak'))))
+
+
+def _weekday_peak_interval(line,day):
+    if line is None or day is None:return None
+    monday=day-timedelta(days=day.weekday());windows=_period_windows(('peak',));gaps=[]
+    for offset in range(5):
+        entries=_day_entries(line,monday+timedelta(days=offset))
+        if entries is None:return None
+        gaps.extend(_period_gaps(entries,windows))
+    return _gap_mean(gaps)
+
+
+def _interval_metric(state,data):
+    mode=state.get('interval_mode','daytime')
+    if mode=='peak':return 'interval_peak',data.peak_interval_minutes
+    if mode=='all_day':return 'interval',data.average_interval_minutes
+    return 'interval',data.daytime_interval_minutes
 
 
 def _selected(state, key, value):
@@ -257,9 +321,10 @@ class MapQuery:
 
     def route_color(self, route, state):
         mode = state.get('color_by', 'mode')
-        if mode in METRIC_SCALES:
+        if mode in ('interval','passengers'):
             data=self.stats.get(route.id,RouteStats())
-            return metric_color(mode,data.average_interval_minutes if mode=='interval' else data.passengers)
+            metric,value=_interval_metric(state,data) if mode=='interval' else ('passengers',data.passengers)
+            return metric_color(metric,value)
         if mode == 'company':
             return self.company_colors[route.company_id]
         if mode == 'profit':
@@ -353,8 +418,9 @@ class MapQuery:
         if state.get('color_by') == 'line':
             return ()
         mode = state.get('color_by','mode')
-        if mode in METRIC_SCALES:
-            return metric_legend(mode,self._simulated_date,
+        if mode in ('interval','passengers'):
+            metric=_interval_metric(state,RouteStats())[0] if mode=='interval' else mode
+            return metric_legend(metric,self._simulated_date,
                                  self._passenger_source if mode=='passengers' else None)
         if mode == 'profit':
             from semantic_colors import PROFIT
