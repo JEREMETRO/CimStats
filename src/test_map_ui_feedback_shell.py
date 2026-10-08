@@ -320,7 +320,8 @@ def test_single_view_receives_shared_information_values(app,tmp_path):
     try:
         page.set_session(session);page.set_snapshot(MapSnapshot(routes=(route,)));page.show_route(42,page.save_token)
         info=line_information(session,42)
-        assert page.single_panel.route_title.text()==info['identity']['name']
+        label=next(row['display_label'] for row in page._presentation_catalog() if row['id']==42)
+        assert page.single_panel.route_title.text()==label
         assert page.single_panel.route_identity.text()==info['identity']['company_name']
         assert set(page.single_panel._data_layouts)=={'line_information','passenger_data'}
         for _,_,rows in info['sections']:
