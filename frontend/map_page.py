@@ -479,7 +479,6 @@ class MapPage(QWidget):
                 self._panel_catalogs['planning']=routes
             if self.query is not None and self._planning_options is not self._panel_options:
                 self.planning_panel.set_options(self._panel_options)
-                self.presets.update('planning',query={'building_classes':self.planning_panel.state()['building_classes']})
                 self._planning_options=self._panel_options
 
     def _current_state(self):

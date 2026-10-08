@@ -360,7 +360,7 @@ def test_planning_default_checks_match_displayed_buildings(settings, app):
         assert page.planning_panel.state()['building_classes'] == expected
         page.planning_panel.selectionChanged.emit({10})
         assert page.planning_panel.state()['building_classes'] == expected
-        assert page._current_state()['building_classes'] == expected
+        assert page._current_state()['building_classes'] is None
     finally: page.close()
 
 
