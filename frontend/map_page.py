@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 from copy import deepcopy
 from dataclasses import dataclass
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QTimer
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QTimer, QRectF
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
 from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar, Pivot
 import stats_tokens as tokens
@@ -78,9 +79,22 @@ class _MapStatsWorker(QThread):
             if not self.isInterruptionRequested():self.failed.emit(self.generation,self.token,str(error))
 
 
+class _MapLegendFooter(QWidget):
+    """Reserve a separate strip and reuse the canvas's legend renderer."""
+    def __init__(self,canvas,parent):
+        super().__init__(parent);self.canvas=canvas
+        self.setAccessibleName('地图图例')
+
+    def paintEvent(self,event):
+        painter=QPainter(self)
+        try:self.canvas.paint_legend_strip(painter,QRectF(self.rect()))
+        finally:painter.end()
+
+
 class _MapSurface(QWidget):
     def __init__(self, canvas, parent=None, search=None, focus=None, defer_search=None):
         super().__init__(parent)
+        self._layout_ready=False
         self.canvas = canvas
         self._search_provider = search or canvas.search
         self._focus_provider = focus or canvas.focus_result
@@ -133,16 +147,38 @@ class _MapSurface(QWidget):
             button.clicked.connect(callback)
             column.addWidget(button)
         self.controls.setStyleSheet(f'background:{tokens.CARD_BG};border-radius:6px;')
+        self.legend_strip=_MapLegendFooter(canvas,self)
+        canvas.legend_changed.connect(self._legend_changed)
+        self._layout_ready=True
+        canvas.set_options(legend_external=True)
+        self.relayout()
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        self.canvas.setGeometry(self.rect())
-        self.loading.setGeometry(0,0,self.width(),4)
+        self.relayout()
+
+    def event(self,event):
+        result=super().event(event)
+        if (event.type() in (QEvent.Type.DevicePixelRatioChange,QEvent.Type.FontChange,QEvent.Type.StyleChange)
+                and getattr(self,'_layout_ready',False)):
+            self.relayout()
+        return result
+
+    def _legend_changed(self):
+        self.relayout();self.legend_strip.update()
+
+    def relayout(self):
+        strip_height=self.canvas.legend_strip_height(self.width())
+        plot_height=max(0,self.height()-strip_height)
+        self.canvas.setGeometry(0,0,self.width(),plot_height)
+        self.legend_strip.setGeometry(0,plot_height,self.width(),strip_height)
+        self.legend_strip.setVisible(strip_height>0)
+        self.loading.setGeometry(0,0,self.width(),min(4,plot_height))
         self.loading.raise_()
         self.search.setGeometry(14,14,min(320,max(150,self.width()-75)),36)
         self.search_button.setGeometry(14,14,36,36)
-        self.results.setGeometry(14,54,self.search.width(),min(250,max(60,self.height()-130)))
-        self.controls.setGeometry(max(0,self.width()-48),max(54,self.height()-130),34,106)
+        self.results.setGeometry(14,54,self.search.width(),min(250,max(0,plot_height-130)))
+        self.controls.setGeometry(max(0,self.width()-48),max(0,plot_height-130),34,min(106,plot_height))
 
     def set_compact_search(self, active):
         active=bool(active)
@@ -594,6 +630,7 @@ class MapPage(QWidget):
         self._awaiting_frame=False
         self._panel_presentation=None
         self.canvas.set_snapshot(MapSnapshot())
+        self.canvas.set_options(legend_items=())
         self.surface.set_loading(False)
         self.status.clear()
         self.presets.load(self.save_token[0])
@@ -647,6 +684,7 @@ class MapPage(QWidget):
         self._awaiting_frame=False
         self._panel_presentation=None
         self.canvas.set_snapshot(MapSnapshot())
+        self.canvas.set_options(legend_items=())
         self._sync_preset_panels()
         self.surface.set_loading(False)
         self.status.clear()
@@ -734,7 +772,7 @@ class MapPage(QWidget):
             self.dock._pending_layout=None
             self.dock._apply_layout(saved)
             self.dock.layout().setGeometry(self.dock.rect())
-        self.canvas.setGeometry(self.surface.rect())
+        self.surface.relayout()
 
     def _failed(self,generation,message):
         if generation==self._generation:

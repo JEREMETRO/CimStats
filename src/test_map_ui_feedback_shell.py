@@ -6,12 +6,13 @@ from PySide6.QtCore import Qt,QPoint,QRect,QSettings
 from PySide6.QtGui import QColor,QPainter
 from PySide6.QtWidgets import QApplication,QWidget,QVBoxLayout,QLabel
 from PySide6.QtTest import QTest
+from map_canvas import MapCanvas
 
 @pytest.fixture(scope='module')
 def app():
     return QApplication.instance() or QApplication([])
 
-class ColorCanvas(QWidget):
+class ColorCanvas(MapCanvas):
     def __init__(self,color):super().__init__();self.color=color
     def paintEvent(self,event):
         painter=QPainter(self);painter.fillRect(self.rect(),QColor(self.color));painter.end()

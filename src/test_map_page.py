@@ -90,8 +90,11 @@ def test_desktop_map_export_follows_current_frame_and_save(tmp_path, monkeypatch
     monkeypatch.setattr(desktop_app,'QSettings',lambda *_:QSettings(str(tmp_path/'export.ini'),QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow,'check_install',lambda _:None)
     window=desktop_app.MainWindow()
+    window.resize(960,680);window.show();app.processEvents()
     window.navigate(1)
+    app.processEvents()
     page=window.map_page
+    assert page.canvas.width()>0 and page.canvas.height()>0
     page.set_session({'save_key':'A'})
     route=MapRoute(1,'1',1,'a','公司','bus',(),(((0.,0.,0.),(100.,0.,0.)),))
     page.set_snapshot(MapSnapshot(routes=(route,),source_hash='A'))
