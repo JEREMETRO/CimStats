@@ -19,7 +19,7 @@ def test_all_route_lists_are_one_line_with_mode_color_and_stable_selection(qt_ap
         'lines':[{'id':12,'name':'12 中央线','mode':'bus','passengers':1234,'color':'#0067C0'}]})
     assert p.line_list.item(0).text()=='公交12 中央线'
     assert not p.line_list.item(0).icon().isNull()
-    p.manual_none.click();assert p.state()['manual_line_ids']==set()
+    p.manual_none.click();p.filter_apply_buttons['manual_line_ids'].click();assert p.state()['manual_line_ids']==set()
     single=SingleLinePanel();single.set_routes(catalog())
     assert single.route_list.item(0).text()=='公交12 中央线'
     assert not single.route_list.item(0).icon().isNull()
@@ -182,11 +182,13 @@ def test_time_inputs_and_keyboard_handles_preserve_cross_midnight_endpoint_roles
     p=MapPanelSet();p.set_options({'simulated_datetime':'2030-01-02T23:30:00'})
     p.controls['service_time_mode'].buttons['range'].click()
     editor=p.service_editor;editor.end_edit.setText('01:00')
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_start']=='2030-01-02T23:30:00'
     assert p.state()['service_end']=='2030-01-03T01:00:00'
     assert editor.time_axis.values()==(1410,60)
     spy=QSignalSpy(p.stateChanged)
     QTest.keyClick(editor.time_axis.handles[0],Qt.Key.Key_Right)
+    p.filter_apply_buttons['service'].click()
     assert editor.start_edit.text()=='23:31' and p.state()['service_start']=='2030-01-02T23:31:00'
     assert p.state()['service_end']=='2030-01-03T01:00:00' and spy.count()==1
 
@@ -198,6 +200,7 @@ def test_weekday_handles_select_simulated_week_and_sunday_wraps_to_next_monday(q
     editor.end_edit.setText('01:00')
     QTest.keyClick(editor.week_axis.handles[0],Qt.Key.Key_End)
     QTest.keyClick(editor.week_axis.handles[1],Qt.Key.Key_Home)
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_start']=='2030-01-06T23:30:00'
     assert p.state()['service_end']=='2030-01-07T01:00:00'
 
@@ -207,6 +210,7 @@ def test_mouse_drag_keeps_start_end_roles_and_syncs_text(qt_application):
     from map_docking import MapDockHost
     p=MapPanelSet();p.set_options({'simulated_datetime':'2030-01-02T23:30:00'})
     p.controls['service_time_mode'].buttons['range'].click();p.service_editor.end_edit.setText('01:00')
+    p.filter_sections['service'].set_expanded(True)
     host=MapDockHost(QWidget(),p.panels);host.resize(960,800);host.show();host.activate_panel('filters');qt_application.processEvents()
     axis=p.service_editor.time_axis;old_end=p.state()['service_end']
     QTest.mousePress(axis,Qt.MouseButton.LeftButton,pos=QPoint(round(axis._x(1410)),24))
@@ -222,13 +226,15 @@ def test_24_hour_endpoint_carries_date_once_and_remains_editable(qt_application)
     from map_panels import MapPanelSet
     p=MapPanelSet();p.set_options({'simulated_datetime':'2030-01-02T12:00:00'})
     p.controls['service_time_mode'].buttons['range'].click();p.service_editor.end_edit.setText('24:00')
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_end']=='2030-01-03T00:00:00'
     assert p.service_editor.end_edit.text()=='00:00'
     p.service_editor.end_edit.setText('01:00')
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_end']=='2030-01-03T01:00:00'
 
 
-def test_network_core_filters_fit_top_of_formal_1440_height_without_smaller_fonts(qt_application):
+def test_network_collapsed_filter_headers_and_result_list_fit_formal_1440_height_without_smaller_fonts(qt_application):
     from map_panels import MapPanelSet
     from map_docking import MapDockHost
     p=MapPanelSet();p.set_options({'company_ids':[{'id':'a','name':'八连交通集团'}],
@@ -236,6 +242,7 @@ def test_network_core_filters_fit_top_of_formal_1440_height_without_smaller_font
         'lines':[{'id':i,'name':str(i),'mode':'bus','company_id':'a','passengers':1,'profit':1,'service_matches':True} for i in range(13)],
         'simulated_datetime':'2013-05-23T23:59:00'})
     p.set_state({'service_time_mode':'range','service_start':'2013-05-23T23:30:00','service_end':'2013-05-24T01:00:00'})
+    p.filter_sections['service'].set_expanded(False)
     host=MapDockHost(QWidget(),p.panels);host.resize(1344,774);host.show();host.activate_panel('filters');qt_application.processEvents()
     panel=p.panels['filters'];panel.verticalScrollBar().setValue(0)
     assert panel.widget().minimumSizeHint().height()<=panel.viewport().height()
@@ -248,6 +255,7 @@ def test_editing_restored_time_does_not_replace_dates_with_current_week(qt_appli
     p=MapPanelSet();p.set_options({'simulated_datetime':'2030-01-02T12:00:00'})
     p.set_state({'service_time_mode':'range','service_start':'2031-02-03T08:00:00','service_end':'2031-02-04T09:00:00'})
     p.service_editor.start_edit.setText('08:30')
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_start']=='2031-02-03T08:30:00'
     assert p.state()['service_end']=='2031-02-04T09:00:00'
     before=p.state();spy=QSignalSpy(p.stateChanged);p.service_editor.end_edit.setText('25:99')
@@ -259,6 +267,7 @@ def test_cross_midnight_axis_paints_two_short_ends_and_keeps_instant_end_disable
     from map_docking import MapDockHost
     p=MapPanelSet();p.set_options({'simulated_datetime':'2030-01-02T23:30:00'})
     p.controls['service_time_mode'].buttons['range'].click();editor=p.service_editor;editor.end_edit.setText('01:00')
+    p.filter_sections['service'].set_expanded(True)
     host=MapDockHost(QWidget(),p.panels);host.resize(960,800);host.show();host.activate_panel('filters');qt_application.processEvents()
     image=editor.time_axis.grab().toImage()
     ratio=image.devicePixelRatio()
@@ -274,9 +283,10 @@ def test_cross_midnight_axis_paints_two_short_ends_and_keeps_instant_end_disable
 def test_instant_query_ignores_invalid_disabled_end_but_keeps_last_valid_range(qt_application):
     from map_panels import MapPanelSet
     p=MapPanelSet();p.set_options({'simulated_datetime':'2030-01-02T12:00:00'})
-    p.controls['service_time_mode'].buttons['range'].click();old_end=p.state()['service_end']
+    p.controls['service_time_mode'].buttons['range'].click();p.filter_apply_buttons['service'].click();old_end=p.state()['service_end']
     p.service_editor.end_edit.setText('bad')
     p.controls['service_time_mode'].buttons['instant'].click()
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_time_mode']=='instant' and p.state()['service_start']=='2030-01-02T12:00:00'
     assert p.state()['service_end']==old_end
 

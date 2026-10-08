@@ -34,6 +34,8 @@ def test_search_selects_only_visible_lines_and_emits_one_state(app):
     from map_panels import MapPanelSet
     p=MapPanelSet(); p.set_options(options()); p.set_state({'manual_line_ids':[]}); p.search.setText('电车')
     p.manual_none.click(); spy=QSignalSpy(p.stateChanged); p.manual_all.click()
+    assert p.state()['manual_line_ids']==set() and spy.count()==0
+    p.filter_apply_buttons['manual_line_ids'].click()
     assert p.state()['manual_line_ids']=={23} and spy.count()==1
     assert p.line_list.count()==1
 
@@ -70,20 +72,21 @@ def test_layer_master_toggles_and_independent_labels(app):
 def test_signal_snapshot_cannot_mutate_state_and_manual_none_reset(app):
     from map_panels import MapPanelSet
     p=MapPanelSet(); p.set_options(options()); spy=QSignalSpy(p.stateChanged)
-    p.manual_none.click(); assert p.state()['manual_line_ids']==set()
+    p.manual_none.click();p.filter_apply_buttons['manual_line_ids'].click(); assert p.state()['manual_line_ids']==set()
     received=spy.at(0)[0]; received['manual_line_ids'].add(999)
     assert p.state()['manual_line_ids']==set()
     p.set_state({'manual_line_ids':None}); p.set_options(options())
     assert p.state()['manual_line_ids']=={12,23}
 
-def test_numeric_filter_clamps_invalid_bounds_and_preserves_missing(app):
+def test_numeric_filter_requires_valid_confirmed_bounds_and_keeps_unknown_distinct(app):
     from map_panels import MapPanelSet
     p=MapPanelSet(); p.set_options(options())
     p.controls['passenger_min'].setText('200'); p.controls['passenger_min'].editingFinished.emit()
     p.controls['passenger_max'].setText('10'); p.controls['passenger_max'].editingFinished.emit()
-    assert p.state()['passenger_min']==200 and p.state()['passenger_max']==200
-    p.controls['passenger_min'].setText(''); p.controls['passenger_min'].editingFinished.emit()
-    assert p.state()['passenger_min'] is None
+    p.filter_apply_buttons['passengers'].click()
+    assert p.state()['passenger_min'] is None and p.state()['passenger_max'] is None
+    p.controls['passenger_max'].setText('∞');p.filter_apply_buttons['passengers'].click()
+    assert p.state()['passenger_min']==200 and p.state()['passenger_max'] is None
 
 def test_order_list_move_persists_across_options_and_mode_switch(app):
     from map_panels import MapPanelSet
@@ -121,6 +124,7 @@ def test_long_company_name_wraps_without_tooltip_or_horizontal_scroll(app):
     from PySide6.QtWidgets import QWidget
     p=MapPanelSet(); data=options(); data['company_ids'][0]['name']='公司长名称'*12
     p.set_options(data); h=MapDockHost(QWidget(),p.panels); h.resize(960,680); h.show()
+    p.filter_sections['company_ids'].set_expanded(True)
     h.activate_panel('filters'); app.processEvents()
     view=p.group_lists['company_ids']; item=view.item(0)
     assert view.visualItemRect(item).height()>50

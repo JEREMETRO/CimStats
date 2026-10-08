@@ -311,6 +311,7 @@ def test_network_service_time_initializes_from_simulated_clock(settings, app):
         assert page.panel_set.controls['service_start'].text() == '17:50'
         assert page.panel_set.state()['service_time_mode'] == 'off'
         page.panel_set.controls['service_time_mode'].buttons['instant'].click()
+        page.panel_set.filter_apply_buttons['service'].click()
         assert page.panel_set.state()['service_start'] == '2023-02-10T17:50:00'
     finally: page.close()
 
@@ -342,6 +343,7 @@ def test_service_time_refreshes_network_line_results(settings, app):
         page.set_snapshot(snapshot)
         state=page.panel_set.state(); state['building_emphasis']=False; page.apply_state(state)
         page.panel_set.controls['service_time_mode'].buttons['instant'].click()
+        page.panel_set.filter_apply_buttons['service'].click()
         assert [r.id for r in page.canvas.snapshot.routes] == [10]
         listing=page.panel_set.line_list
         assert [listing.item(i).data(Qt.ItemDataRole.UserRole) for i in range(listing.count())] == [10]

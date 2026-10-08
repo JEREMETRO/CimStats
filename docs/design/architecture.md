@@ -18,6 +18,12 @@ CimStats 是 Python 3.12、PySide6 与 PySide6-Fluent-Widgets 桌面应用。保
 - 静态 PNG 渲染完整快照时暂时禁用透明效果，避免永久／过渡透明宿主使图形缺失或淡化；完成或失败后恢复原启用状态，不修改界面动效策略。
 - 统计页面将存档当前规范化线路的副本随网络模型任务传递；模型仅对所选公司的理论最大需求求和，并在快照中记录当前值上下文。需求摘要与历史平均车辆图分开取值，当前需求不构造历史比较，导出直接读取该快照。
 
+## 地图模型与查询
+
+[map_model.py](../../src/map_model.py)保存不可变几何与原生方向段数据，[map_query.py](../../frontend/map_query.py)按稳定线路身份接入真实统计，统一计算客流来源、平均间隔口径及盈亏分类；面板、颜色解析器与导出复用查询结果，不各算一套。方向里程与时长采用原生段计数及停站到达偏移，绘图几何不作为统计替代。
+
+[map_panels.py](../../frontend/map_panels.py)维护六个筛选块的独立草稿和已应用状态，确认只提交本块，公开状态及预设持久化只含已应用值；程序恢复清除待编辑状态，显示设置即时应用并保留其他草稿。[map_page.py](../../frontend/map_page.py)协调查询、预设、完整目录与结果数量，组件更新不重复解析存档。具体默认值、交互与布局见[地图显示](../requirements/map-display.md)及[控件契约](controls.md)。
+
 ## 共享界面与布局
 
 - [app_shell.py](../../frontend/app_shell.py)统一导航、页面标题、文件区和子选项卡；[ui_kit.py](../../frontend/ui_kit.py)、[stats_controls.py](../../frontend/stats_controls.py)统一控件。

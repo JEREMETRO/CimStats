@@ -31,23 +31,34 @@ def test_network_summary_tracks_effective_query_without_erasing_selection(qt_app
 
     try:
         assert_count(2)
+        panel.filter_sections['service'].set_expanded(True)
         QTest.mouseClick(panel.controls['service_time_mode'].buttons['instant'], Qt.MouseButton.LeftButton)
+        assert_count(2)
+        QTest.mouseClick(panel.filter_apply_buttons['service'],Qt.MouseButton.LeftButton)
         assert_count(1)
         assert panel.state()['manual_line_ids'] == {1, 2}
         page.set_preset('planning'); page.set_preset('network')
         assert_count(1)
+        panel.filter_sections['service'].set_expanded(True)
         QTest.mouseClick(panel.controls['service_time_mode'].buttons['off'], Qt.MouseButton.LeftButton)
+        QTest.mouseClick(panel.filter_apply_buttons['service'],Qt.MouseButton.LeftButton)
+        panel.filter_sections['company_ids'].set_expanded(True)
         companies = panel.group_lists['company_ids']
         companies.setCurrentItem(next(companies.item(i) for i in range(companies.count())
                                       if companies.item(i).data(Qt.ItemDataRole.UserRole) == 'a'))
         QTest.keyClick(companies, Qt.Key.Key_Space)
+        QTest.mouseClick(panel.filter_apply_buttons['company_ids'],Qt.MouseButton.LeftButton)
         assert_count(1)
         assert panel.state()['manual_line_ids'] == {1, 2}
+        panel.filter_sections['manual_line_ids'].set_expanded(True)
         QTest.mouseClick(panel.manual_none, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(panel.filter_apply_buttons['manual_line_ids'],Qt.MouseButton.LeftButton)
         assert_count(0)
         assert panel.state()['manual_line_ids'] == {1}  # Bulk action only affects current candidates.
         QTest.mouseClick(panel.reset_filters, Qt.MouseButton.LeftButton)
+        panel.filter_sections['manual_line_ids'].set_expanded(True)
         QTest.mouseClick(panel.manual_none, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(panel.filter_apply_buttons['manual_line_ids'],Qt.MouseButton.LeftButton)
         assert_count(0)
         page.set_preset('single'); page.set_preset('network')
         assert_count(0)

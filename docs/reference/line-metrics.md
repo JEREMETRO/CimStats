@@ -76,6 +76,8 @@ averageFixed = (m_totalTransported * 864000000000) / elapsed   # 整数除法
 
 这是 `CompanyData.SimulationTick`按七天标尺、约四分之一周时间常数平滑的周化运行估计，不是过去三天、半周或最近七天实际金额之和。周收支报表日期使用模拟时刻所在自然周，观测截止点另示；与[历史期间现金流](history-metrics.md)分开。
 
+地图盈亏筛选与染色使用同一周化收入、支出的净差分类：当收入、支出有效且支出非负时，净利润绝对值在支出 2% 以内（含边界）为持平；超出时按净利润正负分别为盈利、亏损。零支出只有零净差持平，显著亏损不归入持平。仅改变类别，不四舍五入或改写已显示的周化利润。缺失、非有限字段或线路身份不唯一时为缺失，查询向面板提供类别，界面不重复计算财务。
+
 `m_vehiclesRunning`每 tick 累加运行车辆，每小时写入 `hourly_average × 1024`；这是小时平均运行量，不是车辆资产数或瞬时峰值。真实时刻表发班按日期掩码与记录统计，工作簿按周一至周四、周五、周六、周日分类。
 
 实现与验证：[build_line_workbook.py](../../src/build_line_workbook.py)、[build_company_workbook.py](../../src/build_company_workbook.py)、[extract_runtime_data.py](../../src/extract_runtime_data.py)。输入存档和反编译中间报告不随文档提交。

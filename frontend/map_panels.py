@@ -1,20 +1,20 @@
 """Fluent map controls. Panels own presentation state, never save-game data."""
 from __future__ import annotations
 from copy import deepcopy
-from math import isfinite
+from math import isfinite, sqrt
 from datetime import datetime,timedelta
 import re
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QDateTime
 from PySide6.QtGui import QColor, QIcon, QPixmap, QFontMetrics, QPainter, QPen
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidgetItem, QAbstractItemView, QFrame, QGridLayout, QButtonGroup
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidgetItem, QAbstractItemView, QFrame, QGridLayout, QButtonGroup, QSizePolicy
 from qfluentwidgets import CheckBox, ComboBox, LineEdit, PushButton, ListWidget, BodyLabel, RadioButton, FluentIcon, TransparentPushButton, CompactDoubleSpinBox, setCustomStyleSheet
 from qfluentwidgets.components.widgets.slider import SliderHandle
-from stats_controls import StatisticsScrollArea
+from stats_controls import StatisticsScrollArea, button_text_size
 from stats_typography import ui_font
 import stats_tokens as tokens
 from semantic_colors import PROFIT, category, building_function_fill, map_fill
 from map_model import BuildingFunctionValues
-from display_rules import display_mode
+from display_rules import display_mode, format_number, truncated_number
 from map_line_labels import resolve_line_labels
 from ui_kit import FlowLayout
 from map_canvas import ROAD_STYLES
@@ -27,6 +27,13 @@ _DEFAULTS = dict(roads=True, buildings=True, routes=True, **{k:None for k in _SE
     stop_names=False, line_numbers=False, mode_widths={}, distinguish_directions=False, building_emphasis=None,
     service_time_mode='off', service_start=None, service_end=None)
 _PROFITS = [dict(id=entry.key, name=entry.name, color=entry.color) for entry in PROFIT]
+_FILTER_BLOCK_KEYS = {
+    'company_ids':('company_ids',), 'modes':('modes',), 'profit_statuses':('profit_statuses',),
+    'passengers':('passenger_min','passenger_max'),
+    'service':('service_time_mode','service_start','service_end'),
+    'manual_line_ids':('manual_line_ids',),
+}
+_FILTER_OWNER = {key:block for block,keys in _FILTER_BLOCK_KEYS.items() for key in keys}
 
 class _WrappedList(ListWidget):
     """Keep the Fluent delegate, with actual row heights for wrapped names."""
@@ -119,9 +126,18 @@ class _RangeAxis(QWidget):
     def __init__(self,maximum,ticks,accessible,parent=None):
         super().__init__(parent);self.maximum=maximum;self.page_step=60 if maximum==1440 else 1
         self._values=(0,maximum);self._single=False;self._drag=None;self.ticks=ticks
-        self.setFixedHeight(51);self.setAccessibleName(accessible)
+        self.endpoint_labels=('开始','结束');self.show_endpoint_labels=True
+        self.setAccessibleName(accessible)
         self.handles=[_RangeHandle(self,i) for i in (0,1)]
         for i,handle in enumerate(self.handles):handle.setAccessibleName(('开始' if i==0 else '结束')+accessible)
+    @property
+    def show_endpoint_labels(self):return self._show_endpoint_labels
+    @show_endpoint_labels.setter
+    def show_endpoint_labels(self,visible):
+        self._show_endpoint_labels=bool(visible);self.setFixedHeight(self.track_y+31)
+        if hasattr(self,'handles'):self._place_handles()
+    @property
+    def track_y(self):return 28 if self.show_endpoint_labels else 20
     def values(self):return self._values
     def set_values(self,start,end):
         self._values=(min(self.maximum,max(0,int(start))),min(self.maximum,max(0,int(end))))
@@ -130,7 +146,7 @@ class _RangeAxis(QWidget):
         self._single=bool(single);self.handles[1].setVisible(not single);self.handles[1].setEnabled(not single);self.update()
     def _x(self,value):return 12+(max(1,self.width()-24))*value/self.maximum
     def _place_handles(self):
-        for handle,value in zip(self.handles,self._values):handle.move(round(self._x(value))-11,9)
+        for handle,value in zip(self.handles,self._values):handle.move(round(self._x(value))-11,self.track_y-11)
     def resizeEvent(self,event):super().resizeEvent(event);self._place_handles()
     def _change(self,index,value):
         if index==1 and self._single:return
@@ -151,21 +167,22 @@ class _RangeAxis(QWidget):
     def paintEvent(self,event):
         painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(QColor(tokens.BORDER_STRONG),4,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
-        painter.drawLine(12,20,self.width()-12,20)
+        painter.drawLine(12,self.track_y,self.width()-12,self.track_y)
         first,last=self._values
         painter.setPen(QPen(QColor(tokens.ACCENT),4,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
         if not self._single:
             segments=((first,last),) if first<=last else ((0,last),(first,self.maximum))
-            for a,b in segments:painter.drawLine(round(self._x(a)),20,round(self._x(b)),20)
+            for a,b in segments:painter.drawLine(round(self._x(a)),self.track_y,round(self._x(b)),self.track_y)
         painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION));painter.setPen(QColor(tokens.TEXT_SECONDARY))
-        names=[(first,'开始')] if self._single else [(first,'开始'),(last,'结束')]
-        if not self._single and abs(self._x(first)-self._x(last))<36:names=[(first,'开始/结束')]
+        names=[(first,self.endpoint_labels[0])] if self._single else list(zip((first,last),self.endpoint_labels))
+        if not self._single and abs(self._x(first)-self._x(last))<36:names=[(first,'/'.join(self.endpoint_labels))]
+        if not self.show_endpoint_labels:names=[]
         for value,text in names:
             width=70 if '/' in text else 36;x=min(max(0,round(self._x(value)-width/2)),max(0,self.width()-width))
             painter.drawText(QRect(x,0,width,16),Qt.AlignmentFlag.AlignCenter,text)
         for value,text in self.ticks:
             x=min(max(0,round(self._x(value)-20)),max(0,self.width()-40))
-            painter.drawText(QRect(x,33,40,18),Qt.AlignmentFlag.AlignCenter,text)
+            painter.drawText(QRect(x,self.track_y+13,40,18),Qt.AlignmentFlag.AlignCenter,text)
 
 
 def _local_datetime(value):
@@ -183,12 +200,13 @@ class _ServiceTimeEditor(QWidget):
         box.addWidget(self.week_axis);row=QHBoxLayout();row.setSpacing(8)
         self.labels={}
         for key,text in [('start','开始时间'),('end','结束时间')]:
-            host=QWidget();column=QHBoxLayout(host);column.setContentsMargins(0,0,0,0);column.setSpacing(4)
-            caption=_style_control(BodyLabel('开始' if key=='start' else '结束'),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY);column.addWidget(caption);self.labels[key]=caption
+            host=QWidget();column=QVBoxLayout(host);column.setContentsMargins(0,0,0,0);column.setSpacing(4)
+            caption=_style_control(BodyLabel(text),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY);column.addWidget(caption);self.labels[key]=caption
             edit=_style_control(LineEdit());edit.setPlaceholderText('HH:mm');edit.setAccessibleName(text);edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             edit.textChanged.connect(self._time_changed);column.addWidget(edit,1);row.addWidget(host);setattr(self,key+'_edit',edit)
         box.addLayout(row)
         self.time_axis=_RangeAxis(1440,[(0,'00'),(360,'06'),(720,'12'),(1080,'18'),(1440,'24')],'时间')
+        self.time_axis.show_endpoint_labels=False
         box.addWidget(self.time_axis)
         self.summary=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY);self.summary.setWordWrap(True);box.addWidget(self.summary)
         self.error_label=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.ERROR_COLOR);self.error_label.setWordWrap(True);self.error_label.hide();box.addWidget(self.error_label)
@@ -383,6 +401,108 @@ class _ModeWidths(QWidget):
         self._values=values; self.changed.emit(deepcopy(values))
 
 
+class _FilterSection(QFrame):
+    """The block header only changes visibility; confirmation is a separate action."""
+    def __init__(self,title,parent=None):
+        super().__init__(parent);self._title=title;self.setObjectName('mapFilterSection')
+        self.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Maximum)
+        self.setStyleSheet(f'QFrame#mapFilterSection {{background:{tokens.SURFACE_SUBTLE};border:0;border-radius:{tokens.RADIUS_CONTROL}px;}}')
+        layout=QVBoxLayout(self);layout.setContentsMargins(10,6,10,6);layout.setSpacing(4)
+        self.toggle=_style_control(TransparentPushButton(''));self.toggle.setAccessibleName(f'展开或折叠{title}')
+        header=QHBoxLayout(self.toggle);header.setContentsMargins(0,0,0,0);header.setSpacing(8)
+        self.title_label=_style_control(BodyLabel(title));self.arrow_label=_style_control(BodyLabel(''))
+        for label in (self.title_label,self.arrow_label):label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
+        self.arrow_label.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(self.title_label);header.addStretch(1);header.addWidget(self.arrow_label)
+        layout.addWidget(self.toggle)
+        self.summary_label=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY)
+        self.summary_label.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Maximum)
+        self.summary_label.setWordWrap(True);self.summary_label.hide();layout.addWidget(self.summary_label)
+        self.body=QWidget();self.body_layout=QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0,0,0,0);self.body_layout.setSpacing(6);layout.addWidget(self.body)
+        self.apply_button=_style_control(PushButton('确定'));self.apply_button.setAccessibleName(f'确定{title}筛选')
+        self.toggle.clicked.connect(lambda:self.set_expanded(not self.is_expanded()))
+        self.set_expanded(False)
+    def is_expanded(self):return not self.body.isHidden()
+    def set_expanded(self,expanded):
+        self.body.setVisible(bool(expanded));self.arrow_label.setText('▾' if expanded else '▸')
+    def set_summary(self,text):
+        self.summary_label.setText(text);self.summary_label.setVisible(bool(text))
+
+
+class _PassengerAxis(_RangeAxis):
+    finite_maximum=1000
+    @classmethod
+    def position(cls,value):return min(cls.finite_maximum,max(0,round(sqrt(max(0,value)/50000)*cls.finite_maximum)))
+    @classmethod
+    def passenger_value(cls,value):return 50000*value**2/cls.finite_maximum**2
+    def __init__(self):
+        super().__init__(1100,[(0,'0'),(self.position(10000),'1万'),(self.position(30000),'3万'),(1100,'∞')],'客流')
+        self.endpoint_labels=('下限','上限');self.show_endpoint_labels=False
+        for handle,name in zip(self.handles,('客流下限','客流上限')):handle.setAccessibleName(name)
+    def _change(self,index,value):
+        first,last=self.values()
+        if index==0:value=min(last,self.finite_maximum,value)
+        else:
+            if last==self.maximum and value==self.maximum-1:value=self.finite_maximum
+            elif value>self.finite_maximum:value=self.maximum
+            value=max(first,value)
+        super()._change(index,value)
+
+
+class _PassengerRangeEditor(QWidget):
+    changed=Signal(object,object)
+    def __init__(self,parent=None):
+        super().__init__(parent);self._setting=False
+        layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(4)
+        row=QHBoxLayout();row.setSpacing(8);layout.addLayout(row)
+        for key,title in [('min','最少人次'),('max','最多人次')]:
+            host=QWidget();column=QVBoxLayout(host);column.setContentsMargins(0,0,0,0);column.setSpacing(4)
+            column.addWidget(_style_control(BodyLabel(title),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY))
+            edit=_style_control(LineEdit());edit.setAccessibleName(title);column.addWidget(edit);row.addWidget(host,1)
+            edit.editingFinished.connect(self._typed);setattr(self,key+'_edit',edit)
+        self.axis=_PassengerAxis();layout.addWidget(self.axis);self.axis.valueChanged.connect(self._slid)
+        self.error_label=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.ERROR_COLOR)
+        self.error_label.setWordWrap(True);self.error_label.hide();layout.addWidget(self.error_label)
+    def values(self):
+        try:
+            values=[]
+            for index,edit in enumerate((self.min_edit,self.max_edit)):
+                text=edit.text().strip().replace(',','')
+                if index==1 and text in ('','∞','不限'):value=None
+                else:
+                    value=truncated_number(float(text or '0'))
+                    if value is None or value<0:raise ValueError
+                    value=float(value)
+                values.append(value)
+            if values[1] is not None and values[0]>values[1]:raise ValueError
+        except (TypeError,ValueError,OverflowError):
+            self.error_label.setText('请输入有效范围，上限不得小于下限');self.error_label.show();return None
+        self.error_label.clear();self.error_label.hide();return tuple(values)
+    def set_values(self,minimum,maximum):
+        self._setting=True
+        try:
+            self.min_edit.setText('0' if minimum is None else format_number(minimum,grouped=False))
+            self.max_edit.setText('∞' if maximum is None else format_number(maximum,grouped=False))
+            first=self.axis.position(minimum or 0)
+            last=self.axis.maximum if maximum is None else max(first,self.axis.position(maximum))
+            self.axis.set_values(first,last)
+            self._axis_positions=(first,last)
+        finally:self._setting=False
+    def _typed(self):
+        if self._setting:return
+        values=self.values()
+        if values is not None:self.set_values(*values);self.changed.emit(*values)
+    def _slid(self,minimum,maximum):
+        values=[self.axis.passenger_value(minimum),None if maximum==self.axis.maximum else self.axis.passenger_value(maximum)]
+        previous=self.values()
+        if previous is not None:
+            for index,position in enumerate((minimum,maximum)):
+                if position==self._axis_positions[index]:values[index]=previous[index]
+        self.set_values(*values);self.error_label.clear();self.error_label.hide();self.changed.emit(*values)
+
+
 class MapPanelSet(QWidget):
     """Use panels as dockable widgets; stateChanged carries a defensive state copy.
 
@@ -395,6 +515,8 @@ class MapPanelSet(QWidget):
         super().__init__(parent)
         self.hide()
         self._state = deepcopy(_DEFAULTS)
+        self._filter_drafts={key:deepcopy(self._state[key]) for key in _FILTER_OWNER};self._dirty_filters=set()
+        self.filter_sections={};self.filter_apply_buttons={}
         self._options = {}
         self._updating = False
         self._service_clock = None
@@ -420,6 +542,7 @@ class MapPanelSet(QWidget):
         """Display the current combined query result without changing selection."""
         self._result_count = count
         self._selection_summary()
+        self._filter_summaries()
 
     def set_state(self, state):
         for key, value in state.items():
@@ -435,6 +558,8 @@ class MapPanelSet(QWidget):
         if mode!='off' and not dates['service_start'].isValid():mode='off'
         if mode=='range' and (not dates['service_end'].isValid() or dates['service_end']<=dates['service_start']):mode='off'
         self._state['service_time_mode']=mode
+        self._filter_drafts={key:deepcopy(self._state[key]) for key in _FILTER_OWNER};self._dirty_filters.clear()
+        if mode!='off':self.filter_sections['service'].set_expanded(True)
         self._refresh()
 
     def set_options(self, options):
@@ -454,6 +579,8 @@ class MapPanelSet(QWidget):
         for key, category in [('mode_order','modes'),('company_order','company_ids')]:
             order=self._state[key]
             self._state[key]=order+[v['id'] for v in self._options.get(category,[]) if v['id'] not in order]
+        for key,block in _FILTER_OWNER.items():
+            if block not in self._dirty_filters:self._filter_drafts[key]=deepcopy(self._state[key])
         self._refresh()
 
     def _label(self, layout, text, heading=False):
@@ -551,38 +678,48 @@ class MapPanelSet(QWidget):
         self.reset_filters.clicked.connect(self._reset_filters); row.addWidget(self.reset_filters); layout.addLayout(row)
         self.filter_tags=QWidget(); self.tag_layout=FlowLayout(self.filter_tags,spacing=4)
         layout.addWidget(self.filter_tags)
-        row=QHBoxLayout(); row.setSpacing(4)
-        self.search=_style_control(LineEdit()); self.search.setPlaceholderText('搜索线路'); self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(lambda _:self._refresh_lines()); row.addWidget(self.search,1)
-        self.manual_all=_style_control(PushButton('全选')); self.manual_all.setFixedWidth(50)
-        self.manual_none=_style_control(PushButton('全不选')); self.manual_none.setFixedWidth(66)
-        row.addWidget(self.manual_all); row.addWidget(self.manual_none); layout.addLayout(row)
-        self.manual_all.clicked.connect(lambda:self._select_visible(True))
-        self.manual_none.clicked.connect(lambda:self._select_visible(False))
-        conditions=self._section(layout)
-        company=QHBoxLayout();company.setSpacing(6);conditions.addLayout(company)
-        self._group(company,'company_ids','公司',72)
-        mode,profit=self._columns(conditions)
-        self._group(mode,'modes','制式',120)
-        self._group(profit,'profit_statuses','盈亏 · 周化估计',120)
-        self.passenger_date=self._label(conditions,'客流 · 人次')
-        row=QHBoxLayout(); row.setSpacing(8)
-        for key,text in [('passenger_min','最少人次'),('passenger_max','最多人次')]:
-            edit=_style_control(LineEdit()); edit.setPlaceholderText(text); edit.setAccessibleName(text)
-            edit.editingFinished.connect(lambda k=key,e=edit:self._passenger_changed(k,e))
-            self.controls[key]=edit; row.addWidget(edit)
-        conditions.addLayout(row)
-        service=self._section(layout)
-        service_modes=QHBoxLayout();service_modes.setSpacing(6);service.addLayout(service_modes)
-        self._choices(service_modes,'service_time_mode','运营时间', [('off','不限'),('instant','时刻'),('range','时段')],3)
+        def section(key,title):
+            block=_FilterSection(title);layout.addWidget(block);self.filter_sections[key]=block
+            self.filter_apply_buttons[key]=block.apply_button
+            block.apply_button.clicked.connect(lambda:self._confirm_filter(key))
+            return block.body_layout
+        for key,title,height in [('company_ids','公司',100),('modes','制式',120),('profit_statuses','盈亏',120)]:
+            body=section(key,title);self._group(body,key,title,height);self.group_summaries[key].hide()
+        passenger=section('passengers','客流')
+        self.passenger_date=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY)
+        self.passenger_editor=_PassengerRangeEditor();passenger.addWidget(self.passenger_editor)
+        self.controls['passenger_min']=self.passenger_editor.min_edit;self.controls['passenger_max']=self.passenger_editor.max_edit
+        self.passenger_editor.changed.connect(self._passenger_draft_changed)
+        for edit in (self.passenger_editor.min_edit,self.passenger_editor.max_edit):
+            edit.textChanged.connect(lambda:self._filter_text_edited('passengers',self.passenger_editor._setting))
+        service=section('service','运营时间')
+        self._choices(service,'service_time_mode','', [('off','不限'),('instant','时刻'),('range','时段')],3)
         self.service_editor=_ServiceTimeEditor();service.addWidget(self.service_editor)
         self.service_editor.edited.connect(self._service_edited)
+        for edit in (self.service_editor.start_edit,self.service_editor.end_edit):
+            edit.textChanged.connect(lambda:self._filter_text_edited('service',self.service_editor._setting))
         self.controls['service_start']=self.service_editor.start_edit;self.controls['service_end']=self.service_editor.end_edit
         self.service_labels={'service_start':self.service_editor.labels['start'],'service_end':self.service_editor.labels['end']}
         self.service_error=self.service_editor.error_label
-        results=self._section(layout)
+        results=section('manual_line_ids','线路选择')
+        row=QHBoxLayout(); row.setSpacing(4)
+        self.search=_style_control(LineEdit()); self.search.setPlaceholderText('搜索线路'); self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(lambda _:self._refresh_lines()); row.addWidget(self.search,1)
+        self.manual_all=_style_control(PushButton('全选')); self.manual_all.setFixedWidth(button_text_size(self.manual_all).width())
+        self.manual_none=_style_control(PushButton('全不选')); self.manual_none.setFixedWidth(button_text_size(self.manual_none).width())
+        self.search.setMinimumWidth(0)
+        row.addWidget(self.manual_all); row.addWidget(self.manual_none); results.addLayout(row)
+        self.manual_all.clicked.connect(lambda:self._select_visible(True))
+        self.manual_none.clicked.connect(lambda:self._select_visible(False))
         self.line_list=self._group(results,'manual_line_ids','线路结果',114)
-        for section in (conditions,service,results):section.setContentsMargins(10,6,10,6)
+        self.group_summaries['manual_line_ids'].hide()
+        for key,block in self.filter_sections.items():
+            if key=='passengers':
+                footer=QWidget();row=QHBoxLayout(footer);row.setContentsMargins(0,0,0,0);row.setSpacing(8)
+                row.addWidget(self.passenger_date,0,Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
+                row.addStretch(1);row.addWidget(block.apply_button);block.body_layout.addWidget(footer)
+            else:block.body_layout.addWidget(block.apply_button,0,Qt.AlignmentFlag.AlignRight)
+        self.filter_sections['manual_line_ids'].set_expanded(True)
 
     def _build_display(self):
         layout=self._layouts['display']
@@ -630,14 +767,44 @@ class MapPanelSet(QWidget):
             self._state[key]={item['id'] for item in self._options.get(key,[])}
         self._state['passenger_min']=self._state['passenger_max']=None
         self._state['service_time_mode']='off'
+        self._filter_drafts={key:deepcopy(self._state[key]) for key in _FILTER_OWNER};self._dirty_filters.clear()
         self.search.clear(); self._refresh(); self.stateChanged.emit(self.state())
+
+    def _confirm_filter(self,block):
+        if block=='passengers':
+            values=self.passenger_editor.values()
+            if values is None:return
+            self._filter_drafts.update(zip(_FILTER_BLOCK_KEYS[block],values))
+        elif block=='service':
+            values=self._service_values(self._filter_drafts['service_time_mode'])
+            if values is None:return
+            self._filter_drafts.update(values)
+        keys=_FILTER_BLOCK_KEYS[block]
+        changed=any(self._state[key]!=self._filter_drafts[key] for key in keys)
+        for key in keys:self._state[key]=deepcopy(self._filter_drafts[key])
+        self._dirty_filters.discard(block)
+        self._refresh();self.filter_sections[block].set_expanded(False)
+        if changed:self.stateChanged.emit(self.state())
+
+    def _passenger_draft_changed(self,minimum,maximum):
+        self._filter_drafts.update(passenger_min=minimum,passenger_max=maximum)
+        self._dirty_filters.add('passengers')
+
+    def _filter_text_edited(self,block,setting):
+        if not setting and not self._updating:self._dirty_filters.add(block)
 
     def _changed(self,key,value):
         if key=='service_time_mode':
             self._service_mode_changed(value); return
         if key=='mode_widths':value=_clean_widths(value or {})
-        if self._updating or self._state[key]==value: return
-        self._state[key]=value
+        if self._updating:return
+        if key in _FILTER_OWNER:
+            if self._filter_drafts[key]==value:return
+            self._filter_drafts[key]=deepcopy(value);self._dirty_filters.add(_FILTER_OWNER[key])
+        else:
+            if self._state[key]==value:return
+            self._state[key]=value
+            if key=='color_by' and value in ('interval','passengers'):self._state['stops']=False
         if key=='manual_line_ids':
             # Selection changes do not alter candidates or any other controls.
             blocked=self.line_list.blockSignals(True)
@@ -646,9 +813,8 @@ class MapPanelSet(QWidget):
                     item=self.line_list.item(i)
                     item.setCheckState(Qt.CheckState.Checked if item.data(Qt.ItemDataRole.UserRole) in value else Qt.CheckState.Unchecked)
             finally:self.line_list.blockSignals(blocked)
-            self._summaries()
         else:self._refresh()
-        self.stateChanged.emit(self.state())
+        if key not in _FILTER_OWNER:self.stateChanged.emit(self.state())
 
     def _service_values(self,mode):
         if mode=='off':return {}
@@ -663,30 +829,20 @@ class MapPanelSet(QWidget):
         if self._updating:return
         values=self._service_values(mode)
         if values is None:
-            self.controls['service_time_mode'].set_value(self._state['service_time_mode']); return
-        if mode==self._state['service_time_mode'] and all(self._state[k]==v for k,v in values.items()):return
-        self._state.update(values); self._state['service_time_mode']=mode
-        self._sync_service_controls(); self._refresh_lines(); self.stateChanged.emit(self.state())
+            self.controls['service_time_mode'].set_value(self._filter_drafts['service_time_mode']); return
+        if mode==self._filter_drafts['service_time_mode'] and all(self._filter_drafts[k]==v for k,v in values.items()):return
+        self._filter_drafts.update(values);self._filter_drafts['service_time_mode']=mode;self._dirty_filters.add('service')
+        self._sync_service_controls()
 
     def _service_edited(self,*_):
-        if self._updating or self._state['service_time_mode']=='off':return
-        values=self._service_values(self._state['service_time_mode'])
+        if self._updating or self._filter_drafts['service_time_mode']=='off':return
+        values=self._service_values(self._filter_drafts['service_time_mode'])
         if values is None:return
-        if any(self._state[k]!=v for k,v in values.items()):
-            self._state.update(values); self.stateChanged.emit(self.state())
+        if any(self._filter_drafts[k]!=v for k,v in values.items()):
+            self._filter_drafts.update(values);self._dirty_filters.add('service')
 
     def _sync_service_controls(self):
-        self.service_editor.set_mode(self._state['service_time_mode'])
-
-    def _passenger_changed(self,key,edit):
-        text=edit.text().strip()
-        try: value=None if not text else max(0,int(text))
-        except ValueError:
-            self._refresh(); return
-        other='passenger_max' if key=='passenger_min' else 'passenger_min'
-        if value is not None and self._state[other] is not None:
-            value=min(value,self._state[other]) if key=='passenger_min' else max(value,self._state[other])
-        self._changed(key,value)
+        self.service_editor.set_mode(self._filter_drafts['service_time_mode'])
 
     def _toggle_layer(self,key,checked):
         if self._updating:return
@@ -700,7 +856,7 @@ class MapPanelSet(QWidget):
 
     def _group_changed(self,key):
         if self._updating:return
-        selected=set(self._state[key] or ())
+        selected=set((self._filter_drafts[key] if key in _FILTER_OWNER else self._state[key]) or ())
         view=self.group_lists[key]
         if isinstance(view,_OptionGrid):selected=(selected-set(view.buttons))|view.selected()
         else:
@@ -708,6 +864,8 @@ class MapPanelSet(QWidget):
                 item=view.item(i); identity=item.data(Qt.ItemDataRole.UserRole)
                 if item.checkState()==Qt.CheckState.Checked:selected.add(identity)
                 else:selected.discard(identity)
+        if key in _FILTER_OWNER:
+            self._filter_drafts[key]=selected;self._dirty_filters.add(_FILTER_OWNER[key]);return
         self._state[key]=selected
         parent={'road_levels':'roads','building_classes':'buildings','building_uses':'buildings','layer_modes':'routes'}.get(key)
         if parent:self._state[parent]=bool(selected)
@@ -718,7 +876,7 @@ class MapPanelSet(QWidget):
         self.stateChanged.emit(self.state())
 
     def _select_visible(self,checked):
-        selected=set(self._state['manual_line_ids'] or ())
+        selected=set(self._filter_drafts['manual_line_ids'] or ())
         ids={self.line_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.line_list.count())}
         selected=selected|ids if checked else selected-ids
         self._changed('manual_line_ids',selected)
@@ -787,14 +945,15 @@ class MapPanelSet(QWidget):
             mode=modes.get(line.get('mode'),display_mode(line.get('mode')))
             text=line.get('display_label') or line.get('label') or self._line_labels.get(line['id']) or f"{mode}{line['name']}"
             display.append(dict(line,name=text))
-        self._fill(self.line_list,display,self._state['manual_line_ids'] or set())
+        self._fill(self.line_list,display,self._filter_drafts['manual_line_ids'] or set())
         self._summaries()
 
     def _summaries(self):
         titles={'road_levels':'道路等级','building_classes':'社会群体','building_uses':'建筑用途','layer_modes':'制式',
-                'manual_line_ids':'线路结果','company_ids':'公司','modes':'制式','profit_statuses':'盈亏 · 周化估计'}
+                'manual_line_ids':'线路结果','company_ids':'公司','modes':'制式','profit_statuses':'盈亏'}
         for key,label in self.group_summaries.items():label.setText(titles[key])
         self._selection_summary()
+        self._filter_summaries()
         while self.tag_layout.count():
             item=self.tag_layout.takeAt(0)
             if item.widget():item.widget().deleteLater()
@@ -808,10 +967,45 @@ class MapPanelSet(QWidget):
             setCustomStyleSheet(label,rule,rule); self.tag_layout.addWidget(label)
         self.filter_tags.setVisible(self.tag_layout.count()>0)
 
+    def _applied_result_count(self):
+        if self._result_count is not None:return self._result_count
+        selected=self._state['manual_line_ids']
+        return sum((selected is None or line['id'] in selected) and self._line_matches(line)
+                   for line in self._options.get('lines',[]))
+
+    def _filter_summaries(self):
+        criteria={key:'' for key in self.filter_sections}
+        for key,title in [('company_ids','公司'),('modes','制式'),('profit_statuses','盈亏')]:
+            choices=self._options.get(key,[]);chosen=self._state[key]
+            if chosen is None or all(choice['id'] in chosen for choice in choices):continue
+            names=[choice['name'] for choice in choices if choice['id'] in chosen]
+            criteria[key]=f"筛选{title}："+('、'.join(names) if names else '无')
+        selected=self._state['manual_line_ids'];lines=self._options.get('lines',[])
+        if selected is not None and not all(line['id'] in selected for line in lines):
+            criteria['manual_line_ids']=f"筛选线路：{sum(line['id'] in selected for line in lines)}条"
+        minimum,maximum=self._state['passenger_min'],self._state['passenger_max']
+        if minimum is not None or maximum is not None:
+            low=format_number(0 if minimum is None else minimum,grouped=False)
+            high='∞' if maximum is None else format_number(maximum,grouped=False)
+            criteria['passengers']=f'筛选客流：{low}-{high}人次'
+        mode=self._state['service_time_mode']
+        if mode!='off':
+            start=QDateTime.fromString(self._state['service_start'],Qt.DateFormat.ISODate)
+            end=QDateTime.fromString(self._state['service_end'] or '',Qt.DateFormat.ISODate)
+            weekdays=('周一','周二','周三','周四','周五','周六','周日')
+            def boundary(value):return weekdays[value.date().dayOfWeek()-1]+value.toString('HH:mm')
+            if start.isValid():
+                criteria['service']=boundary(start)
+                if mode=='range' and end.isValid():
+                    if start.date().daysTo(end.date())>=7:
+                        criteria['service']=start.toString('yyyy-MM-dd HH:mm')+'-'+end.toString('yyyy-MM-dd HH:mm')
+                    else:criteria['service']+='-'+(end.toString('HH:mm') if start.date()==end.date() else boundary(end))
+        count=self._applied_result_count()
+        for key,section in self.filter_sections.items():
+            section.set_summary(f'{criteria[key]} 已选：{count}条' if criteria[key] else '')
+
     def _selection_summary(self):
-        lines=self._options.get('lines',[]); selected=self._state['manual_line_ids'] or set()
-        count=self._result_count
-        if count is None:count=sum(v['id'] in selected for v in lines)
+        lines=self._options.get('lines',[]);count=self._applied_result_count()
         self.selection_summary.setText(f'已选 {count} / 共 {len(lines)}')
 
     def _sync_layer_checks(self):
@@ -862,7 +1056,7 @@ class MapPanelSet(QWidget):
         try:
             self._refresh_building_legend()
             for key,view in self.group_lists.items():
-                if key!='manual_line_ids':self._fill(view,self._options.get(key,[]),self._state[key] or set())
+                if key!='manual_line_ids':self._fill(view,self._options.get(key,[]),self._filter_drafts.get(key,self._state[key]) or set())
             # Retain legacy saved metric fields for caller migration, without old
             # mutually exclusive category/colour controls or guessed aggregation.
             if self._state['building_class_target'] is None:
@@ -872,13 +1066,14 @@ class MapPanelSet(QWidget):
             self.mode_width_controls=self.width_editor.spins
             self.width_section.setVisible(bool(self._options.get('modes')))
             for key,widget in self.controls.items():
-                if key in ('service_start','service_end'):continue
+                if key in ('service_start','service_end','passenger_min','passenger_max'):continue
+                current=self._filter_drafts.get(key,self._state[key])
                 widget.blockSignals(True)
-                if isinstance(widget,_ChoiceGroup):widget.set_value(self._state[key])
+                if isinstance(widget,_ChoiceGroup):widget.set_value(current)
                 elif isinstance(widget,CheckBox):
                     value=self._options.get('building_emphasis_effective',True) if key=='building_emphasis' and self._state[key] is None else self._state[key]
                     widget.setChecked(bool(value))
-                elif isinstance(widget,LineEdit):widget.setText('' if self._state[key] is None else str(self._state[key]))
+                elif isinstance(widget,LineEdit):widget.setText('' if current is None else str(current))
                 else:
                     index=next((i for i in range(widget.count()) if widget.itemData(i)==self._state[key]),-1)
                     widget.setCurrentIndex(index)
@@ -893,8 +1088,12 @@ class MapPanelSet(QWidget):
             self.controls['distinguish_directions'].setEnabled(self._state['direction']=='whole')
             self.building_emphasis_auto.setEnabled(self._state['building_emphasis'] is not None)
             date=self._options.get('passenger_date')
-            self.passenger_date.setText(f'客流 · {date} · 人次' if date else '客流 · 人次')
+            source=self._options.get('passenger_label')
+            self.passenger_date.setText('平均客流' if source=='平均客流' or self._options.get('passenger_source')=='average' else str(date or ''))
+            if 'passengers' not in self._dirty_filters:
+                self.passenger_editor.set_values(self._filter_drafts['passenger_min'],self._filter_drafts['passenger_max'])
             self._refresh_lines(); self._sync_layer_checks(); self._summaries()
-            self.service_editor.set_state(self._state,self._service_clock.toPython() if self._service_clock is not None else None)
+            if 'service' not in self._dirty_filters:
+                self.service_editor.set_state(self._filter_drafts,self._service_clock.toPython() if self._service_clock is not None else None)
             self._sync_service_controls()
         finally:self._updating=False

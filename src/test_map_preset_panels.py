@@ -166,9 +166,11 @@ def test_network_time_uses_simulated_clock_and_valid_cross_midnight(qt_applicati
     assert spy.count() == 0 and p.state()['service_time_mode'] == 'off'
     assert p.controls['service_start'].text() == '23:30'
     p.controls['service_time_mode'].buttons['instant'].click()
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_start'] == '2030-01-02T23:30:00'
     p.controls['service_time_mode'].buttons['range'].click()
     p.controls['service_end'].setText('01:00')
+    p.filter_apply_buttons['service'].click()
     assert p.state()['service_time_mode'] == 'range'
     assert p.state()['service_end'] == '2030-01-03T01:00:00'
     before = p.state(); n = spy.count()

@@ -21,7 +21,7 @@
 | --- | --- |
 | [产品需求](requirements/product.md) | 页面、范围、默认／公司／同期三种分析模式 |
 | [图表需求](requirements/charts.md) | 色柱图例、圆柱、间距、字体、放大摘要与标签 |
-| [地图显示](requirements/map-display.md) | 地图数据、方向、分层制图、组合查询和面板停靠 |
+| [地图显示](requirements/map-display.md) | 地图数据、方向指标、目录排序、筛选确认与摘要、染色口径和面板停靠 |
 | [最新信息](requirements/latest-info.md) | 当日趋势、线路亮点、提醒与导出状态 |
 | [架构](design/architecture.md) | 数据流、模块职责、布局与输出边界 |
 | [控件契约](design/controls.md) | 共享接口、筛选、菜单、状态和动效 |
@@ -56,7 +56,7 @@ CimStats/
 |-- docs/
 |   |-- README.md, USER_GUIDE.md, DATA_DEFINITIONS.md
 |   |-- DEVELOPMENT.md, RELEASE.md, PROJECT_NOTICE.md
-|   |-- requirements/   product.md, charts.md, latest-info.md
+|   |-- requirements/   product.md, charts.md, latest-info.md, map-display.md
 |   |-- design/         architecture.md, controls.md, visual-design.md
 |   |-- reference/      数据、公式、运行时、多人及工具参考
 |   `-- testing/        acceptance.md
