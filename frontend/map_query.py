@@ -59,7 +59,26 @@ def optional_number(value):
         return None
 
 
-def stats_from_session(session, routes):
+def stats_input_from_session(session):
+    """Capture isolated numeric inputs; omit unrelated vehicle and query payloads."""
+    from copy import deepcopy
+    from map_service_time import session_departures
+    raw_keys=('对象ID','收入_累计','支出_累计','客流_今日','客流_累计','时刻表数','开线日期')
+    line_keys=('对象ID','字段可用性','开线日期','平均客流','班次数据完整')
+    row_keys=('时刻表序号','发班序号','发班_tick','运行日掩码','时刻表_运行日掩码','running_day_valid')
+    lines=[]
+    for line in session.get('lines',()):
+        item={key:deepcopy(line[key]) for key in line_keys if key in line}
+        raw=line.get('原始字段',{})
+        item['原始字段']={key:deepcopy(raw[key]) for key in raw_keys if key in raw}
+        rows=session_departures(line)
+        item['时刻表']=(None if rows is None else {'native':{'entries':tuple(
+            {key:deepcopy(row[key]) for key in row_keys if key in row} for row in rows)}})
+        lines.append(item)
+    return {'simulation_time':session.get('simulation_time'),'lines':tuple(lines)}
+
+
+def stats_from_session(session, routes, *, cancelled=None):
     by_id = {};lines={};expenses={}
     day,source=_passenger_context(session)
     for line in session.get('lines', ()):
@@ -78,8 +97,9 @@ def stats_from_session(session, routes):
         lines[identity]=line if identity not in lines else None
     result={}
     for route in routes:
+        if cancelled is not None and cancelled():raise InterruptedError('Map statistics cancelled')
         line=lines.get(route.id)
-        schedule=_schedule_for_day(line,day)
+        schedule=_schedule_for_day(line,day,cancelled)
         opened=None
         if line is not None and line.get('字段可用性',{}).get('开线日期') is not False:
             original=line.get('原始字段',{}).get('开线日期',line.get('开线日期',''))
@@ -88,7 +108,7 @@ def stats_from_session(session, routes):
         result[route.id]=RouteStats(_passenger_value(line,source),
             by_id.get(route.id),schedule['average_interval'] if schedule is not None else None,
             schedule['count'] if schedule is not None else None,opened,day.isoformat() if day else None,source,
-            _daytime_interval(schedule),_weekday_peak_interval(line,day),expenses.get(route.id))
+            _daytime_interval(schedule),_weekday_peak_interval(line,day,cancelled),expenses.get(route.id))
     return result
 
 
@@ -125,7 +145,7 @@ def _passenger_value(line,source):
     return average if average is not None and average>=0 else None
 
 
-def _day_entries(line,day):
+def _day_entries(line,day,cancelled=None):
     """Native rows belonging to one confirmed natural calendar day."""
     from map_service_time import session_departures,DAY_TICKS
     from line_schedule import optional_integer,running_day_mask
@@ -133,7 +153,8 @@ def _day_entries(line,day):
     entries=session_departures(line)
     if entries is None:return None
     selected=[]
-    for row in entries:
+    for index,row in enumerate(entries):
+        if index%128==0 and cancelled is not None and cancelled():raise InterruptedError('Map statistics cancelled')
         mask=running_day_mask(row.get('运行日掩码',row.get('时刻表_运行日掩码')))
         if mask is not None and not mask & 0x7f:continue
         tick=optional_integer(row.get('发班_tick'))
@@ -145,10 +166,10 @@ def _day_entries(line,day):
     return selected
 
 
-def _schedule_for_day(line,day):
+def _schedule_for_day(line,day,cancelled=None):
     """Confirm native calendar rows before the shared schedule calculation."""
     from line_schedule import prepare_schedule
-    selected=_day_entries(line,day)
+    selected=_day_entries(line,day,cancelled)
     if selected is None:return None
     prepared=prepare_schedule(selected)
     return prepared if prepared['data_complete'] else None
@@ -189,11 +210,11 @@ def _daytime_interval(schedule):
     return _gap_mean(_period_gaps(schedule['entries'],_period_windows(('peak','offpeak'))))
 
 
-def _weekday_peak_interval(line,day):
+def _weekday_peak_interval(line,day,cancelled=None):
     if line is None or day is None:return None
     monday=day-timedelta(days=day.weekday());windows=_period_windows(('peak',));gaps=[]
     for offset in range(5):
-        entries=_day_entries(line,monday+timedelta(days=offset))
+        entries=_day_entries(line,monday+timedelta(days=offset),cancelled)
         if entries is None:return None
         gaps.extend(_period_gaps(entries,windows))
     return _gap_mean(gaps)

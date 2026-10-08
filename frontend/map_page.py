@@ -17,7 +17,7 @@ from map_icon import MAP_ICON
 from map_panels import MapPanelSet
 from map_docking import MapDockHost
 from map_model import MapSnapshot, road_display_level
-from map_query import MapQuery, stats_from_session
+from map_query import MapQuery, stats_from_session, stats_input_from_session
 from map_presets import PresetStore, PRESETS, valid_view
 from map_visibility import route_has_geometry
 
@@ -55,6 +55,27 @@ class MapWorker(QThread):
         except Exception as error:
             if not self.isInterruptionRequested():
                 self.failed.emit(self.generation, str(error))
+
+
+class _MapStatsWorker(QThread):
+    completed=Signal(int,object,object,object,float)
+    failed=Signal(int,object,str)
+
+    def __init__(self,generation,token,snapshot,session,parent=None):
+        super().__init__(parent)
+        self.generation,self.token,self.snapshot,self.session=generation,token,snapshot,session
+
+    def run(self):
+        started=time.perf_counter()
+        try:
+            if self.isInterruptionRequested():return
+            from background_work import CooperativeCancellation
+            stats=stats_from_session(self.session,self.snapshot.routes,
+                                    cancelled=CooperativeCancellation(self.isInterruptionRequested))
+            if not self.isInterruptionRequested():
+                self.completed.emit(self.generation,self.token,self.snapshot,stats,time.perf_counter()-started)
+        except Exception as error:
+            if not self.isInterruptionRequested():self.failed.emit(self.generation,self.token,str(error))
 
 
 class _MapSurface(QWidget):
@@ -220,6 +241,8 @@ class _MapSurface(QWidget):
 class MapPage(QWidget):
     ready = Signal()
     failed = Signal(str)
+    statistics_preparation_started=Signal()
+    statistics_preparation_finished=Signal(object)
 
     def __init__(self, settings, parent=None, cache_dir=None):
         super().__init__(parent)
@@ -246,6 +269,7 @@ class MapPage(QWidget):
         self._prefetch_snapshot=None
         self._prefetch_error=None
         self.workers=[]
+        self._stats_worker=None
         self._requested=False
         self.setMinimumWidth(0)
         layout=QVBoxLayout(self)
@@ -547,6 +571,8 @@ class MapPage(QWidget):
     def set_session(self, session):
         self._close_building_menu()
         self.surface.set_compact_search(False)
+        if self._stats_worker is not None:self._stats_worker.requestInterruption()
+        self._stats_worker=None
         self.surface.results.clear()
         self.surface.results.hide()
         self._session_generation+=1
@@ -603,6 +629,7 @@ class MapPage(QWidget):
     def cancel_prefetch(self):
         self._close_building_menu()
         self.surface.set_compact_search(False)
+        self._stats_worker=None
         self.surface.results.clear()
         self.surface.results.hide()
         self._session_generation+=1
@@ -652,7 +679,41 @@ class MapPage(QWidget):
         if any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops)):
             self.surface.set_loading(True)
         self._prepare_hidden_layout()
-        self.set_snapshot(snapshot)
+        if self.session.get('lines'):
+            if self._stats_worker is not None:self._stats_worker.requestInterruption()
+            started=time.perf_counter()
+            self.statistics_preparation_started.emit()
+            try:captured=stats_input_from_session(self.session)
+            except Exception as error:
+                self._failed(generation,str(error));return
+            worker=_MapStatsWorker(generation,self.save_token,snapshot,captured,self)
+            worker.started_at=started
+            worker.input_seconds=time.perf_counter()-started
+            self._stats_worker=worker
+            self.workers.append(worker)
+            worker.completed.connect(self._statistics_loaded)
+            worker.failed.connect(self._statistics_failed)
+            worker.finished.connect(self._worker_finished)
+            worker.start()
+        else:self._finish_snapshot_loading(snapshot)
+
+    def _statistics_loaded(self,generation,token,snapshot,stats,seconds):
+        worker=self.sender()
+        if (worker is not self._stats_worker or generation!=self._generation
+                or token!=self.save_token):return
+        self._stats_worker=None
+        self.statistics_preparation_finished.emit(dict(input_seconds=worker.input_seconds,
+            compute_seconds=seconds,total_seconds=time.perf_counter()-worker.started_at))
+        self._finish_snapshot_loading(snapshot,stats)
+
+    def _statistics_failed(self,generation,token,message):
+        if (self.sender() is not self._stats_worker or generation!=self._generation
+                or token!=self.save_token):return
+        self._stats_worker=None
+        self._failed(generation,message)
+
+    def _finish_snapshot_loading(self,snapshot,stats=None):
+        self.set_snapshot(snapshot,stats=stats)
         if not self.canvas.isVisible():
             self.canvas._fit_pending=not isinstance(self.parentWidget(),QStackedWidget)
         self.canvas.prepare_frame()
@@ -685,13 +746,13 @@ class MapPage(QWidget):
             self._requested=False
             self.failed.emit(message)
 
-    def set_snapshot(self,snapshot):
+    def set_snapshot(self,snapshot,*,stats=None):
         self._snapshot=snapshot
         self._switching=True
         self._awaiting_frame=self._requested and any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops))
         if not self._awaiting_frame:
             self.surface.set_loading(False)
-        self.query=MapQuery(snapshot,stats_from_session(self.session,snapshot.routes),
+        self.query=MapQuery(snapshot,stats_from_session(self.session,snapshot.routes) if stats is None else stats,
                             company_ids=(str(company['公司标识']) for company in self.session.get('companies',())
                                          if company.get('公司标识') is not None))
         options=self.query.panel_options(self.session,self.panel_set.state())

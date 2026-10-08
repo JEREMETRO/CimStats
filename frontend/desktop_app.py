@@ -326,7 +326,8 @@ class StartupImports(QThread):
             # These modules contain no widgets. File access and Python imports
             # need not freeze the already painted logo or its system window.
             for name in ('openpyxl', 'report_model', 'statistics_model',
-                         'dashboard_model', 'network_model', 'city_model', 'latest_info_model'):
+                         'dashboard_model', 'network_model', 'city_model', 'latest_info_model',
+                         'map_geometry', 'map_query'):
                 if self.isInterruptionRequested():
                     return
                 importlib.import_module(name)

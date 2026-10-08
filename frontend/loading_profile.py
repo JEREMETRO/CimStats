@@ -49,6 +49,12 @@ def profile_loading(win, args):
                 and canvas._frame_key == canvas._render_key()
                 and canvas._frame_view == (*canvas.center, canvas.zoom))
     page.ready.connect(lambda: marks.setdefault('map_snapshot', time.monotonic()-started))
+    statistics=[]
+    page.statistics_preparation_started.connect(lambda: marks.setdefault('map_statistics_start',time.monotonic()-started))
+    def statistics_ready(timing):
+        marks.setdefault('map_statistics_ready',time.monotonic()-started)
+        statistics.append(timing)
+    page.statistics_preparation_finished.connect(statistics_ready)
     canvas.frame_ready.connect(lambda: marks.setdefault('first_frame', time.monotonic()-started)
                                if page.result is not None else None)
     page.failed.connect(errors.append)
@@ -72,7 +78,7 @@ def profile_loading(win, args):
     cache_created = (args.output/'parsed-jobs/map-cache').exists()
     assert unchanged and not cache_created
     assert win.grab().save(str(args.output/'normal-open-map.png'))
-    record = {'marks':marks, 'gaps':gaps, 'inputs':inputs,
+    record = {'marks':marks, 'gaps':gaps, 'inputs':inputs,'map_statistics_preparation':statistics,
               'max_gap':max((b-a for a,b in zip(ticks,ticks[1:])), default=0),
               'save_sha256':digest, 'save_unchanged':unchanged,
               'persistent_cache_created':cache_created,
