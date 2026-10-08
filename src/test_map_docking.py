@@ -122,6 +122,7 @@ def test_map_page_restart_preserves_saved_float_until_real_layout(app,tmp_path,c
     assert frame.geometry()==(QRect(500,200,360,38) if collapsed else expected)
     if collapsed:
         frame.collapse_button.click()
+        QTest.qWait(280)  # User-triggered expansion now follows shared Fluent motion.
         assert frame.geometry()==expected
     restored.close()
 

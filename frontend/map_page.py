@@ -67,11 +67,12 @@ class MapWorker(QThread):
 
 
 class _MapSurface(QWidget):
-    def __init__(self, canvas, parent=None, search=None, focus=None):
+    def __init__(self, canvas, parent=None, search=None, focus=None, defer_search=None):
         super().__init__(parent)
         self.canvas = canvas
         self._search_provider = search or canvas.search
         self._focus_provider = focus or canvas.focus_result
+        self._defer_search = defer_search
         canvas.setParent(self)
         self.loading = IndeterminateProgressBar(self)
         self.loading.setAccessibleName('正在加载地图')
@@ -81,12 +82,17 @@ class _MapSurface(QWidget):
         self.search.setPlaceholderText('搜索单条线路')
         self.search.setAccessibleName('搜索单条线路')
         self.search.setFixedHeight(36)
-        setCustomStyleSheet(self.search, f'SearchLineEdit {{ background: {tokens.CARD_BG}; color: {tokens.TEXT_PRIMARY}; }}', f'SearchLineEdit {{ background: {tokens.CARD_BG}; color: {tokens.TEXT_PRIMARY}; }}')
+        self.search.setObjectName("mapSearchInput")
+        setCustomStyleSheet(self.search, f'SearchLineEdit#mapSearchInput, SearchLineEdit#mapSearchInput:hover, SearchLineEdit#mapSearchInput:focus, SearchLineEdit#mapSearchInput:disabled {{ background: {tokens.CARD_BG}; color: {tokens.TEXT_PRIMARY}; }}', f'SearchLineEdit#mapSearchInput, SearchLineEdit#mapSearchInput:hover, SearchLineEdit#mapSearchInput:focus, SearchLineEdit#mapSearchInput:disabled {{ background: {tokens.CARD_BG}; color: {tokens.TEXT_PRIMARY}; }}')
         self.results = ListWidget(self)
+        self.results.setObjectName('mapSearchResults')
+        result_style=f'ListWidget#mapSearchResults {{ background:{tokens.CARD_BG}; color:{tokens.TEXT_PRIMARY}; border:1px solid {tokens.BORDER}; border-radius:{tokens.RADIUS_CONTROL}px; }}'
+        setCustomStyleSheet(self.results,result_style,result_style)
         self.results.setFont(ui_font(tokens.FONT_SIZE_BODY))
         self.results.hide()
-        self.search.searchSignal.connect(self._search)
-        self.search.clearSignal.connect(self.results.hide)
+        self.search.searchSignal.connect(self._submit_search)
+        self.search.returnPressed.connect(self._submit_search)
+        self.search.clearSignal.connect(self._clear_search)
         self.results.itemClicked.connect(self._focus)
         self.results.itemActivated.connect(self._focus)
         self.controls = QWidget(self)
@@ -118,11 +124,35 @@ class _MapSurface(QWidget):
             item=QListWidgetItem(result.label)
             item.setData(Qt.ItemDataRole.UserRole,result)
             if not getattr(result,'selectable',True):
-                item.setText(result.label+'\n无地图路径')
+                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole,'无地图路径')
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable)
             self.results.addItem(item)
         self.results.setVisible(bool(self.results.count()))
         self.results.raise_()
+
+    def _clear_search(self):
+        self.results.clear()
+        self.results.hide()
+        if self._defer_search is not None:self._defer_search('')
+
+    def _submit_search(self,*_):
+        text=self.search.text().strip()
+        if not text:
+            self._clear_search()
+            return
+        if self._defer_search is not None and self._defer_search(text):
+            self.results.clear()
+            self.results.hide()
+            return
+        self._search()
+        if self.results.count()==1 and self.results.item(0).flags() & Qt.ItemFlag.ItemIsEnabled:
+            self._focus(self.results.item(0))
+        elif self.results.count():
+            for index in range(self.results.count()):
+                if self.results.item(index).flags() & Qt.ItemFlag.ItemIsEnabled:
+                    self.results.setCurrentRow(index)
+                    self.results.setFocus()
+                    break
 
     def set_loading(self, active):
         if active:
@@ -134,6 +164,7 @@ class _MapSurface(QWidget):
             self.loading.hide()
 
     def _focus(self,item):
+        if item is None or not item.flags() & Qt.ItemFlag.ItemIsEnabled:return
         self._focus_provider(item.data(Qt.ItemDataRole.UserRole))
         self.results.hide()
 
@@ -152,9 +183,13 @@ class MapPage(QWidget):
         self._generation=0
         self._session_generation=0
         self._pending_route=None
+        self._pending_search=None
         self._switching=True
         self._snapshot=None
         self._panel_catalogs={}
+        self._presentation_source=None
+        self._presentation_companies=None
+        self._presentation_routes=()
         self._planning_options=None
         self._awaiting_frame=False
         self._panel_presentation=None
@@ -172,7 +207,7 @@ class MapPage(QWidget):
             self.canvas.frame_ready.connect(self._frame_ready)
         if hasattr(self.canvas, 'render_failed'):
             self.canvas.render_failed.connect(self._render_failed)
-        self.surface=_MapSurface(self.canvas, search=self.search, focus=self._focus_search)
+        self.surface=_MapSurface(self.canvas, search=self.search, focus=self._focus_search, defer_search=self._defer_search)
         building_clicked=getattr(self.canvas,'buildingClicked',None)
         if building_clicked is not None:building_clicked.connect(self.show_building)
         self.panel_set=MapPanelSet(self)
@@ -276,7 +311,6 @@ class MapPage(QWidget):
             self.presets.activate(preset)
             self.surface.search.setPlaceholderText('搜索单条线路')
             self.surface.search.setAccessibleName(self.surface.search.placeholderText())
-            self.surface.search.clear()
             self.surface.results.hide()
             self._sync_preset_panels()
             if self.query is not None:
@@ -298,7 +332,7 @@ class MapPage(QWidget):
         if self.query is not None and self.preset==preset:self._apply_current()
 
     def _sync_preset_panels(self):
-        routes=self.query.snapshot.routes if self.query is not None else ()
+        routes=self._presentation_catalog()
         if hasattr(self,'single_panel'):
             state=self.presets.state('single')['query']
             if self._panel_catalogs.get('single') is not routes:
@@ -329,18 +363,57 @@ class MapPage(QWidget):
                          building_classes=own['building_classes'],building_emphasis=own['building_emphasis'])
         return state
 
+    def _presentation_catalog(self):
+        """One save-local catalog for every search, independent of map filters."""
+        from report_model import display_company
+        from map_line_labels import resolve_line_labels
+        routes=self.query.snapshot.routes if self.query is not None else ()
+        companies={str(row['公司标识']):display_company(row.get('公司名称',''))
+                   for row in self.session.get('companies',()) if row.get('公司标识') is not None}
+        names=tuple(sorted(companies.items()))
+        if self._presentation_source is routes and self._presentation_companies==names:
+            return self._presentation_routes
+        self._presentation_source=routes
+        self._presentation_companies=names
+        self._presentation_routes=tuple(dict(id=route.id,name=self.canvas.route_label(route),
+            company_id=route.company_id,company_name=display_company(companies.get(str(route.company_id),route.company_name)),
+            mode=route.mode,selectable=route_has_geometry(route)) for route in routes)
+        labels=resolve_line_labels(self._presentation_routes)
+        for route in self._presentation_routes:route['display_label']=labels[route['id']]
+        return self._presentation_routes
+
     def search(self,text):
         if self.query is None:return []
+        from display_rules import display_mode
         needle=str(text).strip().casefold()
         if not needle:return []
         results=[]
-        for route in self.query.snapshot.routes:
-            label=self.canvas.route_label(route)
-            identity=f'{label} · {route.company_name} [{route.company_id}]'
-            if needle not in identity.casefold() and needle!=str(route.id):continue
-            results.append(_SaveSearchResult('route',route.id,identity,self.query.snapshot.bounds,
-                                            self.save_token,route_has_geometry(route)))
+        for route in self._presentation_catalog():
+            identity=route['display_label']
+            haystack=f"{identity} {route['company_name']} {display_mode(route['mode'])} {route['id']}".casefold()
+            if needle not in haystack:continue
+            results.append(_SaveSearchResult('route',route['id'],identity,self.query.snapshot.bounds,
+                                            self.save_token,route['selectable']))
         return results
+
+    def _search_token(self):
+        # Statistics handoff changes save_token but continues this exact prefetch.
+        # Its source and worker generation remain stable until cancellation.
+        if self._prefetch_path is not None:
+            return ('prefetch',str(self._prefetch_path),self._generation)
+        return ('session',*self.save_token)
+
+    def _defer_search(self,text):
+        self._pending_search=(self._search_token(),text) if text and self.query is None else None
+        return self._pending_search is not None
+
+    def _consume_pending_search(self):
+        pending=self._pending_search
+        self._pending_search=None
+        if pending is None:return
+        token,text=pending
+        if token==self._search_token() and text==self.surface.search.text().strip():
+            self.surface._submit_search()
 
     def _focus_search(self,result):
         if getattr(result,'save_token',self.save_token)!=self.save_token:return False
@@ -382,7 +455,7 @@ class MapPage(QWidget):
         if building is None:return False
         source=getattr(building,'service_lines',None)
         known=bool(source is not None and source.known)
-        route_by_id={route.id:route for route in self._snapshot.routes}
+        route_by_id={route['id']:route for route in self._presentation_catalog()}
         ids=tuple(dict.fromkeys(source.route_ids)) if known else ()
         candidates=[route_by_id[identity] for identity in ids if identity in route_by_id] if known else None
         unresolved=tuple(getattr(source,'unresolved_refs',()))+tuple(identity for identity in ids if identity not in route_by_id)
@@ -559,6 +632,7 @@ class MapPage(QWidget):
         self._restore_view()
         self._switching=False
         self._consume_pending_route()
+        self._consume_pending_search()
 
     def _frame_ready(self):
         if self._awaiting_frame:
@@ -598,13 +672,15 @@ class MapPage(QWidget):
                 self._panel_presentation=presentation
         elif self.preset=='single':
             from map_line_facts import line_facts, geometry_lengths
+            from map_line_presentation import line_information
             identity=self.presets.state('single')['query']['route_id']
             route=next((r for r in self.query.snapshot.routes if r.id==identity),None)
             facts=line_facts(self.session,identity) if route is not None else None
             lengths=geometry_lengths(route,state['direction'],state['deadhead']) if route is not None else None
             self.single_panel.set_state(dict(self.presets.state('single')['query'],selected_route_id=identity))
             self.single_panel.set_route(route,facts,
-                lengths.operating_km if lengths else None,lengths.deadhead_km if lengths else None)
+                lengths.operating_km if lengths else None,lengths.deadhead_km if lengths else None,
+                information=line_information(self.session,identity))
         else:
             self.planning_panel.set_state(self.presets.state('planning')['query'])
 

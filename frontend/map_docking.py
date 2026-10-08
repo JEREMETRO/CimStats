@@ -2,12 +2,17 @@
 from __future__ import annotations
 from copy import deepcopy
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal, QTimer
-from PySide6.QtWidgets import QWidget, QFrame, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication
+from PySide6.QtWidgets import QWidget, QFrame, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication, QLayout
 from qfluentwidgets import BodyLabel, TransparentPushButton, Pivot, setCustomStyleSheet, TransparentToolButton, FluentIcon
 import stats_tokens as tokens
 from stats_typography import ui_font
+from stats_motion import CollapseMotion
 
-_TITLES={'layers':'图层控制','filters':'线路筛选','display':'显示设置'}
+_TITLES={'layers':'图层控制','filters':'线路筛选','display':'显示设置',
+         'single':'线路信息','planning':'建筑视图与线路比选'}
+
+def panel_title(key,panel=None):
+    return _TITLES.get(key) or (panel.accessibleName() if panel is not None else '') or '地图面板'
 
 class _ResizeGrip(QWidget):
     def __init__(self,frame,edges):
@@ -29,15 +34,30 @@ class _ResizeGrip(QWidget):
         if self.start is not None:
             self.start=None; self.frame.expanded_geometry=QRect(self.frame.geometry()); self.frame.host._emit()
 
+class _PanelBody(QWidget):
+    """Clip a panel during shared motion while preserving its natural row layout."""
+    def __init__(self,frame,panel):
+        super().__init__(frame)
+        self.frame=frame
+        layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        layout.addWidget(panel)
+
+    def sizeHint(self):
+        size=super().sizeHint()
+        if self.frame.floating:size.setHeight(max(0,self.frame.expanded_geometry.height()-38))
+        return size
+
+
 class _PanelFrame(QFrame):
     def __init__(self,host,key,panel):
-        super().__init__(host); self.host=host; self.key=key; self.floating=False; self.pinned=False; self.collapsed=False
+        super().__init__(host); self.host=host; self.key=key; self.floating=False; self.pinned=False; self.collapsed=False; self.animating=False
         self.expanded_geometry=QRect(32,32,360,520)
         self.setObjectName('mapPanelFrame')
         self.setStyleSheet(f'QFrame#mapPanelFrame {{background:{tokens.CARD_BG}; border:1px solid {tokens.BORDER_STRONG}; border-radius:{tokens.RADIUS_CONTROL}px;}}')
-        layout=QVBoxLayout(self); layout.setContentsMargins(1,1,1,1); layout.setSpacing(0)
+        layout=QVBoxLayout(self); layout.setContentsMargins(1,1,1,1); layout.setSpacing(0); layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self.header=QWidget(); row=QHBoxLayout(self.header); row.setContentsMargins(8,0,4,0); row.setSpacing(2)
-        self.title=BodyLabel(_TITLES.get(key,panel.accessibleName() or key)); self.title.setFont(ui_font(tokens.FONT_SIZE_BODY))
+        self.title=BodyLabel(panel_title(key,panel)); self.title.setFont(ui_font(tokens.FONT_SIZE_BODY))
         setCustomStyleSheet(self.title,f'QLabel {{color:{tokens.TEXT_PRIMARY};}}',f'QLabel {{color:{tokens.TEXT_PRIMARY};}}')
         self.title.setAccessibleName(self.title.text()); self.title.installEventFilter(host)
         host._drag_sources[self.title]=key
@@ -45,22 +65,25 @@ class _PanelFrame(QFrame):
         self.pin_button=TransparentPushButton('固定'); self.pin_button.setCheckable(True); self.pin_button.setFixedWidth(54)
         self.pin_button.clicked.connect(lambda checked:host.set_pinned(key,checked))
         self.collapse_button=TransparentPushButton('收起'); self.collapse_button.setFixedWidth(54)
-        self.collapse_button.clicked.connect(lambda:host.set_panel_collapsed(key,not self.collapsed))
+        self.collapse_button.clicked.connect(lambda:host.set_panel_collapsed(key,not self.collapsed,animated=True))
         row.addWidget(self.pin_button); row.addWidget(self.collapse_button); self.header.setFixedHeight(36)
-        layout.addWidget(self.header); layout.addWidget(panel,1); self.panel=panel
+        layout.addWidget(self.header); self.panel=panel
+        self.body=_PanelBody(self,panel);layout.addWidget(self.body,1)
+        self.motion=CollapseMotion(self.body,lambda:host._finish_panel_collapse(key))
+        self.motion.on_progress=lambda:host._panel_collapse_progress(key)
         self.grips=[_ResizeGrip(self,e) for e in [('l',),('r',),('t',),('b',),('r','b')]]
         self.sync()
     def sync(self):
         self.pin_button.setVisible(self.floating); self.pin_button.setChecked(self.pinned)
         self.pin_button.setText('取消固定' if self.pinned else '固定'); self.pin_button.setFixedWidth(80 if self.pinned else 54)
         self.collapse_button.setText('展开' if self.collapsed else '收起')
-        self.panel.setVisible(not self.collapsed)
+        if not self.animating:self.body.setVisible(not self.collapsed)
         self.header.setVisible(self.floating)
         self.setStyleSheet(f'QFrame#mapPanelFrame {{background:{tokens.CARD_BG};border:{"1px solid "+tokens.BORDER if self.floating else "0"};border-radius:{tokens.RADIUS_CONTROL}px;}}')
         for grip in self.grips:grip.setVisible(self.floating and not self.pinned and not self.collapsed)
         if self.floating:
-            self.setMinimumSize(240,38 if self.collapsed else 120)
-            self.setMaximumHeight(38 if self.collapsed else 16777215)
+            self.setMinimumSize(240,38 if self.collapsed or self.animating else 120)
+            self.setMaximumHeight(38 if self.collapsed and not self.animating else 16777215)
         else:self.setMinimumSize(0,0); self.setMaximumHeight(16777215)
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -88,7 +111,7 @@ class MapDockHost(QWidget):
         dock_layout=QVBoxLayout(self.dock); dock_layout.setContentsMargins(2,2,2,2); dock_layout.setSpacing(2)
         self.group_button=TransparentToolButton(FluentIcon.CHEVRON_RIGHT); self.group_button.setFixedSize(32,32); self.group_button.setAccessibleName('收起面板')
         setCustomStyleSheet(self.group_button,'TransparentPushButton {padding:0px;}','TransparentPushButton {padding:0px;}')
-        self.group_button.clicked.connect(lambda:self.set_group_collapsed(not self._group_collapsed))
+        self.group_button.clicked.connect(lambda:self.set_group_collapsed(not self._group_collapsed,animated=True))
         self.tabs_widget=Pivot(); self.tabs_widget.setItemFontSize(tokens.FONT_SIZE_BODY)
         self.tabs_widget.currentItemChanged.connect(self.activate_panel)
         self.dock_bar=QWidget(); bar_layout=QHBoxLayout(self.dock_bar); bar_layout.setContentsMargins(0,0,0,0); bar_layout.setSpacing(0)
@@ -99,14 +122,17 @@ class MapDockHost(QWidget):
         self.stack=QStackedWidget(); dock_layout.addWidget(self.stack,1)
         self.frames={}
         for key,panel in self.panels.items():
-            tab=self.tabs_widget.addItem(key,_TITLES.get(key,panel.accessibleName() or key)); tab.setFont(ui_font(tokens.FONT_SIZE_BODY))
+            tab=self.tabs_widget.addItem(key,panel_title(key,panel)); tab.setFont(ui_font(tokens.FONT_SIZE_BODY))
             tab.setStyleSheet(f'QPushButton {{background:transparent;border:0;outline:0;padding:8px 7px;color:{tokens.TEXT_SECONDARY};}} QPushButton[isSelected="true"] {{color:{tokens.ACCENT};}}')
             tab.installEventFilter(self); self._drag_sources[tab]=key; self.tabs[key]=tab
-            rail_button=TransparentPushButton('\n'.join(_TITLES.get(key,key)))
+            rail_title=panel_title(key,panel)
+            rail_button=TransparentPushButton('\n'.join(rail_title))
+            rail_button.setAccessibleName(rail_title)
             rail_button.clicked.connect(lambda checked=False,k=key:self.activate_panel(k))
-            rail_button.setFixedHeight(90); rail_layout.addWidget(rail_button); self.rail_buttons[key]=rail_button
+            rail_button.setFixedHeight(max(90,rail_button.fontMetrics().lineSpacing()*len(rail_title)+16)); rail_layout.addWidget(rail_button); self.rail_buttons[key]=rail_button
             frame=_PanelFrame(self,key,panel); self.frames[key]=frame; self.stack.addWidget(frame)
         rail_layout.addStretch(1)
+        self.group_motion=CollapseMotion(self.stack,self._finish_group_collapse)
         self.preview=QFrame(self); self.preview.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.preview.setStyleSheet(f'background:{tokens.ACCENT_SOFT};border:2px solid {tokens.ACCENT};border-radius:6px;'); self.preview.hide()
         if self._active:self.activate_panel(self._active)
@@ -154,33 +180,61 @@ class MapDockHost(QWidget):
         frame.expanded_geometry=QRect(frame.geometry()); self._emit()
 
     def dock_panel(self,key):
-        frame=self.frames[key]; frame.floating=False; frame.collapsed=False; frame.sync()
+        frame=self.frames[key]; frame.motion.finish(); frame.floating=False; frame.collapsed=False; frame.sync()
         self.stack.addWidget(frame); self.activate_panel(key); self.preview.hide(); self._emit()
 
     def set_pinned(self,key,pinned):
         frame=self.frames[key]; frame.pinned=bool(pinned); frame.sync(); self._emit()
 
-    def set_panel_collapsed(self,key,collapsed):
+    def _panel_collapse_progress(self,key):
         frame=self.frames[key]
-        if not frame.floating:
-            self.set_group_collapsed(collapsed); return
-        if frame.collapsed==bool(collapsed):return
-        if frame.floating and not frame.collapsed:frame.expanded_geometry=QRect(frame.geometry())
-        frame.collapsed=bool(collapsed); frame.sync()
+        if frame.floating:
+            height=max(38,frame.body.maximumHeight()+38)
+            frame.resize(frame.width(),min(height,self.height()))
+
+    def _finish_panel_collapse(self,key):
+        frame=self.frames[key]
+        frame.animating=False;frame.sync()
         if frame.floating:
             rect=QRect(frame.expanded_geometry)
             if frame.collapsed:rect.setHeight(38)
             frame.setGeometry(self._clamp(rect))
         self._emit()
 
-    def set_group_collapsed(self,collapsed):
-        self._group_collapsed=bool(collapsed)
+    def set_panel_collapsed(self,key,collapsed,animated=False):
+        frame=self.frames[key]
+        if not frame.floating:
+            self.set_group_collapsed(collapsed,animated=animated);return
+        if frame.collapsed==bool(collapsed) and not frame.animating:return
+        if not frame.collapsed and not frame.animating:frame.expanded_geometry=QRect(frame.geometry())
+        elif frame.collapsed and not collapsed:frame.expanded_geometry.moveTopLeft(frame.pos())
+        frame.collapsed=bool(collapsed)
+        if animated:
+            frame.animating=True;frame.sync()
+            frame.motion.set_collapsed(frame.collapsed)
+        else:
+            frame.motion.collapsed=frame.collapsed
+            frame.motion.finish()
+
+    def _finish_group_collapse(self):
+        collapsed=self._group_collapsed
         self.dock.setFixedWidth(44 if collapsed else min(self._dock_width,max(240,self.width()-200)))
         self.stack.setVisible(not collapsed)
-        self.tabs_widget.setVisible(not collapsed); self.rail.setVisible(collapsed)
+        self.tabs_widget.setVisible(not collapsed);self.rail.setVisible(collapsed)
+        self._emit()
+
+    def set_group_collapsed(self,collapsed,animated=False):
+        self._group_collapsed=bool(collapsed)
         self.group_button.setIcon(FluentIcon.LEFT_ARROW if collapsed else FluentIcon.CHEVRON_RIGHT)
         self.group_button.setAccessibleName('展开面板' if collapsed else '收起面板')
-        self._emit()
+        if animated:
+            if not collapsed:
+                self.dock.setFixedWidth(min(self._dock_width,max(240,self.width()-200)))
+                self.tabs_widget.show();self.rail.hide()
+            self.group_motion.set_collapsed(bool(collapsed))
+        else:
+            self.group_motion.collapsed=bool(collapsed)
+            self.group_motion.finish()
 
     def layout_state(self):
         state={'version':1,'active':self._active,'group_collapsed':self._group_collapsed,'dock_width':self._dock_width,
