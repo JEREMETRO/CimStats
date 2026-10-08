@@ -332,6 +332,7 @@ class MapPage(QWidget):
         if self.query is not None and self.preset==preset:self._apply_current()
 
     def _sync_preset_panels(self):
+        if self.query is None:self.panel_set.set_result_count(0)
         routes=self._presentation_catalog()
         if hasattr(self,'single_panel'):
             state=self.presets.state('single')['query']
@@ -670,6 +671,7 @@ class MapPage(QWidget):
                 self._panel_options.update(self.query.panel_options(self.session,state,self.result))
                 self.panel_set.set_options(self._panel_options)
                 self._panel_presentation=presentation
+            self.panel_set.set_result_count(len(self.result.routes))
         elif self.preset=='single':
             from map_line_facts import line_facts, geometry_lengths
             from map_line_presentation import line_information

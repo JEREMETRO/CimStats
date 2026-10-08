@@ -8,6 +8,56 @@ from semantic_colors import map_fill, color_for
 import pytest
 
 
+def test_network_summary_tracks_effective_query_without_erasing_selection(qt_application, tmp_path):
+    from PySide6.QtCore import QSettings
+    from map_page import MapPage
+    from map_model import MapRoute, RouteService, ServiceTimetable
+    hour = 36_000_000_000
+    path = (((0., 0., 0.), (100., 0., 0.)),)
+    service = RouteService(True, True, (ServiceTimetable(127, 8*hour, 10*hour, hour,
+                                                       (8*hour, 9*hour, 10*hour)),))
+    routes = (MapRoute(1, '日线', 1, 'a', '甲', 'bus', (), path, service=service),
+              MapRoute(2, '晚线', 2, 'b', '乙', 'bus', (), path))
+    page = MapPage(QSettings(str(tmp_path/'counts.ini'), QSettings.Format.IniFormat))
+    page.set_session({'save_key': 'A', 'simulation_time': '2013-05-23T09:00:00'})
+    page.set_snapshot(MapSnapshot(routes=routes))
+    page.resize(1440, 960); page.show(); qt_application.processEvents()
+    panel = page.panel_set
+
+    def assert_count(count):
+        assert panel.selection_summary.text() == f'已选 {count} / 共 2'
+        assert f'已选 {count} 条' in page.status.text()
+        assert len(page.result.routes) == count
+
+    try:
+        assert_count(2)
+        QTest.mouseClick(panel.controls['service_time_mode'].buttons['instant'], Qt.MouseButton.LeftButton)
+        assert_count(1)
+        assert panel.state()['manual_line_ids'] == {1, 2}
+        page.set_preset('planning'); page.set_preset('network')
+        assert_count(1)
+        QTest.mouseClick(panel.controls['service_time_mode'].buttons['off'], Qt.MouseButton.LeftButton)
+        companies = panel.group_lists['company_ids']
+        companies.setCurrentItem(next(companies.item(i) for i in range(companies.count())
+                                      if companies.item(i).data(Qt.ItemDataRole.UserRole) == 'a'))
+        QTest.keyClick(companies, Qt.Key.Key_Space)
+        assert_count(1)
+        assert panel.state()['manual_line_ids'] == {1, 2}
+        QTest.mouseClick(panel.manual_none, Qt.MouseButton.LeftButton)
+        assert_count(0)
+        assert panel.state()['manual_line_ids'] == {1}  # Bulk action only affects current candidates.
+        QTest.mouseClick(panel.reset_filters, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(panel.manual_none, Qt.MouseButton.LeftButton)
+        assert_count(0)
+        page.set_preset('single'); page.set_preset('network')
+        assert_count(0)
+        assert panel.state()['manual_line_ids'] == set()
+        page.set_session({'save_key': 'B'})
+        assert panel.selection_summary.text().startswith('已选 0 /')
+    finally:
+        page.close()
+
+
 def test_preset_revisit_reuses_immutable_layer_indexes(qt_application, tmp_path):
     from PySide6.QtCore import QSettings
     from map_page import MapPage

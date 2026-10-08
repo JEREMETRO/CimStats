@@ -398,6 +398,7 @@ class MapPanelSet(QWidget):
         self._options = {}
         self._updating = False
         self._service_clock = None
+        self._result_count = None
         self.group_lists = {}; self.group_summaries = {}; self.layer_checks = {}; self.controls = {}; self.control_labels = {}
         self.panels = {}; self._layouts = {}
         for key, title in [('layers','图层控制'),('filters','线路筛选'),('display','显示设置')]:
@@ -414,6 +415,11 @@ class MapPanelSet(QWidget):
 
     def state(self):
         return deepcopy(self._state)
+
+    def set_result_count(self, count):
+        """Display the current combined query result without changing selection."""
+        self._result_count = count
+        self._selection_summary()
 
     def set_state(self, state):
         for key, value in state.items():
@@ -777,9 +783,7 @@ class MapPanelSet(QWidget):
         titles={'road_levels':'道路等级','building_classes':'社会群体','building_uses':'建筑用途','layer_modes':'制式',
                 'manual_line_ids':'线路结果','company_ids':'公司','modes':'制式','profit_statuses':'盈亏 · 周化估计'}
         for key,label in self.group_summaries.items():label.setText(titles[key])
-        lines=self._options.get('lines',[]); selected=self._state['manual_line_ids'] or set()
-        count=sum(v['id'] in selected for v in lines)
-        self.selection_summary.setText(f'已选 {count} / 共 {len(lines)}')
+        self._selection_summary()
         while self.tag_layout.count():
             item=self.tag_layout.takeAt(0)
             if item.widget():item.widget().deleteLater()
@@ -792,6 +796,12 @@ class MapPanelSet(QWidget):
             rule=f'QLabel {{background:{tokens.ACCENT_SOFT};color:{tokens.ACCENT};border-radius:4px;padding:2px 6px;}}'
             setCustomStyleSheet(label,rule,rule); self.tag_layout.addWidget(label)
         self.filter_tags.setVisible(self.tag_layout.count()>0)
+
+    def _selection_summary(self):
+        lines=self._options.get('lines',[]); selected=self._state['manual_line_ids'] or set()
+        count=self._result_count
+        if count is None:count=sum(v['id'] in selected for v in lines)
+        self.selection_summary.setText(f'已选 {count} / 共 {len(lines)}')
 
     def _sync_layer_checks(self):
         categories={'roads':'road_levels','buildings':'building_classes','routes':'layer_modes'}
