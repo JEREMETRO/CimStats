@@ -8,25 +8,22 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 
 import stats_tokens as tokens
+from window_workarea import available_workarea, fit_window_to_workarea
 
 DEFAULT_WINDOW_SIZE = QSize(1600, 1000)
 MINIMUM_WINDOW_SIZE = QSize(960, 680)
 
 
 def initial_window_size():
-    screen = QApplication.primaryScreen()
-    available = screen.availableGeometry().size() if screen else DEFAULT_WINDOW_SIZE
-    return QSize(max(MINIMUM_WINDOW_SIZE.width(), min(DEFAULT_WINDOW_SIZE.width(), available.width())),
-                 max(MINIMUM_WINDOW_SIZE.height(), min(DEFAULT_WINDOW_SIZE.height(), available.height())))
+    area = available_workarea()
+    return DEFAULT_WINDOW_SIZE.boundedTo(area.size()) if area is not None else QSize(DEFAULT_WINDOW_SIZE)
 
 
 def center_startup_window(window):
-    screen = QApplication.primaryScreen()
-    if screen is not None:
-        window.move(screen.availableGeometry().center() - window.rect().center())
+    fit_window_to_workarea(window,center=True)
 
 
 class StartupSurface(QWidget):

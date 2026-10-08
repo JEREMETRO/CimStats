@@ -350,7 +350,8 @@ class MainWindow(FluentMainWindow):
         self.setWindowIcon(QIcon(str(icon_svg_path(BUNDLE_ROOT))))
         self.setStyleSheet(f'QMainWindow {{ background: {PAGE_BG}; }}')
         self.resize(initial_window_size())
-        self.setMinimumSize(MINIMUM_WINDOW_SIZE)
+        from window_workarea import set_workarea_minimum
+        set_workarea_minimum(self,MINIMUM_WINDOW_SIZE)
         center_startup_window(self)
         self._content_ready = False
         self._content_initializing = False

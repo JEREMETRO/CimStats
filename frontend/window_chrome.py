@@ -10,6 +10,7 @@ from qframelesswindow import FramelessMainWindow, FramelessWindow, TitleBar
 from qframelesswindow.titlebar import CloseButton, MaximizeButton, MinimizeButton
 from qframelesswindow.windows import WindowsFramelessWindowBase
 from stats_tokens import FONT_FAMILY, TEXT_PRIMARY, TEXT_DISABLED
+from window_workarea import WindowWorkArea
 
 TITLE_BAR_HEIGHT = 32
 
@@ -209,6 +210,7 @@ class _ChromeMixin:
         self.titleBar.resize(self.width(), TITLE_BAR_HEIGHT)
         if not show_icon:
             clear_secondary_window_icon(self)
+        self._window_workarea=WindowWorkArea(self)
 
     def _initFrameless(self):
         if QApplication.platformName() == 'offscreen':
