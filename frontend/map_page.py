@@ -381,10 +381,13 @@ class MapPage(QWidget):
             return self._presentation_routes
         self._presentation_source=routes
         self._presentation_companies=names
-        self._presentation_routes=tuple(dict(id=route.id,name=self.canvas.route_label(route),
+        self._presentation_routes=tuple(dict(id=route.id,name=route.name,
             search_name=route.name,number=route.number,
             company_id=route.company_id,company_name=display_company(companies.get(str(route.company_id),route.company_name)),
-            mode=route.mode,selectable=route_has_geometry(route)) for route in routes)
+            mode=route.mode,selectable=route_has_geometry(route),
+            passengers=getattr(self.query.stats.get(route.id),'passengers',None),
+            opened_at=getattr(self.query.stats.get(route.id),'opened_at',None),
+            scheduled_departures=getattr(self.query.stats.get(route.id),'scheduled_departures',None)) for route in routes)
         labels=resolve_line_labels(self._presentation_routes)
         for route in self._presentation_routes:route['display_label']=labels[route['id']]
         return self._presentation_routes
@@ -683,16 +686,25 @@ class MapPage(QWidget):
                 self._panel_presentation=presentation
             self.panel_set.set_result_count(len(self.result.routes))
         elif self.preset=='single':
-            from map_line_facts import line_facts, geometry_lengths
+            from map_line_facts import line_facts
             from map_line_presentation import line_information
+            from map_route_metrics import selected_route_metrics
+            from map_service_time import session_line
+            from line_query_page import line_display_value
+            from map_query import optional_number
             identity=self.presets.state('single')['query']['route_id']
             route=next((r for r in self.query.snapshot.routes if r.id==identity),None)
             facts=line_facts(self.session,identity) if route is not None else None
-            lengths=geometry_lengths(route,state['direction'],state['deadhead']) if route is not None else None
+            line=session_line(self.session,identity)
+            lines=self.session.get('lines',())
+            metrics=(selected_route_metrics(route,state['direction'],state['deadhead'],
+                whole_duration_minutes=optional_number(line_display_value(line,'单程时间',lines)) if line else None,
+                whole_length_km=optional_number(line_display_value(line,'地图里程',lines)) if line else None)
+                if route is not None else None)
             self.single_panel.set_state(dict(self.presets.state('single')['query'],selected_route_id=identity))
             self.single_panel.set_route(route,facts,
-                lengths.operating_km if lengths else None,lengths.deadhead_km if lengths else None,
-                information=line_information(self.session,identity))
+                metrics.operating_km if metrics else None,metrics.deadhead_km if metrics else None,
+                information=line_information(self.session,identity,direction_metrics=metrics))
         else:
             self.planning_panel.set_state(self.presets.state('planning')['query'])
 
