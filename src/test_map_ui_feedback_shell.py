@@ -32,6 +32,7 @@ def test_map_search_surface_is_opaque_in_each_state(app,state):
         surface=_MapSurface(ColorCanvas(color),search=lambda text:[MapSearchResult('route',10,'Central',(0,0,1,1))])
         surface.resize(440,240);surface.show();app.processEvents()
         try:
+            surface._activate_search()
             surface.search.clearFocus();QTest.mouseMove(surface,QPoint(430,200))
             if state=='hover':QTest.mouseMove(surface.search,QPoint(140,20))
             if state=='loading':surface.set_loading(True)

@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QTimer, QRectF
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
 from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar, Pivot
 import stats_tokens as tokens
 from stats_typography import ui_font
@@ -99,7 +99,7 @@ class _MapSurface(QWidget):
         self._search_provider = search or canvas.search
         self._focus_provider = focus or canvas.focus_result
         self._defer_search = defer_search
-        self._compact_search = False
+        self._compact_search = True
         self._search_leave_timer = QTimer(self)
         self._search_leave_timer.setSingleShot(True)
         self._search_leave_timer.setInterval(120)
@@ -124,10 +124,13 @@ class _MapSurface(QWidget):
         self.search_button = TransparentToolButton(FluentIcon.SEARCH, self)
         self.search_button.setFixedSize(36,36)
         self.search_button.setAccessibleName('搜索单条线路')
+        self.search_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.search_button.setStyleSheet(f'background:{tokens.CARD_BG};border-radius:6px;')
         self.search_button.hide()
         self.search_button.clicked.connect(self._activate_search)
-        for widget in (self.search_button,self.search,self.results):
+        self._search_widgets=(self.search_button,self.search,self.results,
+                              *self.search.findChildren(QWidget),*self.results.findChildren(QWidget))
+        for widget in self._search_widgets:
             widget.installEventFilter(self)
         self.search.searchSignal.connect(self._submit_search)
         self.search.returnPressed.connect(self._submit_search)
@@ -152,6 +155,7 @@ class _MapSurface(QWidget):
         self._layout_ready=True
         canvas.set_options(legend_external=True)
         self.relayout()
+        self._collapse_search()
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -208,21 +212,23 @@ class _MapSurface(QWidget):
         self.search_button.raise_()
 
     def _collapse_search_if_idle(self):
-        if any(widget.isVisible() and (widget.hasFocus() or widget.underMouse())
-               for widget in (self.search,self.results,self.search_button)):
+        focus=QApplication.focusWidget()
+        if any(widget.isVisible() and (widget is focus or widget.isAncestorOf(focus) or widget.underMouse())
+               for widget in self._search_widgets):
             return
         self._collapse_search()
 
     def eventFilter(self, watched, event):
-        if watched in (self.search_button,self.search,self.results):
-            if event.type()==QEvent.Type.Enter:
+        if watched in getattr(self,'_search_widgets',()):
+            if event.type() in (QEvent.Type.Enter,QEvent.Type.FocusIn):
                 self._search_leave_timer.stop()
-                if watched is self.search_button:self._expand_search()
+                if watched is self.search_button and event.type()==QEvent.Type.Enter:self._expand_search()
             elif event.type() in (QEvent.Type.Leave,QEvent.Type.FocusOut):
                 self._search_leave_timer.start()
         return super().eventFilter(watched,event)
 
     def _search(self,*_):
+        self._expand_search()
         self.results.clear()
         for result in self._search_provider(self.search.text()):
             item=QListWidgetItem(result.label)
@@ -427,7 +433,7 @@ class MapPage(QWidget):
             self.surface.search.setPlaceholderText('搜索单条线路')
             self.surface.search.setAccessibleName(self.surface.search.placeholderText())
             self.surface.results.hide()
-            if preset!='single':self.surface.set_compact_search(False)
+            self.surface.set_compact_search(True)
             self._sync_preset_panels()
             if self.query is not None:
                 self._apply_current()
@@ -606,7 +612,6 @@ class MapPage(QWidget):
 
     def set_session(self, session):
         self._close_building_menu()
-        self.surface.set_compact_search(False)
         if self._stats_worker is not None:self._stats_worker.requestInterruption()
         self._stats_worker=None
         self.surface.results.clear()
@@ -616,6 +621,7 @@ class MapPage(QWidget):
         self._switching=True
         source=Path(session.get('save_path','')) if session else None
         attached=bool(source and self._prefetch_path == source)
+        if not attached:self.surface._collapse_search()
         if not attached:
             self._generation+=1
             for worker in self.workers:worker.requestInterruption()
@@ -665,7 +671,7 @@ class MapPage(QWidget):
 
     def cancel_prefetch(self):
         self._close_building_menu()
-        self.surface.set_compact_search(False)
+        self.surface._collapse_search()
         self._stats_worker=None
         self.surface.results.clear()
         self.surface.results.hide()
@@ -835,9 +841,7 @@ class MapPage(QWidget):
     def _apply_current(self):
         state=self._current_state()
         self.result=self.query.select(state)
-        selected=self.presets.state('single')['query']['route_id']
-        self.surface.set_compact_search(self.preset=='single' and any(
-            route.id==selected for route in self.result.routes))
+        self.surface.set_compact_search(True)
         self.canvas.set_snapshot(self.result.snapshot)
         options={key:value for key,value in state.items() if key in self.canvas.options}
         options.update(route_colors=self.result.route_colors,building_colors=self.result.building_colors,
