@@ -27,10 +27,15 @@ class RouteStats:
     passenger_source: str | None = None
     daytime_interval_minutes: float | None = None
     peak_interval_minutes: float | None = None
+    expense: float | None = None
 
     @property
     def profit_status(self):
-        return 'missing' if self.profit is None else 'profit' if self.profit > 0 else 'loss' if self.profit < 0 else 'zero'
+        profit=optional_number(self.profit) if not isinstance(self.profit,bool) else None
+        if profit is None:return 'missing'
+        expense=optional_number(self.expense) if not isinstance(self.expense,bool) else None
+        if expense is not None and expense>=0 and abs(profit)<=expense*.02:return 'zero'
+        return 'profit' if profit>0 else 'loss' if profit<0 else 'zero'
 
 
 @dataclass(frozen=True)
@@ -55,7 +60,7 @@ def optional_number(value):
 
 
 def stats_from_session(session, routes):
-    by_id = {};lines={}
+    by_id = {};lines={};expenses={}
     day,source=_passenger_context(session)
     for line in session.get('lines', ()):
         raw = line.get('原始字段', {})
@@ -64,9 +69,12 @@ def stats_from_session(session, routes):
             identity = int(identity)
         except (ValueError, TypeError):
             continue
-        income, expense = optional_number(raw.get('收入_累计')), optional_number(raw.get('支出_累计'))
+        income,expense=_financial_number(line,'收入_累计'),_financial_number(line,'支出_累计')
+        if expense is not None and expense<0:expense=None
         # Match the existing weekly smoothing scale without converting missing to zero.
-        by_id[identity] = None if income is None or expense is None else (income-expense)/102400
+        known=identity not in lines and income is not None and expense is not None
+        by_id[identity]=(income-expense)/102400 if known else None
+        expenses[identity]=expense/102400 if known else None
         lines[identity]=line if identity not in lines else None
     result={}
     for route in routes:
@@ -80,8 +88,14 @@ def stats_from_session(session, routes):
         result[route.id]=RouteStats(_passenger_value(line,source),
             by_id.get(route.id),schedule['average_interval'] if schedule is not None else None,
             schedule['count'] if schedule is not None else None,opened,day.isoformat() if day else None,source,
-            _daytime_interval(schedule),_weekday_peak_interval(line,day))
+            _daytime_interval(schedule),_weekday_peak_interval(line,day),expenses.get(route.id))
     return result
+
+
+def _financial_number(line,key):
+    value=line.get('原始字段',{}).get(key)
+    if line.get('字段可用性',{}).get(key) is False or isinstance(value,bool):return None
+    return optional_number(value)
 
 
 def _passenger_context(session):
