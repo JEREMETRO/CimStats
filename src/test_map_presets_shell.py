@@ -66,8 +66,10 @@ def test_store_layout_reset_and_corrupt_settings(settings):
 def routes():
     from map_model import MapRoute, RouteDirection
     return (
-        MapRoute(10, 'Central', 10, 'a', 'Same', 'bus', (), (((0.,0.,0.), (100.,0.,0.)),), RouteDirection('one_way')),
-        MapRoute(20, 'Hill', 20, 'b', 'Same', 'tram', (), (((300.,0.,300.), (500.,10.,300.)),), RouteDirection('one_way')),
+        MapRoute(10, 'Central', 10, 'a', 'Same', 'bus', (1,2), (((0.,0.,0.), (100.,0.,0.)),),
+                 RouteDirection('one_way'), leg_map_length_units=(51200,)),
+        MapRoute(20, 'Hill', 20, 'b', 'Same', 'tram', (3,4), (((300.,0.,300.), (500.,10.,300.)),),
+                 RouteDirection('one_way'), leg_map_length_units=(102400,)),
     )
 
 def page_with_map(settings, app):
