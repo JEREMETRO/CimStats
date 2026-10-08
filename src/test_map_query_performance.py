@@ -106,11 +106,11 @@ def test_direction_distance_and_stops_stay_correct_when_geometry_is_cached():
     query = MapQuery(MapSnapshot(routes=(route,), stops=stops))
     down_result = query.select({'direction': 'down'})
     up_result = query.select({'direction': 'up', 'deadhead': True})
-    assert down_result.mileage_km == .5
-    assert up_result.mileage_km == .7
+    assert down_result.mileage_km == 1.
+    assert up_result.mileage_km == 1.4
     assert {stop.id for stop in down_result.snapshot.stops} == {1, 2}
     assert {stop.id for stop in up_result.snapshot.stops} == {2, 3}
-    assert query.select({'direction': 'down'}).mileage_km == .5
+    assert query.select({'direction': 'down'}).mileage_km == 1.
     building_only = query.select({'direction': 'down', 'building_classes': []})
     assert building_only.snapshot.routes is down_result.snapshot.routes
     assert building_only.snapshot.stops is down_result.snapshot.stops

@@ -9,16 +9,16 @@ import csv
 import math
 from datetime import datetime
 from pathlib import Path
+from display_rules import (MAP_LENGTH_MULTIPLIER, display_map_km, MODE_NAMES,
+                           display_mode, format_line_name, format_garage)
 
 LINE_LENGTH_SCALE = 1_024_000
 LINE_MONEY_SCALE = 102_400
-MAP_LENGTH_MULTIPLIER = 2.0
 
 COMPANY_NAMES = {
     "826272703's Company": "六进公交",
     "jeremylin2005's Company": "八连交通集团",
 }
-from display_rules import MODE_NAMES, display_mode, format_line_name, format_garage
 from line_schedule import WEEKDAY_MASK, optional_integer, prepare_schedule, running_day_mask, weekly_vehicle_average
 _CSV_MODES = ["公交", "单轨列车", "地铁", "无轨电车", "有轨电车", "水上巴士"]
 MODES = [display_mode(mode) for mode in _CSV_MODES]
@@ -314,7 +314,7 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
     lines = []
     for raw in lines_raw:
         key = line_key(raw)
-        map_km = number(raw.get("地图里程")) / LINE_LENGTH_SCALE * MAP_LENGTH_MULTIPLIER
+        map_km = display_map_km(number(raw.get("地图里程")) / LINE_LENGTH_SCALE)
         converted_km = number(raw.get("折算里程", raw.get("线路长度"))) / LINE_LENGTH_SCALE
         duration = duration_minutes(raw)
         deps = departures_by_line.get(key, [])

@@ -2,6 +2,13 @@
 import re
 from decimal import Decimal, ROUND_DOWN, localcontext
 
+MAP_LENGTH_MULTIPLIER = 2.0
+
+
+def display_map_km(native_km):
+    """Convert native route kilometres to the shared information/report scale once."""
+    return None if native_km is None else native_km * MAP_LENGTH_MULTIPLIER
+
 
 def number_places(metric=None):
     return 1 if metric == 'vehicles-running' else 2

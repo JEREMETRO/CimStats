@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from display_rules import format_line_name, store_text_literally
+from display_rules import format_line_name, store_text_literally, MAP_LENGTH_MULTIPLIER, display_map_km
 from parse_events import ProgressReporter
 
 import csv
@@ -27,7 +27,6 @@ TAG = sys.argv[1] if len(sys.argv) > 1 else "运行时"
 
 LINE_MONEY_SCALE = 102400
 LINE_LENGTH_SCALE = 1024000
-MAP_LENGTH_MULTIPLIER = 2.0
 
 COMPANY_NAMES = {
     "826272703's Company": "六进公交",
@@ -261,7 +260,7 @@ def main() -> None:
         converted_length_raw = number(line.get("折算里程", line.get("线路长度", "0")))
         # Reporting convention doubles the pre-conversion map mileage.  The
         # game's converted/display mileage remains unchanged.
-        map_length_km = (map_length_raw / LINE_LENGTH_SCALE) * MAP_LENGTH_MULTIPLIER
+        map_length_km = display_map_km(map_length_raw / LINE_LENGTH_SCALE)
         converted_length_km = converted_length_raw / LINE_LENGTH_SCALE
         metrics = line_metrics(line, departures_by_line.get(key, []), day_bit, duration_minutes, map_length_km)
         mode = line.get("线路类型", "").replace("线路", "")

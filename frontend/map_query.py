@@ -8,6 +8,8 @@ from types import MappingProxyType
 from datetime import datetime, timedelta
 from map_model import MapSnapshot, SOCIAL_GROUPS, BuildingFunctionValues, building_function_values
 from map_visibility import operating_paths, visible_route_stop_ids
+from display_rules import display_map_km
+from report_model import display_company
 from semantic_colors import (SOCIAL, category, canonical_key, color_for,
                              company_palette, line_palette, map_fill, building_function_fill)
 
@@ -246,7 +248,7 @@ class MapQuery:
                                 lambda: tuple(stop for stop in self.snapshot.stops if stop.id in visible_stop_ids))
         return MapResult(replace(self.snapshot, routes=routes, buildings=buildings, stops=stops),
                          MappingProxyType({route.id: self.route_color(route,state) for route in routes}),
-                         building_colors, length/1000., bool(emphasis))
+                         building_colors, display_map_km(length/1000.), bool(emphasis))
 
     def legend_items(self, state, result=None):
         result = result or self.select(state)
@@ -279,7 +281,7 @@ class MapQuery:
             from semantic_colors import PROFIT
             return tuple((item.name,item.color) for item in PROFIT)
         if mode == 'company':
-            names = {r.company_id:r.company_name for r in routes}
+            names = {r.company_id:display_company(r.company_name) for r in routes}
             return tuple((name,self.company_colors[key]) for key,name in sorted(names.items()))
         modes = sorted({canonical_key('mode',r.mode) for r in routes})
         return tuple((category('mode',key).name,color_for('mode',key)) for key in modes)
@@ -288,7 +290,7 @@ class MapQuery:
         state = state or {}
         if self._base_options is None:
             modes = sorted({canonical_key('mode', route.mode) for route in self.snapshot.routes})
-            companies = {route.company_id: route.company_name for route in self.snapshot.routes}
+            companies = {route.company_id: display_company(route.company_name) for route in self.snapshot.routes}
             present_groups = {entry.group for b in self.snapshot.buildings
                               for entry in b.function_capacities
                               if any(v is not None and v>0 for v in (entry.home,entry.work,entry.leisure))}

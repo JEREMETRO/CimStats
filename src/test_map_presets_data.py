@@ -100,9 +100,9 @@ def test_geometry_lengths_use_selected_3d_operating_paths_and_actual_depot_only(
     route=replace(model.MapRoute(1,'x',1,'a','x','bus',(1,2,1),()),direction=model.RouteDirection('roundtrip',1),
                   leg_paths=(( ((0,0,0),(3000,4000,0)), ),( ((3000,4000,0),(0,0,0)), )),
                   depot_paths=(((0,0,0),(0,0,2000)),))
-    assert geometry_lengths(route,'up').operating_km==5
-    assert geometry_lengths(route,'both',True).total_km==12
-    assert geometry_lengths(route,'down',True).deadhead_km==2
+    assert geometry_lengths(route,'up').operating_km==10
+    assert geometry_lengths(route,'both',True).total_km==24
+    assert geometry_lengths(route,'down',True).deadhead_km==4
     assert geometry_lengths(replace(route,leg_paths=(),paths=(),diagnostic='missing')).operating_km is None
 
 def test_missing_schedule_and_duplicate_object_ids_never_default_to_zero():

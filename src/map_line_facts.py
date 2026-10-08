@@ -6,6 +6,7 @@ from math import dist, isfinite
 from line_schedule import optional_integer, running_day_mask
 from map_service_time import DAY_TICKS, session_line, session_departures
 from map_visibility import operating_paths
+from display_rules import display_map_km
 
 @dataclass(frozen=True, slots=True)
 class LineFacts:
@@ -74,11 +75,12 @@ def geometry_lengths(route, direction='up', include_deadhead=False) -> GeometryL
     """Displayed operating kilometres plus only real saved depot paths.
 
     Both/whole show both actual legs; non-roundtrip routes retain full service.
-    No directional allocation of depot travel and no doubled report mileage.
+    Apply the information page's shared map scale after measuring geometry.
+    This conversion never changes the saved paths or allocates depot travel.
     """
     if direction not in ('up','down','both','whole'):
         raise ValueError('Unknown operating direction')
-    operating = _length(operating_paths(route, 'whole' if direction=='both' else direction), empty_unknown=True)
-    deadhead = _length(route.depot_paths) if include_deadhead else 0.
+    operating = display_map_km(_length(operating_paths(route, 'whole' if direction=='both' else direction), empty_unknown=True))
+    deadhead = display_map_km(_length(route.depot_paths)) if include_deadhead else 0.
     total = operating+deadhead if operating is not None and deadhead is not None else None
     return GeometryLengths(operating,deadhead,total)

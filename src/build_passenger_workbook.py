@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from openpyxl import Workbook
+from display_rules import MAP_LENGTH_MULTIPLIER, display_map_km
 
 PROJECT = Path(__file__).resolve().parents[1]
 EXPORT = Path(os.environ.get("CIM2_EXPORT_DIR", str(PROJECT / "exports")))
@@ -13,7 +14,6 @@ TAG = sys.argv[1] if len(sys.argv) > 1 else "运行时"
 
 LINE_MONEY_SCALE = 102400
 LINE_LENGTH_SCALE = 1024000
-MAP_LENGTH_MULTIPLIER = 2.0
 
 
 def read_lines() -> list[dict[str, str]]:
@@ -45,7 +45,7 @@ def main() -> None:
         ws.append([
             row.get("公司名称", ""), row.get("线路类型", ""), integer(row.get("线路号", "0")), row.get("线路名称", ""),
             integer(row.get("客流_累计", "0")), integer(row.get("客流_今日", "0")), integer(row.get("配车数", "0")),
-            integer(row.get("站点数", "0")), round(integer(row.get("地图里程", row.get("线路长度", "0"))) / LINE_LENGTH_SCALE * MAP_LENGTH_MULTIPLIER, 6),
+            integer(row.get("站点数", "0")), round(display_map_km(integer(row.get("地图里程", row.get("线路长度", "0"))) / LINE_LENGTH_SCALE), 6),
             round(integer(row.get("收入_累计", "0")) / LINE_MONEY_SCALE, 2), round(integer(row.get("支出_累计", "0")) / LINE_MONEY_SCALE, 2),
         ])
     for sheet in wb.worksheets:
