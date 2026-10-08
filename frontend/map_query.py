@@ -83,6 +83,7 @@ class MapQuery:
                                 if canonical_key('mode',route.mode) != 'waterbus'))
         self.stats = dict(stats or {})
         self.line_labels = resolve_line_labels(self.snapshot.routes)
+        self._company_names = {}
         self.line_colors = line_palette(route.id for route in snapshot.routes)
         self.company_colors = company_palette({str(identity) for identity in company_ids}
                                               | {route.company_id for route in snapshot.routes})
@@ -283,13 +284,20 @@ class MapQuery:
             from semantic_colors import PROFIT
             return tuple((item.name,item.color) for item in PROFIT)
         if mode == 'company':
-            names = {r.company_id:display_company(r.company_name) for r in routes}
+            names = {r.company_id:display_company(self._company_names.get(str(r.company_id),r.company_name)) for r in routes}
             return tuple((name,self.company_colors[key]) for key,name in sorted(names.items()))
         modes = sorted({canonical_key('mode',r.mode) for r in routes})
         return tuple((category('mode',key).name,color_for('mode',key)) for key in modes)
 
     def panel_options(self, session=None, state=None, result=None):
         state = state or {}
+        if session is not None:
+            names = {str(company['公司标识']):display_company(company.get('公司名称',''))
+                     for company in session.get('companies',())
+                     if company.get('公司标识') is not None}
+            if names != self._company_names:
+                self._company_names = names
+                self.line_labels = resolve_line_labels(self.snapshot.routes, company_names=names)
         if self._base_options is None:
             modes = sorted({canonical_key('mode', route.mode) for route in self.snapshot.routes})
             companies = {route.company_id: display_company(route.company_name) for route in self.snapshot.routes}
@@ -317,13 +325,16 @@ class MapQuery:
             date = ''
         # Callers populate mutable controls; keep each response independent.
         base = {key: [dict(item) for item in entries] for key, entries in self._base_options.items()}
+        for company in base['companies']:
+            company['name'] = self._company_names.get(str(company['id']),company['name'])
         service_matches = self._services_for(state)
         return {**base,
                 'simulated_datetime': (session or {}).get('simulation_time'),
                 'building_emphasis_effective': (result or self.select(state)).building_emphasis,
                 'lines': [{'id':route.id,'name':route.name,'display_label':self.line_labels[route.id],
                            'number':route.number,'mode':canonical_key('mode',route.mode),
-                           'company_id':route.company_id,'company_name':display_company(route.company_name),
+                           'company_id':route.company_id,
+                           'company_name':display_company(self._company_names.get(str(route.company_id),route.company_name)),
                            'passengers':self.stats.get(route.id,RouteStats()).passengers,
                            'profit':self.stats.get(route.id,RouteStats()).profit_status,
                            'service_matches': True if service_matches is None else service_matches[route.id],

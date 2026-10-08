@@ -8,7 +8,7 @@ def _field(record, name, default=None):
     return record.get(name, default) if isinstance(record, Mapping) else getattr(record, name, default)
 
 
-def resolve_line_labels(routes):
+def resolve_line_labels(routes, *, company_names=None):
     """Return stable-ID labels; callers retain this full-save mapping when filtering.
 
     Prefix the company only for equal mode/name combinations across owners.
@@ -23,11 +23,11 @@ def resolve_line_labels(routes):
         mode = display_mode(_field(route, 'mode', ''))
         name = str(_field(route, 'name', '') or '').strip()
         number = _field(route, 'number')
-        if number is not None and not (mode and name.startswith(mode)):
+        if number is not None:
             name = format_line_name(number, name)
         base = name if mode and name.startswith(mode) else mode + name
-        company = display_company(_field(route, 'company_name', '') or '')
         owner = _field(route, 'company_id')
+        company = display_company((company_names or {}).get(str(owner), _field(route, 'company_name', '') or ''))
         owner = ('id', str(owner)) if owner is not None else ('name', company)
         owners.setdefault(base, set()).add(owner)
         normalized.append((identity, base, company))

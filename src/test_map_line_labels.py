@@ -36,3 +36,10 @@ def test_same_owner_and_prefixed_mode_do_not_create_duplicate_prefixes():
               {'id': 2, 'name': '地铁101号线', 'mode': '地铁', 'company_id': 'same',
                'company_name': '公司'})
     assert resolve_line_labels(routes) == {1: '地铁101号线', 2: '地铁101号线'}
+
+
+def test_native_custom_name_starting_with_mode_still_uses_original_number_formatter():
+    from map_line_labels import resolve_line_labels
+    from map_model import MapRoute
+    route = MapRoute(8, '公交', 8, 'a', '公司', 'bus', (), ())
+    assert resolve_line_labels((route,))[8] == '公交8路公交'

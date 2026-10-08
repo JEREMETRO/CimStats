@@ -67,3 +67,19 @@ def test_company_legend_and_options_use_information_page_names_without_changing_
     assert query.panel_options()['companies'][0]['id'] == 'owner'
     assert query.legend_items({'color_by': 'company'})[0][0] == '八连交通集团'
     assert query.snapshot.routes[0].company_name == route.company_name
+
+
+def test_company_context_from_the_same_session_is_used_across_network_options_and_legend():
+    from map_model import MapRoute, MapSnapshot
+    from map_query import MapQuery
+    routes = (MapRoute(7, '1', 1, 'a', 'native A', 'bus', (), ()),
+              MapRoute(8, '1', 1, 'b', 'native B', 'bus', (), ()))
+    query = MapQuery(MapSnapshot(routes=routes))
+    session = {'companies': [{'公司标识': 'a', '公司名称': '甲公司'},
+                              {'公司标识': 'b', '公司名称': '乙公司'}]}
+    options = query.panel_options(session)
+    assert {row['id']: row['name'] for row in options['companies']} == {'a': '甲公司', 'b': '乙公司'}
+    assert {row['id']: row['display_label'] for row in options['lines']} == {
+        7: '甲公司公交1路', 8: '乙公司公交1路'}
+    assert {title for title, _ in query.legend_items({'color_by': 'company'})} == {'甲公司', '乙公司'}
+    assert routes[0].company_name == 'native A'
