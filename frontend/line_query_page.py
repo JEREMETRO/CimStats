@@ -44,6 +44,7 @@ class LineTableHeader(QHeaderView):
     """Match the cell's text inset, independent of section position/sort state."""
     def __init__(self, parent):
         super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setSectionsClickable(True)
 
     def paintSection(self, painter, rect, logical_index):
         option = QStyleOptionHeader()
@@ -419,6 +420,7 @@ class LinesPage(QWidget):
         old_delegate = self.line_table.itemDelegate()
         self.line_table.setItemDelegate(LineTableDelegate(self.line_table))
         old_delegate.deleteLater()
+        self.line_table.model().layoutChanged.connect(self.line_table.updateSelectedRows)
         self._table_tooltips = ElisionOnlyTableTooltips(self.line_table)
         self.line_table.viewport().installEventFilter(self._table_tooltips)
         self.line_table.setColumnCount(len(HEADERS)); self.line_table.setHorizontalHeaderLabels(HEADERS)
