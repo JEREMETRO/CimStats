@@ -493,6 +493,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         _check(cancelled)
         connections=[]; issues=list(j.get('issues',()))
         for c in j.get('connections',()):
+            _check(cancelled)
             try:
                 paths=_road_paths(c)
             except (ValueError,TypeError):
@@ -522,6 +523,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         if 'junctions' in data and has_depot:
             flat=[]; slices=[]
             for source_index,leg in enumerate(raw_legs[1:-1],1):
+                _check(cancelled)
                 refs=leg.get('roads',()); first=len(flat)
                 for ri,ref in enumerate(refs):
                     value=dict(ref)
@@ -547,6 +549,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         else:
             issues.append('missing_depot_identity')
         for i,(a,b) in enumerate(zip(operational,operational[1:])):
+            _check(cancelled)
             index=i+1 if has_depot else i
             if index>=len(raw_legs):
                 legs.append(()); analysis_legs.append(()); issues.append(f'missing_leg:{index}'); continue

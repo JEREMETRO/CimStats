@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections import OrderedDict
 import math
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal, Slot, QTimer, QObject, QRunnable, QThreadPool
@@ -16,6 +17,7 @@ from stats_typography import ui_font
 from map_model import MapSnapshot, road_display_level
 from map_visibility import operating_paths, visible_route_stop_ids
 from display_rules import format_line_name
+from background_work import CooperativeCancellation
 
 # Public visual interpretation, not Apple-internal style constants. Widths
 # below are logical pixel symbols when a measured full road width is missing.
@@ -96,14 +98,24 @@ def continuous_paths(paths):
     return tuple(runs)
 
 
+class _IndexCancelled(Exception):
+    pass
+
+
+def _index_check(cancelled):
+    if cancelled is not None and cancelled():
+        raise _IndexCancelled()
+
+
 class _SpatialIndex:
     """Uniform world grid with overflow for long features; no geometry copies."""
-    def __init__(self, entries, bounds):
+    def __init__(self, entries, bounds, cancelled=None):
         self.cell = max(1., max(bounds[2]-bounds[0], bounds[3]-bounds[1]) / 32)
         self.bins = {}
         self.large = []
         self.entries = entries
         for i, (_, box) in enumerate(entries):
+            _index_check(cancelled)
             a,b,c,d = self._cells(box)
             if (c-a+1)*(d-b+1) > 256:
                 self.large.append(i)
@@ -130,8 +142,125 @@ class _SpatialIndex:
                 yield item
 
 
+_INDEX_LAYERS = ('roads', 'buildings', 'routes', 'stops', 'junctions')
+
+
+def _layer_key(snapshot, name):
+    return (id(getattr(snapshot, name)), id(snapshot.stops if name == 'routes' else None), snapshot.bounds)
+
+
+def _index_key(snapshot):
+    return (snapshot.source_hash, snapshot.asset_signature, snapshot.bounds,
+            *(id(getattr(snapshot, name)) for name in _INDEX_LAYERS))
+
+
+@dataclass(frozen=True)
+class _IndexState:
+    snapshot: object
+    caches: dict
+    indexes: dict
+    boxes: dict
+    stops: dict
+    roads: dict
+    connection_boxes: dict
+
+
+def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_only=False):
+    """Pure geometry preparation; published structures are never mutated."""
+    caches = {name: OrderedDict(caches.get(name, ())) for name in _INDEX_LAYERS}
+    if cached_only and any(_layer_key(snapshot, name) not in caches[name] for name in _INDEX_LAYERS):
+        return None
+    old = previous.snapshot if previous is not None else MapSnapshot()
+    stops = (previous.stops if previous is not None and snapshot.stops is old.stops
+             else {stop.id:stop for stop in snapshot.stops})
+    roads = (previous.roads if previous is not None and snapshot.roads is old.roads
+             else {road.id:road for road in snapshot.roads})
+    if previous is not None and snapshot.junctions is old.junctions:
+        connection_boxes = previous.connection_boxes
+    else:
+        connection_boxes = {}
+        for junction in snapshot.junctions:
+            for connection in junction.connections:
+                _index_check(cancelled)
+                connection_boxes[connection.id] = _bounds(p for path in connection.paths for p in path)
+    indexes, boxes = {}, {}
+    for name in _INDEX_LAYERS:
+        _index_check(cancelled)
+        items = getattr(snapshot, name)
+        stop_dependency = snapshot.stops if name == 'routes' else None
+        cache, key = caches[name], _layer_key(snapshot, name)
+        cached = cache.get(key)
+        if cached is not None:
+            cache.move_to_end(key)
+            indexes[name], boxes[name] = cached[2:]
+            continue
+        entries = []
+        for item in items:
+            _index_check(cancelled)
+            if name in ('roads', 'routes', 'junctions'):
+                points = [p for path in item.paths for p in path]
+                if name == 'routes':
+                    points += [p for path in item.depot_paths for p in path]
+                    points += [p for leg in item.leg_paths for path in leg for p in path]
+                    points += [stops[sid].position for sid in item.stop_ids if sid in stops]
+            elif name == 'buildings':
+                points = item.polygon or (item.position,)
+            else:
+                points = (item.position,)
+            box = _bounds(points)
+            if box:
+                entries.append((item, box))
+        indexes[name] = _SpatialIndex(entries, snapshot.bounds, cancelled)
+        boxes[name] = {item.id:box for item, box in entries}
+        cache[key] = (items, stop_dependency, indexes[name], boxes[name])
+        if len(cache) > 4:
+            cache.popitem(last=False)
+    return _IndexState(snapshot, caches, indexes, boxes, stops, roads, connection_boxes)
+
+
+class _IndexSignals(QObject):
+    completed = Signal(object, object)
+    failed = Signal(object, str)
+
+
+class _IndexJob(QRunnable):
+    def __init__(self, snapshot, caches, previous):
+        super().__init__()
+        self.snapshot, self.key = snapshot, _index_key(snapshot)
+        self.caches = {name: OrderedDict(values) for name, values in caches.items()}
+        self.previous = previous
+        self.cancelled = threading.Event()
+        self.signals = _IndexSignals()
+
+    def cancel(self):
+        self.cancelled.set()
+
+    def _emit(self, name, *values):
+        if isValid(self.signals):
+            try:
+                getattr(self.signals, name).emit(*values)
+            except RuntimeError:
+                if isValid(self.signals):
+                    raise
+
+    def run(self):
+        try:
+            state = _prepare_indexes(self.snapshot, self.caches, self.previous,
+                                     CooperativeCancellation(self.cancelled.is_set))
+        except _IndexCancelled:
+            state = None
+        except Exception as error:
+            self._emit('failed', self.key, str(error))
+            return
+        self._emit('completed', self.key, state)
+
+
+
 class _MapDrawing:
     """Pure image drawing shared by the widget, exports and background frames."""
+    def _cooperate(self):
+        pass  # Synchronous GUI painting must never sleep.
+
     def world_to_screen(self, point):
         x,z = (point[0],point[2]) if len(point) == 3 else point
         return QPointF(self.width()/2+(x-self.center[0])*self.zoom,
@@ -177,7 +306,10 @@ class _MapDrawing:
 
 
     def _visible(self,name):
-        return self._indexes[name].query(self._viewport_bounds()) if name in self._indexes else ()
+        if name in self._indexes:
+            for item in self._indexes[name].query(self._viewport_bounds()):
+                self._cooperate()
+                yield item
 
 
     def _viewport_bounds(self):
@@ -187,6 +319,7 @@ class _MapDrawing:
 
 
     def _polyline(self,path,offset=0.):
+        self._cooperate()
         world = self._world_polygon(path)
         polygon = self._transform().map(world)
         if offset and len(polygon)>1:
@@ -501,6 +634,7 @@ class _MapDrawing:
                 # Every shell precedes every fill within its actual elevation
                 # layer, so intersecting road ends never cut a dark seam.
                 for _,polygon,fill,shell,width,casing,tunnel,edge_polygon in items:
+                    self._cooperate()
                     if edge_polygon is not None:
                         painter.setPen(Qt.PenStyle.NoPen)
                         painter.setBrush(QColor('#C6D0D7' if tunnel else shell))
@@ -521,6 +655,7 @@ class _MapDrawing:
                     painter.setPen(pen)
                     painter.drawPolyline(polygon)
                 for _,polygon,fill,shell,width,casing,tunnel,edge_polygon in items:
+                    self._cooperate()
                     brush = (QBrush(QColor('#E3E9ED')) if tunnel else
                              fill if isinstance(fill,QBrush) else QBrush(QColor(fill)))
                     if edge_polygon is not None:
@@ -744,6 +879,8 @@ class _MapDrawing:
 class _FrameSurface(_MapDrawing):
     """Detached values only: the worker never reads a QWidget."""
     def __init__(self,canvas):
+        self._ui_thread = canvas._ui_thread if isinstance(canvas, _FrameSurface) else threading.get_ident()
+        self._cpu_budget = CooperativeCancellation()
         self._size=QSize(canvas.width(),canvas.height())
         self._font=canvas.font()
         self.ratio=canvas.ratio if isinstance(canvas,_FrameSurface) else canvas.devicePixelRatioF()
@@ -759,6 +896,10 @@ class _FrameSurface(_MapDrawing):
     def height(self):return self._size.height()
     def rect(self):return QRect(0,0,self.width(),self.height())
     def font(self):return self._font
+
+    def _cooperate(self):
+        if threading.get_ident() != self._ui_thread:
+            self._cpu_budget()
 
 
 class _FrameSignals(QObject):
@@ -817,6 +958,12 @@ class MapCanvas(_MapDrawing, QWidget):
         self._drag = None
         self._indexes = {}
         self._index_cache = {}
+        self._index_state = None
+        self._index_job = None
+        self._indexes_ready = True
+        self._index_failed_key = None
+        self._index_closed = False
+        self._pending_focus = None
         self._stops = {}
         self._highlight = None
         self._world_polygons = {}
@@ -854,9 +1001,6 @@ class MapCanvas(_MapDrawing, QWidget):
                 or snapshot.roads is not previous.roads or snapshot.junctions is not previous.junctions
                 or not any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops,snapshot.junctions))):
             self._index_cache.clear()
-        # Published index dictionaries must remain stable for an in-flight frame.
-        self._indexes=dict(self._indexes)
-        self._boxes=dict(self._boxes)
         self._revision += 1
         self._async_render=sum(len(getattr(snapshot,name)) for name in ('roads','buildings','routes','junctions'))>1000
         if snapshot.roads is not previous.roads:
@@ -864,54 +1008,80 @@ class MapCanvas(_MapDrawing, QWidget):
             self._continuous_cache={}
             self._path_keys={}
             self._path_bounds={}
-        if snapshot.stops is not previous.stops:
-            self._stops = {s.id:s for s in snapshot.stops}
-        if snapshot.roads is not previous.roads:
-            self._roads = {r.id:r for r in snapshot.roads}
-        if snapshot.junctions is not previous.junctions:
-            self._connection_boxes = {c.id:_bounds(p for path in c.paths for p in path)
-                                      for j in snapshot.junctions for c in j.connections}
-        for name in ('roads','buildings','routes','stops','junctions'):
-            items=getattr(snapshot,name)
-            stop_dependency=snapshot.stops if name=='routes' else None
-            if (items is getattr(previous,name) and name in self._indexes and snapshot.bounds==previous.bounds
-                    and (name!='routes' or snapshot.stops is previous.stops)):
-                continue
-            cache=self._index_cache.setdefault(name,OrderedDict())
-            key=(id(items),id(stop_dependency),snapshot.bounds)
-            cached=cache.get(key)
-            if cached is not None:
-                cache.move_to_end(key)
-                self._indexes[name],self._boxes[name]=cached[2:]
-                continue
-            entries = []
-            for item in items:
-                if name in ('roads','routes','junctions'):
-                    points = [p for path in item.paths for p in path]
-                    if name == 'routes':
-                        points += [p for path in item.depot_paths for p in path]
-                        points += [p for leg in item.leg_paths for path in leg for p in path]
-                        # Bounds for navigation/stop visibility only; never connect these.
-                        points += [self._stops[sid].position for sid in item.stop_ids if sid in self._stops]
-                elif name == 'buildings':
-                    points = item.polygon or (item.position,)
-                else:
-                    points = (item.position,)
-                box = _bounds(points)
-                if box:
-                    entries.append((item,box))
-            self._indexes[name] = _SpatialIndex(entries,snapshot.bounds)
-            self._boxes[name] = {item.id:box for item,box in entries}
-            # Retain tuple owners to prevent id reuse; published indexes are
-            # immutable, including while an older frame is still rendering.
-            cache[key]=(items,stop_dependency,self._indexes[name],self._boxes[name])
-            if len(cache)>4:
-                cache.popitem(last=False)
+        if _index_key(snapshot) != _index_key(previous):
+            self._pending_focus = None
+            self._index_failed_key = None
+            if (snapshot.source_hash, snapshot.asset_signature) != (previous.source_hash, previous.asset_signature):
+                self._highlight = None
+            if self._index_job is not None:
+                self._index_job.cancel()
+        self._indexes_ready = False
+        state = _prepare_indexes(snapshot, self._index_cache, self._index_state,
+                                 cached_only=self._async_render)
+        if state is not None:
+            self._publish_indexes(state)
+        else:
+            self._start_index_job()
         if not self._loaded and any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops)):
             self._loaded = True
             self.fit_to_map()
             self._fit_pending = not self.isVisible()
         self.update()
+
+    def _publish_indexes(self, state):
+        self._index_state = state
+        self._index_cache = state.caches
+        self._indexes, self._boxes = state.indexes, state.boxes
+        self._stops, self._roads = state.stops, state.roads
+        self._connection_boxes = state.connection_boxes
+        self._indexes_ready = True
+
+    def _start_index_job(self):
+        if (self._index_closed or self._indexes_ready or self._index_job is not None
+                or self._index_failed_key == _index_key(self.snapshot)):
+            return
+        job = _IndexJob(self.snapshot, self._index_cache, self._index_state)
+        job.signals.completed.connect(self._indexes_completed)
+        job.signals.failed.connect(self._indexes_failed)
+        self._index_job = job
+        QThreadPool.globalInstance().start(job)
+
+    @Slot(object, object)
+    def _indexes_completed(self, key, state):
+        self._index_job = None
+        if self._index_closed:
+            return
+        if state is not None and key == _index_key(self.snapshot):
+            self._publish_indexes(state)
+            pending, self._pending_focus = self._pending_focus, None
+            if pending is not None and pending[0] == key:
+                self.focus_result(pending[1])
+            self.prepare_frame()
+            self.update()
+        else:
+            self._start_index_job()
+
+    @Slot(object, str)
+    def _indexes_failed(self, key, message):
+        self._index_job = None
+        if self._index_closed:
+            return
+        if key == _index_key(self.snapshot):
+            self._index_failed_key = key
+            self.render_failed.emit(message)
+        else:
+            self._start_index_job()
+
+    def closeEvent(self, event):
+        self._index_closed = True
+        if self._index_job is not None:
+            self._index_job.cancel()
+        super().closeEvent(event)
+
+    def showEvent(self, event):
+        self._index_closed = False
+        self._start_index_job()
+        super().showEvent(event)
 
     def set_options(self, **options):
         unknown = set(options) - self.options.keys()
@@ -1002,7 +1172,7 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def building_at(self, position):
         """Hit only visible saved footprints; a bounding box is not a building."""
-        if not self.options.get('buildings', True):
+        if not self._indexes_ready or not self.options.get('buildings', True):
             return None
         index = self._indexes.get('buildings')
         if index is None:
@@ -1023,6 +1193,8 @@ class MapCanvas(_MapDrawing, QWidget):
             self.fit_to_map()
 
     def search(self,text):
+        if not self._indexes_ready:
+            return []
         needle = str(text).strip().casefold()
         if not needle:
             return []
@@ -1036,6 +1208,11 @@ class MapCanvas(_MapDrawing, QWidget):
         return results
 
     def focus_result(self,result):
+        if not self._indexes_ready:
+            if any(item.id == result.id for item in getattr(self.snapshot, result.kind+'s', ())):
+                self._pending_focus = (_index_key(self.snapshot), result)
+                return True
+            return False
         # Resolve again against the current snapshot rather than stale result bounds.
         for item,box in self._indexes.get(result.kind+'s',_SpatialIndex([],self.snapshot.bounds)).entries:
             if item.id == result.id:
@@ -1073,6 +1250,9 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def prepare_frame(self):
         """Prewarm hidden map pages using their current layout, without blocking."""
+        if not self._indexes_ready:
+            self._start_index_job()
+            return
         key=self._render_key()
         view = (*self.center,self.zoom)
         if key==self._failed_frame_key:
@@ -1146,6 +1326,8 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def export_image(self,path):
         """Export the current viewport, with the exact same rendering/options."""
+        if not self._indexes_ready:
+            return False
         image = QImage(self.size(),QImage.Format.Format_ARGB32_Premultiplied)
         painter = QPainter(image)
         self._paint(painter)

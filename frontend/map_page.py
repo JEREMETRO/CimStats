@@ -40,19 +40,8 @@ class MapWorker(QThread):
 
     def run(self):
         from map_geometry import MapGeometryService, MapCancelled
-        last_yield = time.monotonic()
-
-        def cancelled():
-            nonlocal last_yield
-            if self.isInterruptionRequested():
-                return True
-            # Native widget updates repeatedly enter Python callbacks. Give
-            # them a turn while constructing the full map in this QThread.
-            now = time.monotonic()
-            if now - last_yield >= .001:
-                time.sleep(.001)
-                last_yield = time.monotonic()
-            return self.isInterruptionRequested()
+        from background_work import CooperativeCancellation
+        cancelled = CooperativeCancellation(self.isInterruptionRequested)
 
         try:
             snapshot = MapGeometryService(cache_dir=self.cache).load(

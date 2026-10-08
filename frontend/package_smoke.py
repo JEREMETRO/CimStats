@@ -24,7 +24,10 @@ def main(launcher: Path, argv):
     parser.add_argument('--tag', default='真实存档验收')
     parser.add_argument('--expected-dpr', type=float, required=True)
     parser.add_argument('--keep-open', action='store_true')
+    parser.add_argument('--loading-profile-only', action='store_true')
     args = parser.parse_args(argv)
+    if args.loading_profile_only and not args.save:
+        parser.error('--loading-profile-only requires --save')
     original = args.save or args.job
     if not original.exists():
         parser.error('Save/session does not exist')
@@ -47,7 +50,11 @@ def main(launcher: Path, argv):
                 QTimer.singleShot(30, begin)
                 return
             try:
-                _exercise(window, desktop_app, args)
+                if args.loading_profile_only:
+                    from loading_profile import profile_loading
+                    profile_loading(window, args)
+                else:
+                    _exercise(window, desktop_app, args)
                 if args.keep_open:
                     window.resize(960, 680)
                     window.navigate(0)
@@ -78,6 +85,7 @@ def main(launcher: Path, argv):
         (args.output / 'failure.txt').write_text(traceback.format_exc(), encoding='utf-8')
         return 1
     return 0
+
 
 
 def _exercise(win, desktop_app, args):

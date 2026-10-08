@@ -16,6 +16,7 @@ from latest_info_exports import (build_share_summary, export_latest_info_png,
                                  export_latest_info_xlsx)
 from latest_info_model import build_latest_info
 from statistics_model import HistoryStore, QueryCancelled
+from background_work import CooperativeCancellation
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class LatestInfoTask(QThread):
 
     def run(self):
         try:
-            cancelled = self.isInterruptionRequested
+            cancelled = CooperativeCancellation(self.isInterruptionRequested)
             store = self.data.get('_history_store')
             snapshot = build_latest_info(self.data, *self.scope, cancelled=cancelled)
             alerts = None
