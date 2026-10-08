@@ -334,8 +334,11 @@ def _map_current_export(page, path):
     assert page.canvas.can_export(), 'map export requires the current complete frame'
     assert page.export_image(path)
     image=QImage(str(path))
-    assert not image.isNull() and image.size()==page.canvas.size()
-    return dict(path=str(path),size=[image.width(),image.height()],canvas_size=[page.canvas.width(),page.canvas.height()])
+    assert not image.isNull() and image.size()==page.canvas.export_size()
+    legend_height=page.canvas.legend_strip_height() if page.canvas.options['legend_external'] else 0
+    assert image.width()==page.canvas.width() and image.height()==page.canvas.height()+legend_height
+    return dict(path=str(path),size=[image.width(),image.height()],
+                canvas_size=[page.canvas.width(),page.canvas.height()],legend_height=legend_height)
 
 
 def _exercise(win, desktop_app, args):
@@ -390,6 +393,17 @@ def _exercise(win, desktop_app, args):
             assert motion is None or not motion.running, 'map capture must wait for navigation animation'
             records[-1].update(canvas_size=[canvas.width(),canvas.height()],dpr=canvas.devicePixelRatioF(),
                                center=list(canvas.center),zoom=canvas.zoom,complete_frame=True,animation_stable=True)
+            strip=win.map_page.surface.legend_strip
+            assert canvas.options['legend_external']
+            if canvas.legend_strip_height():
+                assert strip.isVisible() and canvas.geometry().bottom()<strip.geometry().top()
+                assert strip.height()==canvas.legend_strip_height()
+            else:
+                assert strip.isHidden()
+            def geometry(widget):
+                rect=widget.geometry()
+                return [rect.x(),rect.y(),rect.width(),rect.height()]
+            records[-1].update(plot_rect=geometry(canvas),legend_rect=geometry(strip),legend_covers_map=False)
 
     assert abs(win.devicePixelRatioF() - args.expected_dpr) < .001, (win.devicePixelRatioF(), args.expected_dpr)
     from app_metadata import APP_NAME

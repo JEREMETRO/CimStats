@@ -95,7 +95,10 @@ def test_smoke_export_records_actual_size_and_rejects_unprepared_view(map_page,t
     from package_smoke import _map_current_export
     map_page.canvas.prepare_frame()
     evidence=_map_current_export(map_page,tmp_path/'map.png')
-    assert evidence['size']==[map_page.canvas.width(),map_page.canvas.height()]
+    assert evidence['canvas_size']==[map_page.canvas.width(),map_page.canvas.height()]
+    assert evidence['legend_height']==map_page.canvas.legend_strip_height()
+    assert evidence['legend_height']>0
+    assert evidence['size']==[map_page.canvas.width(),map_page.canvas.height()+evidence['legend_height']]
     map_page.canvas.zoom_out()
     with pytest.raises(AssertionError):
         _map_current_export(map_page,tmp_path/'stale.png')
