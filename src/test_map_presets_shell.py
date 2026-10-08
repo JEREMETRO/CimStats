@@ -291,8 +291,7 @@ def test_network_service_time_initializes_from_simulated_clock(settings, app):
     try:
         page.set_session({'save_key':'A','simulation_time':'2023-02-10 17:50:00'})
         page.set_snapshot(MapSnapshot(routes=routes()))
-        from PySide6.QtCore import Qt
-        assert page.panel_set.controls['service_start'].dateTime().toString(Qt.DateFormat.ISODate) == '2023-02-10T17:50:00'
+        assert page.panel_set.controls['service_start'].text() == '17:50'
         assert page.panel_set.state()['service_time_mode'] == 'off'
         page.panel_set.controls['service_time_mode'].buttons['instant'].click()
         assert page.panel_set.state()['service_start'] == '2023-02-10T17:50:00'
