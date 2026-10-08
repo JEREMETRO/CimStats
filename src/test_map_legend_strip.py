@@ -88,3 +88,18 @@ def test_standalone_default_export_size_remains_the_plot_size(canvas,tmp_path):
     assert canvas.legend_strip_height()>0 and canvas.export_size()==canvas.size()
     path=tmp_path/'standalone.png';assert canvas.export_image(path)
     assert QImage(str(path)).size()==canvas.size()
+
+
+@pytest.mark.parametrize('size',[(0,400),(500,0)])
+def test_zero_viewport_cannot_publish_or_export_a_complete_frame(canvas,tmp_path,size):
+    canvas.set_options(legend_external=True,legend_items=metric_legend('interval','2013-05-23'))
+    spy=QSignalSpy(canvas.frame_ready)
+    canvas.resize(*size);canvas.prepare_frame()
+    assert not canvas.can_export()
+    assert spy.count()==0
+    output=tmp_path/'empty-viewport.png'
+    assert not canvas.export_image(output) and not output.exists()
+    canvas.resize(500,400);canvas.prepare_frame()
+    assert canvas.can_export() and spy.count()>0
+    assert canvas.export_image(output)
+    assert not QImage(str(output)).isNull()

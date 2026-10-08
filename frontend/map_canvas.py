@@ -1322,6 +1322,8 @@ class MapCanvas(_MapDrawing, QWidget):
         if not self._indexes_ready:
             self._start_index_job()
             return
+        if self.width()<=0 or self.height()<=0:
+            return
         key=self._render_key()
         view = (*self.center,self.zoom)
         if key==self._failed_frame_key and view==self._failed_frame_view:
@@ -1405,6 +1407,7 @@ class MapCanvas(_MapDrawing, QWidget):
     def can_export(self):
         """Whether a complete frame exists for the exact current viewport."""
         if (self._index_closed or not self._indexes_ready or self._frame is None
+                or self._frame.isNull() or self.width()<=0 or self.height()<=0
                 or self._frame_job is not None
                 or self._frame_view != (*self.center, self.zoom)
                 or not any((self.snapshot.roads, self.snapshot.buildings,
