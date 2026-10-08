@@ -382,6 +382,7 @@ class MapPage(QWidget):
         self._presentation_source=routes
         self._presentation_companies=names
         self._presentation_routes=tuple(dict(id=route.id,name=self.canvas.route_label(route),
+            search_name=route.name,number=route.number,
             company_id=route.company_id,company_name=display_company(companies.get(str(route.company_id),route.company_name)),
             mode=route.mode,selectable=route_has_geometry(route)) for route in routes)
         labels=resolve_line_labels(self._presentation_routes)
@@ -390,14 +391,13 @@ class MapPage(QWidget):
 
     def search(self,text):
         if self.query is None:return []
-        from display_rules import display_mode
+        from line_search import line_matches_search
         needle=str(text).strip().casefold()
         if not needle:return []
         results=[]
         for route in self._presentation_catalog():
             identity=route['display_label']
-            haystack=f"{identity} {route['company_name']} {display_mode(route['mode'])} {route['id']}".casefold()
-            if needle not in haystack:continue
+            if not line_matches_search(text,route):continue
             results.append(_SaveSearchResult('route',route['id'],identity,self.query.snapshot.bounds,
                                             self.save_token,route['selectable']))
         return results

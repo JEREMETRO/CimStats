@@ -767,9 +767,10 @@ class MapPanelSet(QWidget):
         return (minimum is None or number>=minimum) and (maximum is None or number<=maximum)
 
     def _refresh_lines(self):
-        query=self.search.text().casefold().strip()
+        from line_search import line_matches_search
+        query=self.search.text()
         choices=[v for v in self._options.get('lines',[]) if self._line_matches(v) and
-                 (query in str(v['name']).casefold() or query in str(v['id']).casefold())]
+                 line_matches_search(query,v)]
         modes={entry['id']:entry['name'] for entry in self._options.get('modes',[])}
         display=[]
         for line in choices:

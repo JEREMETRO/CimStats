@@ -1204,13 +1204,13 @@ class MainWindow(FluentMainWindow):
 
     def filtered_lines(self):
         from line_query_page import line_query_name
-        query = self.query.text().strip().lower()
+        from line_search import line_matches_search
+        query = self.query.text()
         company = self.line_company.currentData() or ""
         mode = self.line_mode.currentData() or ""
         return [x for x in self.data.get("lines", [])
                 if self._company_matches(x, company) and (not mode or x["运输制式"] == mode)
-                and (not query or query in " ".join(str(v) for v in x.values() if not isinstance(v, dict)).lower()
-                     or query in line_query_name(x, self.data.get('lines', ())).lower())]
+                and line_matches_search(query, x, aliases=(line_query_name(x, self.data.get('lines', ())),))]
 
     def refresh_lines(self):
         if not hasattr(self, 'line_table'):
