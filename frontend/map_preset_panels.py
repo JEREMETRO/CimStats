@@ -7,7 +7,7 @@ from math import isfinite
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QColor,QPixmap,QIcon
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, CheckBox, LineEdit, PushButton, TransparentPushButton
 
 from line_schedule import TICKS_PER_SECOND
@@ -93,9 +93,9 @@ class _RouteList(QWidget):
     changed = Signal(object)
     activated = Signal(object)
 
-    def __init__(self, checked=True, parent=None):
+    def __init__(self, checked=True, parent=None, *, persistent=False):
         super().__init__(parent)
-        self._checked = checked; self._routes = []; self._selected = set(); self._duplicate_companies = set()
+        self._checked = checked;self._persistent=persistent;self._routes = []; self._selected = set(); self._duplicate_companies = set()
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(6)
         self.search = _style_control(LineEdit()); self.search.setPlaceholderText('搜索线路'); self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName('搜索线路'); layout.addWidget(self.search)
@@ -111,14 +111,18 @@ class _RouteList(QWidget):
         self.line_list = _SingleLineList(); _style_control(self.line_list)
         self.line_list.setProperty('heightCap', 260); self.line_list.setFixedHeight(260)
         self.line_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        layout.addWidget(self.line_list)
+        if persistent:
+            self.line_list.setProperty('heightCap',None)
+            self.line_list.setMinimumHeight(80);self.line_list.setMaximumHeight(16777215)
+            self.line_list.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.line_list,1 if persistent else 0)
         self.search.textChanged.connect(self._searched)
         self.search.returnPressed.connect(self._submit)
         self.search.installEventFilter(self)
         self.line_list.itemChanged.connect(self._item_changed)
         self.line_list.itemClicked.connect(self._activate)
         self.line_list.itemActivated.connect(self._activate)
-        if not checked:self.line_list.hide()
+        if not checked and not persistent:self.line_list.hide()
 
     def _searched(self,*_):
         self.refresh()
@@ -131,7 +135,7 @@ class _RouteList(QWidget):
         return super().eventFilter(watched,event)
 
     def collapse_results(self):
-        if not self._checked:self.line_list.hide()
+        if not self._checked and not self._persistent:self.line_list.hide()
 
     def _submit(self):
         available=[self.line_list.item(i) for i in range(self.line_list.count()) if self.line_list.item(i).flags()&Qt.ItemFlag.ItemIsEnabled]
@@ -148,7 +152,9 @@ class _RouteList(QWidget):
         self._duplicate_companies = set(duplicate_companies); self.refresh()
 
     def set_selection(self, selected):
-        if set(selected) == self._selected: return
+        if set(selected) == self._selected:
+            current=self.line_list.currentItem()
+            if not self._persistent or current is None or current.data(Qt.ItemDataRole.UserRole) in selected:return
         self._selected = set(selected)
         blocked = self.line_list.blockSignals(True)
         try:
@@ -227,6 +233,41 @@ def _duplicate_companies(routes):
     for route in routes:
         companies.setdefault(route['company_name'], set()).add(route['company_id'])
     return {name for name, ids in companies.items() if name and len(ids) > 1}
+
+
+class SingleLineListPanel(QWidget):
+    """Persistent full-catalog browser; the page owns navigation and map queries."""
+    routeSelected=Signal(object)
+
+    def __init__(self,parent=None):
+        super().__init__(parent)
+        self.setObjectName('singleLineListPanel');self.setAccessibleName('线路列表')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True)
+        self.setStyleSheet(f'QWidget#singleLineListPanel {{background:{tokens.CARD_BG};}}')
+        self.setMinimumWidth(240);self.setFont(ui_font(tokens.FONT_SIZE_BODY))
+        self._state={'selected_route_id':None}
+        layout=QVBoxLayout(self);layout.setContentsMargins(12,10,12,12)
+        self._catalog_view=_RouteList(False,persistent=True)
+        layout.addWidget(self._catalog_view,1)
+        self.search=self._catalog_view.search;self.route_list=self._catalog_view.line_list
+        self.route_list.setAccessibleName('线路列表')
+        self._catalog_view.activated.connect(self._route_selected)
+
+    def state(self):
+        return deepcopy(self._state)
+
+    def set_routes(self,routes):
+        catalog=_catalog(routes)
+        self._catalog_view.set_routes(catalog,{self._state['selected_route_id']},_duplicate_companies(catalog))
+
+    def set_state(self,state):
+        if 'selected_route_id' in state:self._state['selected_route_id']=state['selected_route_id']
+        self._catalog_view.set_selection({self._state['selected_route_id']})
+
+    def _route_selected(self,identity):
+        self._state['selected_route_id']=identity
+        self._catalog_view.set_selection({identity})
+        self.routeSelected.emit(identity)
 
 
 class SingleLinePanel(_PresetPanel):
