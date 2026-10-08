@@ -47,7 +47,7 @@ def test_sidebar_search_expands_on_input_and_collapses_after_stable_id_activatio
 
 def test_sidebar_two_information_groups_consume_formatter_text_without_geometry_conversion(qt_application):
     from map_preset_panels import SingleLinePanel
-    p=SingleLinePanel()
+    p=SingleLinePanel();p.set_state({'direction':'whole'})
     info={'identity':{'id':12,'name':'12 中央线','mode':'公交','company_id':'a','company_name':'已解析公司'},
           'sections':(('line_information','线路信息',(('地图里程','地图里程（全线）','17.57 km'),('每周收入','每周收入','-123.45'),('单程时间','核定时间（全线）','55 min'))),
                       ('passenger_data','客流数据',(('今日客流','今日客流','8,250 人次'),('平均客流','平均客流','—'))))}
@@ -61,6 +61,67 @@ def test_sidebar_two_information_groups_consume_formatter_text_without_geometry_
     assert p.fact_labels['geometry_km'].text()=='11.43 km'
     assert p.information_labels['地图里程'].text()=='17.57 km'
     assert p.information_labels['平均客流'].text()=='—'
+
+
+def test_selected_direction_replaces_full_time_and_speed_and_hides_redundant_whole_length(qt_application):
+    from map_preset_panels import SingleLinePanel
+    from map_line_presentation import line_information
+    p=SingleLinePanel();p.resize(360,680);p.show()
+    session={'lines':[{'对象ID':12,'地图里程':17.57,'单程时间':80,'核定速度':13.17,'今日客流':823,'当日发班数':70,'站点数':12}]}
+    for direction,label,length,duration,speed in [('up','上行',8.18,23.9115,20.525),('down','下行',9.12,23.411,23.37),('whole','全线',17.3,47.3225,21.93)]:
+        metrics=SimpleNamespace(effective_direction=direction,duration_minutes=duration,speed_kmh=speed)
+        info=line_information(session,12,direction_metrics=metrics)
+        p.set_state({'direction':direction});p.set_route(catalog()[0],None,length,.2,information=info)
+        qt_application.processEvents()
+        assert p.information_captions['geometry_km'].text()==f'{label}长度'
+        assert p.information_captions['单程时间'].text()==f'核定时间（{label}）'
+        assert p.information_captions['核定速度'].text()==f'核定速度（{label}）'
+        assert ('地图里程' in p.information_labels)==(direction=='whole')
+        assert p.fact_labels['duration_minutes'].text()=={'up':'23.91 min','down':'23.41 min','whole':'80 min'}[direction]
+        assert p.information_labels['核定速度'].text()=={'up':'20.52 km/h','down':'23.37 km/h','whole':'13.17 km/h'}[direction]
+        assert p.fact_labels['transported_today'].text()=='823 人次'
+        assert p.information_captions['当日发班数'].text()=='当日发班'
+
+
+def test_legacy_full_line_information_is_not_shown_as_a_selected_leg(qt_application):
+    from map_preset_panels import SingleLinePanel
+    from map_line_presentation import line_information
+    p=SingleLinePanel();p.set_route(catalog()[0],None,8,0,information=line_information(
+        {'lines':[{'对象ID':12,'地图里程':17.57,'单程时间':80,'核定速度':13.17}]},12))
+    assert p.information_labels['地图里程'].parentWidget().isHidden()
+    assert p.fact_labels['duration_minutes'].text()=='—' and p.information_labels['核定速度'].text()=='—'
+
+
+def test_ring_information_uses_whole_titles_and_keeps_direction_buttons_hidden(qt_application):
+    from map_preset_panels import SingleLinePanel
+    from map_line_presentation import line_information
+    p=SingleLinePanel();info=line_information({'lines':[{'对象ID':23,'单程时间':20}]},23,
+        direction_metrics=SimpleNamespace(effective_direction='whole',duration_minutes=20,speed_kmh=12))
+    p.set_route(catalog()[1],None,4,0,information=info)
+    assert p.information_captions['geometry_km'].text()=='全线长度'
+    assert p.information_captions['单程时间'].text()=='核定时间（全线）'
+    assert not p._direction.isVisible() and p.fact_labels['duration_minutes'].text()=='20 min'
+
+
+def test_length_duration_speed_are_contiguous_before_stop_count_after_line_dates(qt_application):
+    from map_preset_panels import SingleLinePanel
+    from map_line_presentation import line_information
+    p=SingleLinePanel()
+    session={'lines':[{'对象ID':12,'地图里程':17.57,'单程时间':55,'核定速度':19.17,'站点数':12,
+                      '线路车库':'东库','开线日期':'2013-05-01','最近改线日期':'2013-05-02'}]}
+    for direction in ('up','whole'):
+        p.set_state({'direction':direction})
+        info=line_information(session,12,direction_metrics=SimpleNamespace(
+            effective_direction=direction,duration_minutes=23.9115,speed_kmh=21.655))
+        p.set_route(catalog()[0],None,8.63,.2,information=info)
+        layout=p._data_layouts['line_information']
+        # Actual visible Qt row positions, rather than a source-code order check.
+        keys=[next(key for key,value in p.information_labels.items() if value.parentWidget() is layout.itemAt(i).widget())
+              for i in range(1,layout.count()) if not layout.itemAt(i).widget().isHidden()]
+        expected=['线路车库','开线日期','最近改线日期','geometry_km']
+        if direction=='whole':expected+=['地图里程']
+        expected+=['单程时间','核定速度','站点数']
+        assert keys[:len(expected)]==expected
 
 
 def test_replacing_information_schema_hides_old_rows_immediately(qt_application):

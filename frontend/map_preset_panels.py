@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import datetime
 from math import isfinite
+import re
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QColor,QPixmap,QIcon
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CheckBox, LineEdit, PushButton, TransparentPushButton
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QFrame, QHBoxLayout, QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, PushButton, TransparentPushButton
 
 from line_schedule import TICKS_PER_SECOND
 from display_rules import format_number
@@ -17,9 +19,36 @@ from map_panels import _ChoiceGroup, _OptionGrid, _SingleLineList, _style_contro
 from display_rules import display_mode
 from semantic_colors import color_for
 from map_line_labels import resolve_line_labels
+from line_search import line_matches_search
 from stats_controls import StatisticsScrollArea
 from stats_typography import ui_font
 import stats_tokens as tokens
+
+_SORT_CHOICES = (('mode', '制式'), ('name', '名称'), ('opened_at', '开线时间'),
+                 ('passengers', '客流'), ('scheduled_departures', '班次'))
+
+
+def _natural_name(value):
+    return tuple((0, int(part)) if part.isdecimal() else (1, part)
+                 for part in re.split(r'(\d+)', str(value or '').casefold()))
+
+
+def _catalog_sort_value(route, key):
+    value = route.get(key)
+    if value is None or value == '':
+        return None
+    if key in ('mode', 'name'):
+        return _natural_name(display_mode(value) if key == 'mode' else value)
+    if key == 'opened_at':
+        try:
+            return datetime.fromisoformat(str(value)).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            return None
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return number if isfinite(number) and number >= 0 else None
 
 
 def _field(record, key, default=None):
@@ -57,6 +86,9 @@ def _catalog(routes):
         result.append(dict(id=identity, name=str(_field(route, 'name', identity)),
                            company_id=_field(route, 'company_id'), company_name=str(_field(route, 'company_name', '') or ''),
                            mode=_field(route, 'mode'), color=_field(route, 'color'), selectable=bool(selectable),
+                           number=_field(route, 'number'), search_name=_field(route, 'search_name'),
+                           opened_at=_field(route, 'opened_at'), passengers=_field(route, 'passengers'),
+                           scheduled_departures=_field(route, 'scheduled_departures'),
                            display_label=_field(route,'display_label',_field(route,'label')) or labels.get(identity)))
     return result
 
@@ -96,6 +128,7 @@ class _RouteList(QWidget):
     def __init__(self, checked=True, parent=None, *, persistent=False):
         super().__init__(parent)
         self._checked = checked;self._persistent=persistent;self._routes = []; self._selected = set(); self._duplicate_companies = set()
+        self._sort_by = 'name'; self._sort_desc = False
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(6)
         self.search = _style_control(LineEdit()); self.search.setPlaceholderText('搜索线路'); self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName('搜索线路'); layout.addWidget(self.search)
@@ -169,13 +202,48 @@ class _RouteList(QWidget):
         finally:
             self.line_list.blockSignals(blocked)
 
+    def _ordered_routes(self):
+        if not self._persistent:
+            return self._routes
+        # A stable natural-name tie break stays ascending even in descending order.
+        routes = sorted(self._routes, key=lambda route: _natural_name(route['name']))
+        known = []; unknown = []
+        for route in routes:
+            value = _catalog_sort_value(route, self._sort_by)
+            (unknown if value is None else known).append((value, route))
+        known.sort(key=lambda pair: pair[0], reverse=self._sort_desc)
+        return [route for value, route in known + unknown]
+
+    def set_sort(self, key, descending):
+        if key not in dict(_SORT_CHOICES) or (key, bool(descending)) == (self._sort_by, self._sort_desc):
+            return
+        self._sort_by, self._sort_desc = key, bool(descending)
+        current = self.line_list.currentItem()
+        anchor = self.line_list.itemAt(QPoint(10, 10))
+        blocked = self.line_list.blockSignals(True)
+        try:
+            items = {}
+            while self.line_list.count():
+                item = self.line_list.takeItem(0)
+                items[item.data(Qt.ItemDataRole.UserRole)] = item
+            for route in self._ordered_routes():
+                item = items.get(route['id'])
+                if item is not None:
+                    self.line_list.addItem(item)
+            self.line_list.setCurrentItem(current)
+            self.line_list.wrap_items()
+            if anchor is not None:
+                self.line_list.scrollToItem(anchor, QAbstractItemView.ScrollHint.PositionAtTop)
+        finally:
+            self.line_list.blockSignals(blocked)
+
     def refresh(self, *_):
         query = self.search.text().strip().casefold()
         blocked = self.line_list.blockSignals(True)
         self.line_list.clear()
-        for route in self._routes:
+        for route in self._ordered_routes():
             text=route.get('display_label') or f"{display_mode(route.get('mode'))} {route['name']}".strip()
-            if query and query not in f"{text} {route['id']} {route['company_name']}".casefold():
+            if not line_matches_search(query,route):
                 continue
             item = QListWidgetItem(text); item.setData(Qt.ItemDataRole.UserRole, route['id'])
             color=route.get('color') or color_for('mode',route.get('mode'))
@@ -245,9 +313,19 @@ class SingleLineListPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True)
         self.setStyleSheet(f'QWidget#singleLineListPanel {{background:{tokens.CARD_BG};}}')
         self.setMinimumWidth(240);self.setFont(ui_font(tokens.FONT_SIZE_BODY))
-        self._state={'selected_route_id':None}
+        self._state={'selected_route_id':None, 'sort_by':'name', 'sort_desc':False}
         layout=QVBoxLayout(self);layout.setContentsMargins(12,10,12,12)
         self._catalog_view=_RouteList(False,persistent=True)
+        sort_row=QHBoxLayout();sort_row.setSpacing(6)
+        self.sort_combo=_style_control(ComboBox());self.sort_combo.setAccessibleName('线路排序依据')
+        for key,label in _SORT_CHOICES:self.sort_combo.addItem(label,userData=key)
+        self.sort_combo.setCurrentIndex(self.sort_combo.findData('name'))
+        self.sort_order_button=_style_control(PushButton('升序'))
+        self.sort_order_button.setAccessibleName('线路排序方向');self.sort_order_button.setFixedWidth(64)
+        sort_row.addWidget(self.sort_combo,1);sort_row.addWidget(self.sort_order_button)
+        self._catalog_view.layout().insertLayout(1,sort_row)
+        self.sort_combo.currentIndexChanged.connect(self._sort_changed)
+        self.sort_order_button.clicked.connect(self._toggle_sort_order)
         layout.addWidget(self._catalog_view,1)
         self.search=self._catalog_view.search;self.route_list=self._catalog_view.line_list
         self.route_list.setAccessibleName('线路列表')
@@ -262,7 +340,20 @@ class SingleLineListPanel(QWidget):
 
     def set_state(self,state):
         if 'selected_route_id' in state:self._state['selected_route_id']=state['selected_route_id']
+        if state.get('sort_by') in dict(_SORT_CHOICES):self._state['sort_by']=state['sort_by']
+        if 'sort_desc' in state:self._state['sort_desc']=bool(state['sort_desc'])
+        blocked=self.sort_combo.blockSignals(True)
+        try:self.sort_combo.setCurrentIndex(self.sort_combo.findData(self._state['sort_by']))
+        finally:self.sort_combo.blockSignals(blocked)
+        self.sort_order_button.setText('降序' if self._state['sort_desc'] else '升序')
+        self._catalog_view.set_sort(self._state['sort_by'],self._state['sort_desc'])
         self._catalog_view.set_selection({self._state['selected_route_id']})
+
+    def _sort_changed(self,*_):
+        self.set_state({'sort_by':self.sort_combo.currentData()})
+
+    def _toggle_sort_order(self):
+        self.set_state({'sort_desc':not self._state['sort_desc']})
 
     def _route_selected(self,identity):
         self._state['selected_route_id']=identity
@@ -295,7 +386,7 @@ class SingleLinePanel(_PresetPanel):
         section.addWidget(self._direction); self._direction.changed.connect(self._direction_changed)
         self.deadhead_check = _style_control(CheckBox('计入空放里程')); section.addWidget(self.deadhead_check)
         self.deadhead_check.clicked.connect(self._deadhead_changed)
-        self.data_sections={};self._data_layouts={};self.information_labels={};self.fact_labels={}
+        self.data_sections={};self._data_layouts={};self.information_labels={};self.information_captions={};self.fact_labels={}
         for key,title in [('line_information','线路信息'),('passenger_data','客流数据')]:
             layout=_section(self.body_layout);_label(layout,title,True)
             self.data_sections[key]=layout.parentWidget();self._data_layouts[key]=layout
@@ -336,11 +427,11 @@ class SingleLinePanel(_PresetPanel):
 
     def _build_information(self):
         sections=_field(self._information,'sections') or (
-            ('line_information','线路信息',(('duration_minutes','核定时间（全线）','—'),('scheduled_departures','当日发班（计划）','—'))),
+            ('line_information','线路信息',(('duration_minutes','核定时间（全线）','—'),('scheduled_departures','当日发班','—'))),
             ('passenger_data','客流数据',(('transported_today','当日客流','—'),)))
         schema=tuple((key,tuple((field,label) for field,label,text in rows)) for key,title,rows in sections)
         if schema!=self._information_schema:
-            self._information_schema=schema;self.fact_labels={};self.information_labels={}
+            self._information_schema=schema;self.fact_labels={};self.information_labels={};self.information_captions={}
             for layout in self._data_layouts.values():
                 while layout.count()>1:
                     item=layout.takeAt(1)
@@ -348,19 +439,24 @@ class SingleLinePanel(_PresetPanel):
             def add_row(layout,key,title):
                 host=QWidget();row=QHBoxLayout(host);row.setContentsMargins(0,0,0,0);row.setSpacing(10)
                 caption=_style_control(BodyLabel(title),tokens.FONT_SIZE_BODY,tokens.TEXT_SECONDARY);caption.setWordWrap(True)
+                self.information_captions[key]=caption
                 value=_style_control(BodyLabel('—'));value.setWordWrap(True);value.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(caption);row.addWidget(value,1);layout.addWidget(host);self.information_labels[key]=value
                 return host,value
-            geometry=self._data_layouts['line_information']
-            for key,title in [('geometry_km','所选方向长度'),('operating_km','运营长度'),('deadhead_km','空放长度')]:
-                host,value=add_row(geometry,key,title);self.fact_labels[key]=value
-                if key!='geometry_km':setattr(self,f'_{key}_widgets',(host,))
+            geometry=self._data_layouts['line_information'];geometry_added=False
+            def add_geometry():
+                for key,title in [('geometry_km','所选方向长度'),('operating_km','运营长度'),('deadhead_km','空放长度')]:
+                    host,value=add_row(geometry,key,title);self.fact_labels[key]=value
+                    if key!='geometry_km':setattr(self,f'_{key}_widgets',(host,))
             aliases={'单程时间':'duration_minutes','今日客流':'transported_today','当日发班数':'scheduled_departures'}
             for section_id,title,rows in sections:
                 layout=self._data_layouts.get(section_id)
                 if layout is None:continue
                 for key,label,text in rows:
+                    if section_id=='line_information' and not geometry_added and key in ('地图里程','单程时间','duration_minutes','核定速度','站点数'):
+                        add_geometry();geometry_added=True
                     host,value=add_row(layout,key,label);self.fact_labels[aliases.get(key,key)]=value
+            if not geometry_added:add_geometry()
         for section_id,title,rows in sections:
             for key,label,text in rows:
                 if key in self.information_labels:self.information_labels[key].setText(str(text))
@@ -372,7 +468,7 @@ class SingleLinePanel(_PresetPanel):
 
     def _direction_changed(self, direction):
         if direction != self._state['direction']:
-            self._state['direction'] = direction; self.directionChanged.emit(direction)
+            self._state['direction'] = direction; self._refresh(); self.directionChanged.emit(direction)
 
     def _deadhead_changed(self, checked):
         if checked != self._state['deadhead']:
@@ -387,6 +483,8 @@ class SingleLinePanel(_PresetPanel):
         self.route_title.setText(str(label or _field(identity,'name',_field(route, 'name', '线路信息'))))
         self.route_identity.setText(str(_field(identity,'company_name',_field(route, 'company_name', '')) or ''))
         roundtrip = _field(_field(route, 'direction'), 'kind') == 'roundtrip'
+        direction = self._state['direction'] if roundtrip else 'whole'
+        suffix = {'up':'上行','down':'下行','whole':'全线'}[direction]
         for button in self._direction.buttons.values(): button.setEnabled(roundtrip)
         self._direction.set_value(self._state['direction'])
         self._direction.setVisible(roundtrip)
@@ -396,17 +494,30 @@ class SingleLinePanel(_PresetPanel):
         if self._state['deadhead']:
             total = None if total is None or self._deadhead_km is None else total + self._deadhead_km
         self.fact_labels['geometry_km'].setText(_number(total, 'km', 2))
+        self.information_captions['geometry_km'].setText(f'{suffix}长度')
+        for key,title in [('单程时间','核定时间'),('duration_minutes','核定时间'),('核定速度','核定速度')]:
+            if key in self.information_captions:self.information_captions[key].setText(f'{title}（{suffix}）')
+        if '地图里程' in self.information_labels:
+            self.information_labels['地图里程'].parentWidget().setVisible(direction == 'whole')
         self.fact_labels['operating_km'].setText(_number(self._operating_km, 'km', 2))
         self.fact_labels['deadhead_km'].setText(_number(self._deadhead_km, 'km', 2))
         for key in ('operating_km', 'deadhead_km'):
             for widget in getattr(self, f'_{key}_widgets'): widget.setVisible(self._state['deadhead'])
         if self._information is None:
             ticks = _field(self._facts, 'approved_duration_ticks')
-            duration = ticks / TICKS_PER_SECOND / 60 if ticks is not None else _field(self._facts, 'duration_minutes')
+            duration = ((ticks / TICKS_PER_SECOND / 60 if ticks is not None else _field(self._facts, 'duration_minutes'))
+                        if direction == 'whole' else None)
             today = _field(self._facts, 'today_passengers', _field(self._facts, 'transported_today'))
             self.fact_labels['duration_minutes'].setText(_number(duration, '分钟', 2))
             self.fact_labels['transported_today'].setText(_number(today, '人次'))
             self.fact_labels['scheduled_departures'].setText(_number(_field(self._facts, 'scheduled_departures'), '班次'))
+        else:
+            information_direction=_field(self._information,'direction','whole')
+            for section_id,title,rows in _field(self._information,'sections',()):
+                for key,label,text in rows:
+                    if key in self.information_labels:
+                        pending=key in ('单程时间','核定速度') and information_direction != direction
+                        self.information_labels[key].setText('—' if pending else str(text))
 
 
 class BuildingLineMenu(QFrame):

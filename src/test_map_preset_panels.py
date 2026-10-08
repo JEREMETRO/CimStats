@@ -18,22 +18,23 @@ def routes():
             MapRoute(34, '34 无地图路径', 34, 'c', '公司丙', 'bus', (), ())]
 
 
-def test_single_defaults_direction_geometry_and_whole_line_facts(qt_application):
+def test_single_defaults_direction_geometry_and_only_whole_fallback_duration(qt_application):
     from map_preset_panels import SingleLinePanel
     p = SingleLinePanel()
     facts = SimpleNamespace(duration_minutes=83.599, transported_today=0, scheduled_departures=None)
     p.set_routes(routes()); p.set_route(routes()[0], facts, 2.345, .654)
     assert p.state()['direction'] == 'up' and not p.state()['deadhead']
     assert p.fact_labels['geometry_km'].text() == '2.34 km'
-    assert p.fact_labels['duration_minutes'].text() == '83.59 分钟'
+    assert p.fact_labels['duration_minutes'].text() == '—'
     assert p.fact_labels['transported_today'].text() == '0 人次'
     assert p.fact_labels['scheduled_departures'].text() == '—'
-    before = [p.fact_labels[k].text() for k in ('duration_minutes', 'transported_today', 'scheduled_departures')]
+    before = [p.fact_labels[k].text() for k in ('transported_today', 'scheduled_departures')]
     spy = QSignalSpy(p.directionChanged)
     p.direction_buttons['both'].click(); p.deadhead_check.click()
     assert spy.at(0)[0] == 'whole'
     assert p.fact_labels['geometry_km'].text() == '2.99 km'
-    assert [p.fact_labels[k].text() for k in ('duration_minutes', 'transported_today', 'scheduled_departures')] == before
+    assert p.fact_labels['duration_minutes'].text() == '83.59 分钟'
+    assert [p.fact_labels[k].text() for k in ('transported_today', 'scheduled_departures')] == before
     p.set_route(routes()[1], facts, 3., None)
     assert all(not b.isEnabled() for b in p.direction_buttons.values())
     assert not p.deadhead_check.isEnabled()

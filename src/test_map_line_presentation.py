@@ -1,5 +1,7 @@
 """Map information must use the line page's display and availability rules."""
 from dataclasses import replace
+from types import SimpleNamespace
+import pytest
 
 
 def test_direction_lengths_use_the_shared_information_page_scale_once():
@@ -56,6 +58,51 @@ def test_information_keeps_unavailable_and_incomplete_metrics_unknown():
               for key, _, text in rows}
     assert all(fields[key] == '—' for key in (
         '地图里程', '核定速度', '当日发班数', '今日平均单班人次', '今日平均车公里人次'))
+
+
+def test_map_departures_caption_is_plain_without_a_plan_qualifier():
+    from map_line_presentation import line_information
+    result=line_information({'lines':[{'对象ID':2,'当日发班数':0}]},2)
+    rows={key:(label,text) for _,_,fields in result['sections'] for key,label,text in fields}
+    assert rows['当日发班数']==('当日发班','0 班')
+
+
+@pytest.mark.parametrize('direction,duration,speed,label',[
+    ('up',23.9115,21.34,'上行'),('down',23.411,23.09,'下行'),('whole',47.3225,22.201,'全线')])
+def test_direction_information_uses_arrival_duration_and_speed_without_halving_full_facts(direction,duration,speed,label):
+    from map_line_presentation import line_information
+    line={'对象ID':42,'地图里程':17.570164,'单程时间':80,'核定速度':13.17,
+          '今日客流':823,'当日发班数':70}
+    metrics=SimpleNamespace(effective_direction=direction,duration_minutes=duration,speed_kmh=speed)
+    result=line_information({'lines':[line]},42,direction_metrics=metrics)
+    rows={key:(title,text) for _,_,fields in result['sections'] for key,title,text in fields}
+    assert result['direction']==direction
+    assert rows['单程时间']==(f'核定时间（{label}）',{'up':'23.91 min','down':'23.41 min','whole':'80 min'}[direction])
+    assert rows['核定速度']==(f'核定速度（{label}）',{'up':'21.34 km/h','down':'23.09 km/h','whole':'13.17 km/h'}[direction])
+    assert ('地图里程' in rows)==(direction=='whole')
+    assert rows['今日客流']==('今日客流','823 人次') and rows['当日发班数']==('当日发班','70 班')
+    assert line['单程时间']==80 and line['核定速度']==13.17
+
+
+def test_missing_direction_metrics_never_fall_back_to_whole_duration_or_speed():
+    from map_line_presentation import line_information
+    line={'对象ID':42,'地图里程':17.57,'单程时间':80,'核定速度':13.17}
+    info=line_information({'lines':[line]},42,direction_metrics={
+        'effective_direction':'down','duration_minutes':None,'speed_kmh':None})
+    rows={key:(title,text) for _,_,fields in info['sections'] for key,title,text in fields}
+    assert rows['单程时间']==('核定时间（下行）','—')
+    assert rows['核定速度']==('核定速度（下行）','—') and '地图里程' not in rows
+
+
+def test_whole_information_preserves_original_shared_speed_precision_and_availability():
+    from map_line_presentation import line_information
+    lines=[{'对象ID':42,'地图里程':17.570164,'单程时间':55.,'核定速度':19.17},
+           {'对象ID':43,'单程时间':55.,'核定速度':19.17,'字段可用性':{'核定速度':False}}]
+    metrics=SimpleNamespace(effective_direction='whole',duration_minutes=54.999,speed_kmh=19.16745)
+    for line,expected in [(lines[0],'19.17 km/h'),(lines[1],'—')]:
+        info=line_information({'lines':lines},line['对象ID'],direction_metrics=metrics)
+        rows={key:text for _,_,fields in info['sections'] for key,title,text in fields}
+        assert rows['单程时间']=='55 min' and rows['核定速度']==expected
 
 
 def test_company_legend_and_options_use_information_page_names_without_changing_ids():
