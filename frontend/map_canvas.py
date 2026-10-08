@@ -945,6 +945,7 @@ class MapCanvas(_MapDrawing, QWidget):
     """
     view_changed = Signal(float, float, float)
     frame_ready = Signal()
+    export_availability_changed = Signal(bool)
     render_failed = Signal(str)
     buildingClicked = Signal(int, object)
 
@@ -981,6 +982,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._base_cache = None
         self._async_render = False
         self._failed_frame_key = None
+        self._export_available = False
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self.update)
@@ -1002,6 +1004,7 @@ class MapCanvas(_MapDrawing, QWidget):
                 or not any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops,snapshot.junctions))):
             self._index_cache.clear()
         self._revision += 1
+        self._notify_export_availability()
         self._async_render=sum(len(getattr(snapshot,name)) for name in ('roads','buildings','routes','junctions'))>1000
         if snapshot.roads is not previous.roads:
             self._world_polygons={}
@@ -1068,12 +1071,14 @@ class MapCanvas(_MapDrawing, QWidget):
             return
         if key == _index_key(self.snapshot):
             self._index_failed_key = key
+            self._notify_export_availability()
             self.render_failed.emit(message)
         else:
             self._start_index_job()
 
     def closeEvent(self, event):
         self._index_closed = True
+        self._notify_export_availability()
         if self._index_job is not None:
             self._index_job.cancel()
         super().closeEvent(event)
@@ -1082,6 +1087,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._index_closed = False
         self._start_index_job()
         super().showEvent(event)
+        self._notify_export_availability()
 
     def set_options(self, **options):
         unknown = set(options) - self.options.keys()
@@ -1091,10 +1097,12 @@ class MapCanvas(_MapDrawing, QWidget):
             raise ValueError('direction must be whole, up or down')
         self.options.update(options)
         self._revision += 1
+        self._notify_export_availability()
         self.update()
 
     def _changed(self,interactive=False):
         self._fit_pending = False
+        self._notify_export_availability()
         if interactive:
             self._render_timer.start(100)
         else:
@@ -1191,6 +1199,7 @@ class MapCanvas(_MapDrawing, QWidget):
         super().resizeEvent(event)
         if self._fit_pending:
             self.fit_to_map()
+        self._notify_export_availability()
 
     def search(self,text):
         if not self._indexes_ready:
@@ -1250,6 +1259,7 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def prepare_frame(self):
         """Prewarm hidden map pages using their current layout, without blocking."""
+        self._notify_export_availability()
         if not self._indexes_ready:
             self._start_index_job()
             return
@@ -1264,6 +1274,7 @@ class MapCanvas(_MapDrawing, QWidget):
                     job.signals.completed.connect(self._frame_completed)
                     job.signals.failed.connect(self._frame_failed)
                     self._frame_job=job
+                    self._notify_export_availability()
                     QThreadPool.globalInstance().start(job)
             else:
                 self._render_frame(key,view)
@@ -1295,8 +1306,11 @@ class MapCanvas(_MapDrawing, QWidget):
             self._base_cache=surface._base_cache
             for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
                 setattr(self,name,getattr(surface,name))
+            self._notify_export_availability()
             if view==(*self.center,self.zoom):
                 self.frame_ready.emit()
+        else:
+            self._notify_export_availability()
         self.update()
         if not self.isVisible() and (key!=self._render_key() or view!=(*self.center,self.zoom)):
             self.prepare_frame()
@@ -1306,6 +1320,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._frame_job=None
         if key==self._render_key():
             self._failed_frame_key=key
+            self._notify_export_availability()
             self.render_failed.emit(message)
         else:
             self.prepare_frame()
@@ -1318,15 +1333,34 @@ class MapCanvas(_MapDrawing, QWidget):
         self._paint(painter,overlays=False)
         painter.end()
         self._frame,self._frame_key,self._frame_view = frame,key,view
+        self._notify_export_availability()
         self.frame_ready.emit()
 
 
 
 
 
+    def can_export(self):
+        """Whether a complete frame exists for the exact current viewport."""
+        if (self._index_closed or not self._indexes_ready or self._frame is None
+                or self._frame_job is not None
+                or self._frame_view != (*self.center, self.zoom)
+                or not any((self.snapshot.roads, self.snapshot.buildings,
+                            self.snapshot.routes, self.snapshot.stops, self.snapshot.junctions))):
+            return False
+        key = self._render_key()
+        return (self._frame_key == key and self._failed_frame_key != key
+                and self._index_failed_key != _index_key(self.snapshot))
+
+    def _notify_export_availability(self):
+        available = self.can_export()
+        if available != self._export_available:
+            self._export_available = available
+            self.export_availability_changed.emit(available)
+
     def export_image(self,path):
         """Export the current viewport, with the exact same rendering/options."""
-        if not self._indexes_ready:
+        if not self.can_export():
             return False
         image = QImage(self.size(),QImage.Format.Format_ARGB32_Premultiplied)
         painter = QPainter(image)

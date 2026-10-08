@@ -213,7 +213,82 @@ def test_synchronous_gui_map_export_never_uses_background_cpu_pause(qt_applicati
     canvas = map_canvas.MapCanvas(); canvas.resize(500, 400)
     canvas.set_snapshot(MapSnapshot(roads=(MapRoad(1, 'road', '',
                         (((0., 0., 0.), (100., 0., 100.)),)),), bounds=(0., 0., 100., 100.)))
+    canvas.prepare_frame()
     assert canvas.export_image(tmp_path/'map.png')
+    canvas.close()
+
+
+def test_export_readiness_tracks_exact_frame_zoom_failure_and_empty_save(qt_application, tmp_path):
+    from map_canvas import MapCanvas
+    from map_model import MapRoad, MapSnapshot
+    canvas = MapCanvas(); canvas.resize(500, 400)
+    assert callable(getattr(canvas, 'can_export', None)), 'public frame readiness is missing'
+    assert hasattr(canvas, 'export_availability_changed'), 'public readiness signal is missing'
+    changes = []; canvas.export_availability_changed.connect(changes.append)
+    snapshot = MapSnapshot(roads=(MapRoad(1, 'road', '',
+                          (((0., 0., 0.), (100., 0., 100.)),)),),
+                          bounds=(0., 0., 100., 100.), source_hash='A')
+    canvas.set_snapshot(snapshot)
+    assert not canvas.can_export() and not canvas.export_image(tmp_path/'pending.png')
+    canvas.prepare_frame()
+    assert canvas.can_export() and changes[-1] is True
+    canvas.zoom_in()
+    assert not canvas.can_export() and changes[-1] is False
+    # Finish the interaction debounce before requesting an exact new frame.
+    canvas._render_timer.stop()
+    canvas.prepare_frame()
+    assert canvas.can_export() and changes[-1] is True
+    canvas._frame_failed(canvas._render_key(), 'render failure')
+    assert not canvas.can_export() and changes[-1] is False
+    canvas.set_snapshot(snapshot); canvas.prepare_frame()
+    assert canvas.can_export() and canvas.export_image(tmp_path/'ready.png')
+    canvas.close()
+    assert not canvas.can_export() and changes[-1] is False
+    canvas.show(); qt_application.processEvents(); canvas.prepare_frame()
+    assert canvas.can_export() and changes[-1] is True
+    canvas.set_snapshot(MapSnapshot(source_hash='B')); canvas.prepare_frame()
+    assert not canvas.can_export() and changes[-1] is False
+    canvas.close()
+
+
+def test_export_readiness_requires_current_viewport_and_dpr(qt_application, monkeypatch):
+    from map_canvas import MapCanvas
+    from map_model import MapRoad, MapSnapshot
+    canvas = MapCanvas(); canvas.resize(500, 400)
+    canvas.set_snapshot(MapSnapshot(roads=(MapRoad(1, 'road', '',
+                        (((0., 0., 0.), (100., 0., 100.)),)),), bounds=(0., 0., 100., 100.)))
+    canvas.prepare_frame()
+    assert canvas.can_export()
+    canvas.resize(700, 500)
+    assert not canvas.can_export()
+    canvas.prepare_frame()
+    assert canvas.can_export() and canvas._frame.width() == 700
+    monkeypatch.setattr(canvas, 'devicePixelRatioF', lambda: 2.)
+    assert not canvas.can_export()
+    canvas.prepare_frame()
+    assert canvas.can_export() and canvas._frame.devicePixelRatio() == 2.
+    assert canvas._frame.width() == 1400
+    canvas.close()
+
+
+def test_late_frame_cannot_enable_export_for_new_save(qt_application, monkeypatch):
+    from map_canvas import MapCanvas, _FrameSurface
+    from map_model import MapRoad, MapSnapshot
+    canvas = MapCanvas(); canvas.resize(500, 400)
+    assert callable(getattr(canvas, 'can_export', None)), 'public frame readiness is missing'
+    old = MapSnapshot(roads=(MapRoad(9000, 'road', '',
+                      (((0., 0., 0.), (100., 0., 100.)),)),),
+                      bounds=(0., 0., 100., 100.), source_hash='B')
+    canvas.set_snapshot(old); canvas.prepare_frame()
+    key, view, image = canvas._frame_key, canvas._frame_view, canvas._frame
+    surface = _FrameSurface(canvas)
+    entered, release = _hold_index_job(monkeypatch)
+    canvas.set_snapshot(_large_map()); _wait_for(entered.is_set)
+    canvas._frame_completed(key, view, image, surface)
+    assert not canvas.can_export()
+    release.set()
+    _wait_for(canvas.can_export)
+    assert canvas._frame_key == canvas._render_key()
     canvas.close()
 
 

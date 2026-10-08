@@ -45,6 +45,7 @@ def test_search_focus_and_export_are_actual_records(canvas, tmp_path):
     canvas.focus_result(canvas.search('东站')[0])
     assert canvas.center == (0.,0.)
     output = tmp_path / 'map.png'
+    canvas.prepare_frame()
     assert canvas.export_image(output)
     image = QImage(str(output))
     assert not image.isNull() and image.width() == 960
