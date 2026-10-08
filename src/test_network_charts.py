@@ -346,6 +346,26 @@ def test_single_company_overall_and_enlarged_summary_use_selected_name():
     panel.deleteLater()
 
 
+def test_city_coefficient_legend_and_enlarged_summary_never_use_selected_company_name():
+    from chart_details import summary_cards
+    from test_company_journey_union import counters, network, source
+    app()
+    for ids in ((), ('a',), ('a', 'b')):
+        state = network(source(counters(), ids))
+        item = next(c for c in state.charts if c.key == 'transfer-coefficient')
+        panel = NetworkChartPanel()
+        panel.set_descriptor(item, state)
+        assert chart(panel).series[0].name == '全市公共交通'
+        assert panel._display_company('') == '全市公共交通'
+        cards = summary_cards(item.result, state.companies, company_name=panel._display_company)
+        assert cards[0]['name'] == '全市公共交通' and cards[0]['values'][0][1] == 2
+        panel.deleteLater()
+
+    item = next(c for c in state.charts if c.key == 'trip-types')
+    cards = summary_cards(item.result, state.companies)
+    assert cards[0]['display_values'][0][0] == '区间参与行程次数'
+
+
 def test_shared_axis_override_controls_line_horizontal_and_stacked_charts():
     app()
     spec = AxisSpec(0, 100, 20)

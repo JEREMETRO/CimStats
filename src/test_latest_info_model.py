@@ -198,9 +198,9 @@ def test_top10_retains_ten_rows_without_other_or_zero_padding(data):
     assert snapshot.total_departures == 66
 
 
-def test_overall_transfer_uses_combined_counts(data):
+def test_overall_transfer_uses_native_city_journeys(data):
     all_value = metrics(build(data))['transfer-coefficient']
-    assert all_value.value == Decimal(110) / 30
+    assert all_value.value == Decimal(110) / 20
     assert metrics(build(data, 'a'))['transfer-coefficient'].value == 5
     assert metrics(build(data, 'b'))['transfer-coefficient'].value == 1
     selected_mode = metrics(build(data, 'a', '有轨电车'))['transfer-coefficient']
@@ -328,13 +328,12 @@ def test_unmatched_transfer_hours_and_missing_company_inputs_are_not_silently_dr
     assert metrics(build(data))['transfer-coefficient'].value is None
 
 
-def test_transfer_sums_each_company_valid_hours_without_discarding_unshared_hours(data):
-    # Company a has two matched observation hours, company b has one. Both
-    # count pairs are valid; restricting to shared hours would lose 100/20.
+def test_overall_transfer_uses_only_hours_with_complete_city_and_company_pairs(data):
     data['history'] += [history('transport-by-type', 100, company='a', hour=1, group='bus'),
                         history('trip-types', 20, company='a', hour=1, group='OneZone')]
     value = metrics(build(data))['transfer-coefficient']
-    assert value.value == Decimal(210) / 50
+    assert value.value == Decimal(110) / 20 and '全市' in value.scope
+    assert metrics(build(data,'a'))['transfer-coefficient'].value == 5
     assert not value.complete
 
 
@@ -352,7 +351,7 @@ def test_transfer_excludes_hour_with_missing_serialized_mode_category(data):
     assert [b.value for b in next(iter(snapshot.trend.series.values()))] == [120, None, None]
 
 
-def test_transfer_keeps_company_specific_complete_paired_hours(data):
+def test_joint_transfer_requires_all_company_boardings_at_same_city_hours(data):
     data['history'] = [history('transport-by-type', 100, company='a', group='bus'),
                        history('transport-by-type', 20, company='a', group='tram'),
                        history('trip-types', 30, company='a', group='OneZone'),
@@ -360,8 +359,10 @@ def test_transfer_keeps_company_specific_complete_paired_hours(data):
                        history('trip-types', 30, company='a', hour=1, group='OneZone'),
                        history('transport-by-type', 80, company='b', hour=1, group='bus'),
                        history('trip-types', 20, company='b', hour=1, group='OneZone')]
+    data['history'] += [history('public-transport',30,100),history('public-transport',20,100,hour=1)]
     value = metrics(build(data))['transfer-coefficient']
-    assert value.value == 4  # (a's 120 + b's 80) / (a's 30 + b's 20).
+    assert value.value is None and '完整同期观测' in value.reason
+    assert metrics(build(data,'a'))['transfer-coefficient'].value == 4
     assert not value.complete
 
 

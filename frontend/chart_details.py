@@ -230,7 +230,7 @@ def summary_cards(result, companies, comparison_label='对比', company_name=Non
                 total = (sum((value for _, value in values), Decimal(0))
                          if all(value is not None for _, value in values) else None)
                 label = {'transport-by-type': '客流', 'transport-by-group': '客流',
-                         'trip-types': '出行量'}.get(result.query.metric, result.metric.label)
+                         'trip-types': '参与行程次数'}.get(result.query.metric, result.metric.label)
                 caption = {'hour': '小时', 'day': '日', 'week': '周', 'month': '月'}[result.query.grain] + '均' + label
                 card.update(grain_average=average, average_periods=len(totals),
                             display_values=[('区间' + label, total),

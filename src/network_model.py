@@ -11,6 +11,7 @@ from statistics_model import Bucket, QueryCancelled, Result, summarize_buckets
 from stats_view_model import company_result
 from display_rules import number_places
 from card_comparisons import CardComparison, change, peer_comparisons, baseline_label
+from journey_model import overall_journeys, overall_transfer, CITY_JOURNEY_CONTEXT
 
 
 BASE_KEYS = ('linecount', 'stopcount', 'coverage', 'vehicles-running',
@@ -291,7 +292,7 @@ def _last_day_result(result: Result) -> Result:
                 value = Decimal(numerator) * 100 / denominator if denominator else None
             elif metric.kind == 'coefficient':
                 segments = [record for record in raw if record.metric == 'transport-by-type']
-                journeys = [record for record in raw if record.metric == 'trip-types']
+                journeys = [record for record in raw if record.metric in ('trip-types', 'public-transport')]
                 if ({record.time for record in segments} == {record.time for record in journeys}
                         and segments and journeys):
                     numerator = sum(record.value for record in segments)
@@ -370,6 +371,13 @@ def _summary(snapshot: DashboardResult, ids: tuple[str, ...],
     coverage = total('coverage')
     passengers = total(options.passenger)
     coefficient = total('transfer-coefficient')
+    joint = options.mode == 'overall'
+    journey_reason = coefficient_reason = ''
+    if joint:
+        passengers, journey_reason = overall_journeys(snapshot, cancelled) if options.passenger == 'trip-types' else (passengers, '')
+        coefficient, coefficient_reason = overall_transfer(snapshot, cancelled)
+        if coefficient is not None:
+            coefficient = _last_day_result(coefficient)
     values = [
         _numeric_value('linecount', line_count.metric.label, line_count),
         _numeric_value(options.facility, facility.metric.label, facility),
@@ -379,9 +387,16 @@ def _summary(snapshot: DashboardResult, ids: tuple[str, ...],
                       None, reason=NO_HISTORY)
          if options.mode == 'overall' and len(ids) > 1 else
          _numeric_value('coverage', coverage.metric.label, coverage)),
-        _numeric_value(options.passenger, '客流' if options.passenger == 'transport-by-type' else '出行量', passengers),
-        _numeric_value('transfer-coefficient', coefficient.metric.label, coefficient),
+        (replace(_numeric_value(options.passenger, '客流' if options.passenger == 'transport-by-type' else '出行量', passengers),
+                 context=CITY_JOURNEY_CONTEXT if joint and options.passenger == 'trip-types' else '')
+         if passengers is not None else NetworkValue('trip-types', '出行量', '人次', None, reason=journey_reason)),
+        (replace(_numeric_value('transfer-coefficient', coefficient.metric.label, coefficient),
+                 context=CITY_JOURNEY_CONTEXT if joint else '')
+         if coefficient is not None else NetworkValue('transfer-coefficient', '平均换乘系数', '倍', None, reason=coefficient_reason)),
     ]
+    if joint:
+        values = [replace(v, comparison=CardComparison(text=''))
+                  if v.metric_id in ('trip-types', 'transfer-coefficient') else v for v in values]
     return NetworkSummary(ids[0] if len(ids) == 1 and options.mode != 'overall' else None,
                           _display_name(ids[0], companies) if len(ids) == 1 and options.mode != 'overall'
                           else '总体', tuple(values))
@@ -399,6 +414,8 @@ def _allowed_modes(key: str, grain: str) -> tuple[str, ...]:
 
 def _chart_result(snapshot: DashboardResult, key: str, ids: tuple[str, ...],
                   options: NetworkOptions, cancelled) -> tuple[Result | None, str]:
+    if key == 'transfer-coefficient' and options.mode == 'overall':
+        return overall_transfer(snapshot, cancelled)
     if not ids:
         return None, NO_COMPANY
     source = (snapshot.results['transport-by-type'] if key == 'company-passengers'
@@ -491,6 +508,9 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                 before = _summary(baseline_snapshot, selected, names, options, cancelled)
                 values = []
                 for value, previous in zip(summary.values, before.values):
+                    if options.mode == 'overall' and value.metric_id in ('trip-types', 'transfer-coefficient'):
+                        values.append(replace(value, comparison=CardComparison(text='')))
+                        continue
                     if options.vehicle == 'maximum' and value.metric_id == 'vehicles-running':
                         values.append(value)
                         continue
@@ -523,7 +543,7 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                           if key in ('linecount', 'stopcount', 'vehicles-running') and
                           result is not None else None)
             title = ('分公司客流' if key == 'company-passengers' else
-                     '分区出行量' if key == 'trip-types' else
+                     '公司参与行程次数' if key == 'trip-types' else
                      snapshot.results[key].metric.label)
             charts.append(NetworkChart(key, title,
                                        selected[0] if options.mode == 'period' else None,

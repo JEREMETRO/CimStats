@@ -906,7 +906,7 @@ def main():
     }])
     metric_meanings = {
         "unemployment": "失业率", "population": "人口",
-        "traffic-density": "道路/轨道交通密度", "public-transport": "公共交通客流",
+        "traffic-density": "道路/轨道交通密度", "public-transport": "全市公共交通方式占比（分子为行程次数）",
         "private-motoring": "私家车出行", "walking": "步行出行",
         "trip-number": "行程数量（城市历史统计）", "trip-time": "行程时间（原始值及分母）",
         "economy": "经济指标", "energy-prices": "能源价格", "cashflow": "现金流",
@@ -916,7 +916,7 @@ def main():
         "popularity": "公共交通吸引力", "satisfaction-speed": "速度满意度",
         "satisfaction-cost": "成本满意度", "satisfaction-quality": "质量满意度",
         "monthly-ticket": "月票客流", "generic-ticket": "普通票客流",
-        "fare-dodging": "逃票", "trip-types": "行程类型分布",
+        "fare-dodging": "逃票", "trip-types": "公司参与行程次数（票制／覆盖区数分类）",
         "transport-by-group": "按社会群体的客流分布",
         "transport-by-type": "按交通工具类型的客流分布",
     }

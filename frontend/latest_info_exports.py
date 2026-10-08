@@ -41,9 +41,10 @@ def build_share_summary(snapshot: LatestInfoSnapshot) -> str:
              f'范围：{_company(snapshot, snapshot.company_id)} · {group_label(snapshot.mode)}']
     for metric in snapshot.metrics:
         unit = f' {metric.unit}' if metric.unit else ''
-        scope_note = ('全市' if metric.key == 'public-transport-share' else
-                      '全部制式' if metric.key == 'transfer-coefficient' and snapshot.mode != '综合' else '')
-        notes = [part for part in (scope_note,
+        scope_note = ('全市' if metric.key == 'public-transport-share' or
+                      (metric.key == 'transfer-coefficient' and not snapshot.company_id) else '')
+        mode_note = '全部制式' if metric.key == 'transfer-coefficient' and snapshot.mode != '综合' else ''
+        notes = [part for part in (scope_note, mode_note,
                  '部分观测' if not metric.complete and _number(metric.value) is not None else '') if part]
         lines.append(f'{metric.title}：{format_number(metric.value, number_places(metric.key), grouped=False)}{unit}' +
                      (f'（{"；".join(notes)}）' if notes else ''))

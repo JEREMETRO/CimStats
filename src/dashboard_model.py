@@ -24,6 +24,8 @@ class DashboardResult:
     breakdowns: dict[str, Result]
     alerts: list[Alert]
     card_previous: dict[str, Result] = field(default_factory=dict)
+    city_boardings: Result | None = None
+    all_company_ids: tuple[str, ...] = ()
 
 
 def default_window(simulation_time) -> tuple[datetime, datetime]:
@@ -67,4 +69,8 @@ def build_dashboard(store: HistoryStore, filters: FilterState,
         query = Query(name, filters.companies, result.query.group, start, end, filters.grain)
         previous[name] = (store.query(query, cancelled) if filters.companies else
                           Result(query, result.metric, {}, {}, (start, end), None))
-    return DashboardResult(filters, results, breakdowns, alerts, previous)
+    city_boardings = store.query(Query('transport-by-type', (), None, filters.start,
+                                      filters.end, filters.grain), cancelled)
+    all_company_ids = tuple(sorted({owner for (name, owner, _) in store.series
+                                   if owner and METRICS.get(name) and METRICS[name].scope == 'company'}))
+    return DashboardResult(filters, results, breakdowns, alerts, previous, city_boardings, all_company_ids)

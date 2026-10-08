@@ -241,8 +241,27 @@ def _history(data, now, companies, cancelled):
     return HistoryStore(normalized, now, cancelled=cancelled)
 
 
-def _transfer_value(store, ids, start, end, cancelled):
+def _transfer_value(store, ids, start, end, cancelled, *, overall=False):
     """Sum safe paired hours per company, never partial-category daily totals."""
+    if overall:
+        from journey_model import overall_transfer
+        from dashboard_model import DashboardResult
+        from statistics_model import summarize_buckets
+        public = store.query(Query('public-transport', (), '__total__', start, end, 'hour'), cancelled)
+        groups = store.query(Query('public-transport', (), None, start, end, 'hour'), cancelled)
+        board = store.query(Query('transport-by-type', (), None, start, end, 'hour'), cancelled)
+        owners = tuple(sorted({owner for name, owner, _ in store.series
+                               if owner and METRICS.get(name) and METRICS[name].scope == 'company'}))
+        paired = DashboardResult(FilterState(ids, start, end, 'hour'),
+            {'public-transport': public}, {'public-transport': groups}, [],
+            city_boardings=board, all_company_ids=owners)
+        result, reason = overall_transfer(paired, cancelled, positive_hours_only=True)
+        if result is None:
+            return None, False, '；' + reason
+        buckets = result.series[('', '总计')]
+        value = summarize_buckets(buckets, result.metric)
+        complete = value is not None and all(b.complete for b in buckets)
+        return value, complete, ('；' + reason if reason else '；仅累计完整同期且行程分母为正的全市观测')
     source = store.query(Query('transfer-coefficient', ids, '__total__', start, end, 'hour'), cancelled)
     numerator = denominator = 0
     complete = True
@@ -388,9 +407,10 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
     share_complete = coefficient_complete = False
     day_scope = f"模拟当日 {now:%Y-%m-%d} 00:00 至 {now:%H:%M:%S}" if now else '缺少模拟时间'
     share_reason = '全市公共交通有效历史计数 ÷ 对应历史总体计数 × 100；缺小时不补零，当前小时可能为部分观测'
-    coefficient_reason = '所选公司当日总客流与总分区出行量之比，即平均每位乘客单次行程的乘车次数'
+    coefficient_reason = ('全市当日登乘次数与公共交通行程次数之比，跨公司换乘的行程只计一次'
+                          if not company_id else '所选公司当日登乘次数与参与行程次数之比，即平均每位乘客单次行程的乘车次数')
     if mode != '综合':
-        coefficient_reason += '；历史分区出行量缺少对应制式分母，保持所选公司全部制式范围，不随制式筛选'
+        coefficient_reason += '；行程计数缺少对应制式分母，保持全部制式范围，不随制式筛选'
     population = _number(metadata.get('当前人口数'))
     if now and now > now.replace(hour=0, minute=0, second=0, microsecond=0):
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -409,9 +429,10 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
                 source = _quantity_trend(source, ids, False)
             company_trend = source
             trend = _aggregate_result(source, ids, False, cancelled)
-            # Category-safe count pairs are accumulated for each company first;
-            # companies need not have identical valid observation hours.
-            coefficient, coefficient_complete, pairing_reason = _transfer_value(store, ids, start, now, cancelled)
+            # Overall pairs all city/company inputs at common hours; a company
+            # view keeps its own complete participating-journey observations.
+            coefficient, coefficient_complete, pairing_reason = _transfer_value(
+                store, ids, start, now, cancelled, overall=not company_id)
             coefficient_reason += pairing_reason
     if share is None:
         share_reason += '；缺少模拟时间' if now is None else ('；模拟当日尚无观测时段' if now == now.replace(hour=0, minute=0, second=0, microsecond=0) else '；当日公共交通占比观测不足，无法计算')
@@ -423,7 +444,7 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
     metrics.extend((InfoValue('public-transport-share', '公共交通分担率', share, '%',
                              f'全市 · {day_scope}', share_reason, share_complete),
                     InfoValue('transfer-coefficient', METRICS['transfer-coefficient'].label, coefficient, '倍',
-                              f'公司：{company_scope}    全部制式    {day_scope}',
+                              (f'公司：{company_scope}' if company_id else '全市公共交通') + f'    全部制式    {day_scope}',
                               coefficient_reason, coefficient_complete)))
     def highlight(title, field, maximum):
         valid = [s for s in summaries if getattr(s, field) is not None]

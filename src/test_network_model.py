@@ -178,17 +178,19 @@ def test_vehicle_total_uses_aligned_hour_weights_inside_day_bucket():
     assert not value(network.summaries[0], 2).complete
 
 
-def test_transfer_coefficient_uses_combined_counts_not_company_ratio_mean():
+def test_transfer_coefficient_uses_city_journeys_not_company_marginal_sum():
     from network_model import NetworkOptions, build_network_snapshot
 
     rows = [history(metric, company, 0, count)
             for company, segments, journeys in [('a', 10, 10), ('b', 90, 30)]
             for metric, count in [('transport-by-type', segments), ('trip-types', journeys)]]
-    network = build_network_snapshot(dashboard(rows), NetworkOptions(), NAMES)
+    rows.append(row('public-transport', 'Student', START, 25, 100))
+    source = dashboard(rows)
+    network = build_network_snapshot(source, NetworkOptions(), NAMES)
     coefficient = value(network.summaries[0], 5)
-    assert coefficient.value == Decimal('2.5')
-    bucket = chart(network, 'transfer-coefficient').result.series[('__selected__', '总计')][0]
-    assert (bucket.numerator, bucket.denominator, bucket.value) == (100, 40, Decimal('2.5'))
+    assert coefficient.value == Decimal(4)  # 100 boardings / 25 unique city journeys.
+    bucket = chart(network, 'transfer-coefficient').result.series[('', '总计')][0]
+    assert (bucket.numerator, bucket.denominator, bucket.value) == (100, 25, Decimal(4))
     assert bucket.effective_hours == 1
 
 
@@ -198,10 +200,12 @@ def test_transfer_coefficient_keeps_zero_company_denominator_in_total_numerator(
     rows = [history(metric, company, 0, count)
             for company, segments, journeys in [('a', 10, 10), ('b', 90, 0)]
             for metric, count in [('transport-by-type', segments), ('trip-types', journeys)]]
-    network = build_network_snapshot(dashboard(rows), NetworkOptions(), NAMES)
+    rows.append(row('public-transport', 'Student', START, 10, 100))
+    source = dashboard(rows)
+    network = build_network_snapshot(source, NetworkOptions(), NAMES)
     coefficient = value(network.summaries[0], 5)
     assert coefficient.value == Decimal(10)  # (10 + 90) / (10 + 0)
-    bucket = chart(network, 'transfer-coefficient').result.series[('__selected__', '总计')][0]
+    bucket = chart(network, 'transfer-coefficient').result.series[('', '总计')][0]
     assert (bucket.numerator, bucket.denominator, bucket.value) == (100, 10, Decimal(10))
 
 
@@ -215,7 +219,8 @@ def test_transfer_coefficient_does_not_hide_zero_or_missing_denominator(bad_rows
     rows = [history('transport-by-type', 'a', 0, 10), history('trip-types', 'a', 0, 10)] + bad_rows
     network = build_network_snapshot(dashboard(rows), NetworkOptions(), NAMES)
     assert value(network.summaries[0], 5).value is None
-    assert chart(network, 'transfer-coefficient').result.series[('__selected__', '总计')][0].value is None
+    assert chart(network, 'transfer-coefficient').result is None
+    assert chart(network, 'transfer-coefficient').reason == '公共交通行程数据不完整'
 
 
 def test_overall_stops_sum_but_coverage_waits_for_a_proven_total_source():
@@ -303,6 +308,7 @@ def test_summary_average_and_coefficient_use_last_day_while_trends_keep_range():
                  history('coverage', 'a', 0, coverage, day=day, divider=100),
                  history('transport-by-type', 'a', 0, segments, day=day),
                  history('trip-types', 'a', 0, journeys, day=day)]
+        rows.append(row('public-transport', 'Student', D(2024, 1, day), journeys, 100))
     source = build_dashboard(HistoryStore(rows, D(2024, 1, 3)), FilterState(
         ('a',), D(2024, 1, 1), D(2024, 1, 3), 'day'))
     network = build_network_snapshot(source, NetworkOptions(), NAMES)
@@ -413,6 +419,7 @@ def test_summary_switches_keep_six_positions_and_separate_flow_metrics():
     rows = [history(metric, 'a', 0, count)
             for metric, count in [('depotcount', 4), ('vehicles-running', 2 * 1024),
                                   ('transport-by-type', 100), ('trip-types', 80)]]
+    rows.append(row('public-transport', 'Student', START, 60, 100))
     network = build_network_snapshot(dashboard(rows, ('a',)),
                                      NetworkOptions(passenger='trip-types'), NAMES)
     summary = network.summaries[0]
@@ -420,7 +427,7 @@ def test_summary_switches_keep_six_positions_and_separate_flow_metrics():
         'linecount', 'depotcount', 'vehicles-running', 'coverage', 'trip-types',
         'transfer-coefficient')
     assert summary.values[1].value == 4
-    assert summary.values[4].value == 80
+    assert summary.values[4].value == 60
     assert chart(network, 'transport-by-type').result.series
     assert chart(network, 'trip-types').result.series
 

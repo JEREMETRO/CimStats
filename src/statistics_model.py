@@ -38,7 +38,7 @@ METRICS = {
     'coverage': Metric('覆盖率', 'company', 'ratio_flow', '%'),
     'transport-by-group': Metric('分群体客流', 'company', 'flow', '人次'),
     'transport-by-type': Metric('分制式客流', 'company', 'flow', '人次'),
-    'trip-types': Metric('票制／覆盖区数行程', 'company', 'flow', '人次'),
+    'trip-types': Metric('公司参与行程次数', 'company', 'flow', '人次'),
     'transfer-coefficient': Metric('平均换乘系数', 'company', 'coefficient', '倍'),
     'population': Metric('人口', 'city', 'stock', '人'),
     'economy': Metric('经济增长／利率', 'city', 'ratio_stock', '%'),
@@ -340,7 +340,7 @@ def summarize_buckets(buckets: list[Bucket], metric: Metric) -> Decimal | None:
         if any(b.numerator is None or b.denominator is None or
                (b.value is None and (b.denominator != 0 or
                 {r.time for r in b.raw if r.metric == 'transport-by-type'} !=
-                {r.time for r in b.raw if r.metric == 'trip-types'})) for b in observed):
+                {r.time for r in b.raw if r.metric in ('trip-types', 'public-transport')})) for b in observed):
             return None
         denominator = sum(b.denominator for b in observed)
         return Decimal(sum(b.numerator for b in observed)) / denominator if denominator else None

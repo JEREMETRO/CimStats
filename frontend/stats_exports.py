@@ -82,9 +82,12 @@ def export_xlsx(snapshot, path, companies, network_snapshot=None, *, company_mod
         for summary in network_snapshot.summaries:
             company_id = summary.company_id
             for value in summary.values:
+                value_comparison = ((None, None) if network_snapshot.options.mode == 'overall'
+                                    and value.metric_id in ('trip-types', 'transfer-coefficient')
+                                    else comparison)
                 base = [{'overall': '总体', 'companies': '多公司对比',
                          'period': '单公司同期'}[network_snapshot.options.mode], filters.start, filters.end,
-                        *comparison, company_id,
+                        *value_comparison, company_id,
                         network_snapshot.companies.get(company_id, summary.title)
                         if company_id else summary.title,
                         value.title, _number(value.value, value.metric_id), value.unit,

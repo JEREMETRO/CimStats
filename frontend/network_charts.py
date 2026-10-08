@@ -264,12 +264,17 @@ class NetworkChartPanel(ChartPanel):
         return self._display_company(group)
 
     def _display_company(self, company):
+        if company == '':
+            return '全市公共交通'
         if company == '__selected__':
             return self._selection_name()
         name = self.companies.get(company, company)
         return f'{name} [{company}]' if list(self.companies.values()).count(name) > 1 else name
 
     def _selection_name(self):
+        if (self.result is not None and self.result.query.metric == 'transfer-coefficient'
+                and not self.result.query.companies and ('', '总计') in self.result.series):
+            return '全市公共交通'
         filters = getattr(self.snapshot, 'filters', None)
         selected = getattr(filters, 'companies', None)
         if selected is None:

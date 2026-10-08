@@ -62,6 +62,18 @@ def test_vehicle_switch_keeps_one_title_and_does_not_render_internal_context():
         tile.close()
 
 
+def test_city_journey_tiles_expose_their_scope_in_tooltip_without_extra_label():
+    from network_dashboard import NetworkValueTile
+    from test_company_journey_union import amount, counters, network, source
+    QApplication.instance() or QApplication([])
+    snapshot = network(source(counters(), ('a',)))
+    for position, metric in ((4, 'trip-types'), (5, 'transfer-coefficient')):
+        tile = NetworkValueTile(position, amount(snapshot, metric), snapshot.options, '#1677FF')
+        assert '全市公共交通行程' in tile.toolTip()
+        assert '不作同期比较' in tile.accessibleDescription()
+        tile.close()
+
+
 def test_network_tile_retains_missing_reason_and_parts_without_repeating_comparison():
     from decimal import Decimal
     from card_comparisons import change

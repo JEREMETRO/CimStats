@@ -4,7 +4,7 @@ TEXT = {
     'company': '公司数据看板', 'service': '服务规模看板',
     'passenger': '客流数据看板', 'city': '城市数据看板',
     'summary': '总统计数据', 'bar': '条形图', 'line': '折线图', 'pie': '饼图',
-    'transfer-coefficient': '平均换乘系数', 'trip-types': '分区出行量',
+    'transfer-coefficient': '平均换乘系数', 'trip-types': '公司参与行程次数',
     'transport-by-group': '分群体客流', 'transport-by-type': '分制式客流',
     'alerts': '关键变化提醒', 'read-all': '全部标为已读', 'read': '标为已读',
     'export': '导出报表', 'export-png': '导出 PNG', 'export-xlsx': '导出 Excel',

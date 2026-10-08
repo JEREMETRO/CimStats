@@ -146,7 +146,8 @@ class NetworkValueTile(QFrame):
         elif self.metric_title is not None:
             self.metric_title.setText(value.title)
         detail_text = '；'.join(f'{name}: {_number(amount, value.metric_id)}' for name, amount in value.details)
-        description = '；'.join(dict.fromkeys(part for part in (value.reason, detail_text) if part))
+        scope = value.context if value.metric_id in ('trip-types', 'transfer-coefficient') else ''
+        description = '；'.join(dict.fromkeys(part for part in (scope, value.reason, detail_text) if part))
         self.setAccessibleDescription(description)
         self.setToolTip(description)
 
