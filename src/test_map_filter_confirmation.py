@@ -1,6 +1,6 @@
 """Filters keep independent drafts until their own confirmation button."""
 import pytest
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QElapsedTimer
 from PySide6.QtTest import QSignalSpy, QTest
 
 
@@ -18,6 +18,16 @@ def panel():
 def uncheck(p,key,identity):
     view=p.group_lists[key]
     next(view.item(i) for i in range(view.count()) if view.item(i).data(Qt.ItemDataRole.UserRole)==identity).setCheckState(Qt.CheckState.Unchecked)
+
+
+def settled_summary(application,label):
+    # Showing wrapped text and folding its body posts nested LayoutRequests.
+    timer=QElapsedTimer();timer.start()
+    while timer.elapsed()<1000:
+        application.processEvents()
+        if label.height()==label.heightForWidth(label.width()):return
+        QTest.qWait(1)
+    assert label.height()==label.heightForWidth(label.width())
 
 
 def test_confirming_one_filter_applies_only_that_block_and_folds_it(qt_application):
@@ -240,13 +250,31 @@ def test_compact_footer_buttons_and_service_handles_fit_a_narrow_filter_column(q
 def test_short_service_summary_stays_one_line_when_it_fits(qt_application):
     from PySide6.QtWidgets import QWidget
     from map_docking import MapDockHost
+    from stats_style import initialize_theme
+    initialize_theme(qt_application)
     p=panel();host=MapDockHost(QWidget(),p.panels);host.resize(960,680);host.show();host.activate_panel('filters')
     p.set_state({'service_time_mode':'range','service_start':'2030-01-02T17:00:00','service_end':'2030-01-02T18:00:00'})
     p.filter_sections['service'].set_expanded(False);p.set_result_count(22);qt_application.processEvents()
     label=p.filter_sections['service'].summary_label
+    settled_summary(qt_application,label)
     assert label.text()=='周三17:00-18:00 已选：22条'
     assert label.fontMetrics().horizontalAdvance(label.text())<=label.width()
     assert label.height()<=label.fontMetrics().height()+4
+
+
+def test_service_summary_wraps_only_when_the_narrow_panel_needs_it(qt_application):
+    from PySide6.QtWidgets import QWidget
+    from map_docking import MapDockHost
+    from stats_style import initialize_theme
+    initialize_theme(qt_application)
+    p=panel();host=MapDockHost(QWidget(),p.panels);host.resize(960,680);host.show()
+    host.restore_layout({'dock_width':240,'active':'filters'})
+    p.set_state({'service_time_mode':'range','service_start':'2030-01-02T17:00:00','service_end':'2030-01-10T18:00:00'})
+    p.filter_sections['service'].set_expanded(False);p.set_result_count(22)
+    label=p.filter_sections['service'].summary_label;settled_summary(qt_application,label)
+    assert label.text()=='2030-01-02 17:00-2030-01-10 18:00 已选：22条'
+    assert label.fontMetrics().horizontalAdvance(label.text())>label.width()
+    assert label.fontMetrics().height()<label.height()<=label.fontMetrics().height()*2+4
 
 
 def test_manual_bulk_buttons_remain_inside_the_smallest_supported_panel(qt_application):
