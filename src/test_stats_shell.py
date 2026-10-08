@@ -132,8 +132,10 @@ def test_overview_flow_tracks_sidebar_width_without_window_resize(monkeypatch, t
     assert isinstance(window.schedule_panel, SchedulePanel)
     assert isinstance(window.line_columns_button, DropDownPushButton)
     assert isinstance(window.fact_menu_button, DropDownPushButton)
-    from stats_typography import emphasis_families
+    from stats_typography import emphasis_families, numeric_font
     allowed = set(emphasis_families(12) + emphasis_families(16) + emphasis_families(24))
+    # Windows may resolve the shared medium numeric weight to a separate face.
+    allowed.add(QFontInfo(numeric_font(20)).family())
     assert all(QFontInfo(child.font()).family() in allowed
                for child in window.findChildren(QWidget) if child.isVisible())
     # Without a save the shell shows its empty state; lay the page out anyway.
