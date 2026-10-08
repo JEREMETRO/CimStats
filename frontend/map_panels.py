@@ -500,6 +500,10 @@ class _PassengerRangeEditor(QWidget):
         if previous is not None:
             for index,position in enumerate((minimum,maximum)):
                 if position==self._axis_positions[index]:values[index]=previous[index]
+        if values[1] is not None and values[0]>values[1]:
+            # Rounded coordinates can map beyond the stationary precise input.
+            if minimum!=self._axis_positions[0]:values[0]=values[1]
+            else:values[1]=values[0]
         self.set_values(*values);self.error_label.clear();self.error_label.hide();self.changed.emit(*values)
 
 

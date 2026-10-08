@@ -259,3 +259,30 @@ def test_manual_bulk_buttons_remain_inside_the_smallest_supported_panel(qt_appli
     for button in (p.manual_all,p.manual_none):
         left=button.mapTo(viewport,QPoint()).x()
         assert left>=0 and left+button.width()<=viewport.width()
+
+
+@pytest.mark.parametrize('minimum,maximum,moving',[
+    (2155.59,12345.67,0), (2150.01,12345.67,1),
+    (0.03,0.18,0), (0.06,0.22,1),
+])
+def test_slider_contact_clamps_against_the_other_precise_bound_and_confirms(qt_application,minimum,maximum,moving):
+    p=panel();editor=p.passenger_editor;spy=QSignalSpy(p.stateChanged)
+    editor.set_values(minimum,maximum)
+    stationary_text=(editor.min_edit,editor.max_edit)[1-moving].text()
+    editor.axis._change(moving,editor.axis.values()[1-moving])
+    values=editor.values()
+    assert values is not None and values[0]<=values[1]
+    assert (editor.min_edit,editor.max_edit)[1-moving].text()==stationary_text
+    p.filter_apply_buttons['passengers'].click()
+    assert (p.state()['passenger_min'],p.state()['passenger_max'])==values
+    assert spy.count()==1
+
+
+def test_finite_slider_return_preserves_a_typed_bound_above_the_slider_range(qt_application):
+    p=panel();editor=p.passenger_editor;editor.set_values(60000,70000)
+    editor.axis._change(1,editor.axis.maximum)
+    assert editor.values()==(60000,None)
+    editor.axis._change(1,editor.axis.finite_maximum)
+    assert editor.values()==(60000,60000) and editor.min_edit.text()=='60000'
+    p.filter_apply_buttons['passengers'].click()
+    assert p.state()['passenger_min']==p.state()['passenger_max']==60000
