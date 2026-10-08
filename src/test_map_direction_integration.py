@@ -46,3 +46,20 @@ def test_direction_changes_update_lengths_time_speed_and_full_line_visibility(di
     assert panel.information_labels['地图里程'].text() == '3.15 km'
     assert panel.information_labels['单程时间'].text() == '55 min'
     assert panel.information_labels['核定速度'].text() == '3.44 km/h'
+
+
+def test_full_catalog_sort_metadata_refreshes_when_statistics_change(direction_page):
+    from copy import deepcopy
+    page=direction_page
+    snapshot=page.query.snapshot
+    first=page._presentation_catalog()[0]
+    assert first['passengers']==0
+    assert first['scheduled_departures']==0
+    session=deepcopy(page.session)
+    session['lines'][0]['原始字段'].update(客流_今日=30,开线日期='2013-05-22T12:00:01')
+    page.set_session(session);page.set_snapshot(snapshot)
+    second=page._presentation_catalog()[0]
+    assert second['name']=='7路'
+    assert second['passengers']==30
+    assert second['opened_at']=='2013-05-22T12:00:01'
+    assert first['passengers']==0

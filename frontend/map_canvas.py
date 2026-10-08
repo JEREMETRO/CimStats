@@ -17,6 +17,7 @@ from stats_typography import ui_font
 from map_model import MapSnapshot, road_display_level
 from map_visibility import operating_paths, visible_route_stop_ids
 from display_rules import format_line_name
+from semantic_colors import MetricLegend
 from background_work import CooperativeCancellation
 
 # Public visual interpretation, not Apple-internal style constants. Widths
@@ -822,6 +823,9 @@ class _MapDrawing:
 
     def _legend_layout(self,painter):
         """Caller supplies actual identities; reserve two compact caption rows."""
+        if isinstance(self.options['legend_items'],MetricLegend):
+            layout=self._metric_legend_layout(painter)
+            return [(layout['bounds'],'',None)]
         available = self.width()-210
         if available<40:
             return []
@@ -844,10 +848,49 @@ class _MapDrawing:
             x += width+8
         return items
 
+    def _metric_legend_layout(self,painter):
+        legend=self.options['legend_items']
+        painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
+        metrics=painter.fontMetrics()
+        left,width=18.,max(1.,self.width()-72.)
+        count=len(legend.labels)
+        label_width=max(metrics.horizontalAdvance(label) for label in legend.labels)+4
+        stagger=label_width>width/count
+        top=self.height()-(140. if stagger else 118.)
+        missing_width=metrics.horizontalAdvance('数据缺失')+22
+        heading_rect=QRectF(left,top,width-missing_width-12,22)
+        missing=QRectF(left+width-missing_width,top,missing_width,22)
+        bar=QRectF(left,top+28,width,10)
+        labels=[]
+        for i,label in enumerate(legend.labels):
+            span=max(width/count,label_width)
+            x=max(left,min(left+width-span,left+(i+.5)*width/count-span/2))
+            labels.append((QRectF(x,top+42+(22*(i%2) if stagger else 0),span,22),label))
+        return dict(bounds=QRectF(left,top,width,86 if stagger else 64),heading=legend.heading,
+                    heading_rect=heading_rect,missing=missing,bar=bar,labels=labels)
+
+    def _draw_metric_legend(self,painter):
+        legend=self.options['legend_items']
+        layout=self._metric_legend_layout(painter)
+        painter.fillRect(layout['bounds'].adjusted(-6,-4,6,4),QColor(tokens.CARD_BG))
+        painter.setPen(QColor(tokens.TEXT_SECONDARY))
+        painter.drawText(layout['heading_rect'],Qt.AlignmentFlag.AlignVCenter,layout['heading'])
+        missing=layout['missing']
+        painter.fillRect(QRectF(missing.left(),missing.center().y()-4,12,8),QColor(legend.missing_colour))
+        painter.drawText(missing.adjusted(18,0,0,0),Qt.AlignmentFlag.AlignVCenter,'数据缺失')
+        bar=layout['bar']
+        gradient=QLinearGradient(bar.topLeft(),bar.topRight())
+        for position,color in legend.gradient_stops:gradient.setColorAt(position,QColor(color))
+        painter.fillRect(bar,gradient)
+        for rect,label in layout['labels']:
+            painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,label)
 
     def _draw_legend(self,painter):
         painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if isinstance(self.options['legend_items'],MetricLegend):
+            self._draw_metric_legend(painter)
+            return
         for rect,label,color in self._legend_layout(painter):
             y = rect.center().y()
             painter.setPen(QPen(QColor(color),3.,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))

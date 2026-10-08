@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from copy import deepcopy
 from dataclasses import dataclass
-from PySide6.QtCore import QThread, Signal, Slot, Qt
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
 from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar, Pivot
 import stats_tokens as tokens
@@ -64,6 +64,11 @@ class _MapSurface(QWidget):
         self._search_provider = search or canvas.search
         self._focus_provider = focus or canvas.focus_result
         self._defer_search = defer_search
+        self._compact_search = False
+        self._search_leave_timer = QTimer(self)
+        self._search_leave_timer.setSingleShot(True)
+        self._search_leave_timer.setInterval(120)
+        self._search_leave_timer.timeout.connect(self._collapse_search_if_idle)
         canvas.setParent(self)
         self.loading = IndeterminateProgressBar(self)
         self.loading.setAccessibleName('正在加载地图')
@@ -81,6 +86,14 @@ class _MapSurface(QWidget):
         setCustomStyleSheet(self.results,result_style,result_style)
         self.results.setFont(ui_font(tokens.FONT_SIZE_BODY))
         self.results.hide()
+        self.search_button = TransparentToolButton(FluentIcon.SEARCH, self)
+        self.search_button.setFixedSize(36,36)
+        self.search_button.setAccessibleName('搜索单条线路')
+        self.search_button.setStyleSheet(f'background:{tokens.CARD_BG};border-radius:6px;')
+        self.search_button.hide()
+        self.search_button.clicked.connect(self._activate_search)
+        for widget in (self.search_button,self.search,self.results):
+            widget.installEventFilter(self)
         self.search.searchSignal.connect(self._submit_search)
         self.search.returnPressed.connect(self._submit_search)
         self.search.clearSignal.connect(self._clear_search)
@@ -106,8 +119,51 @@ class _MapSurface(QWidget):
         self.loading.setGeometry(0,0,self.width(),4)
         self.loading.raise_()
         self.search.setGeometry(14,14,min(320,max(150,self.width()-75)),36)
+        self.search_button.setGeometry(14,14,36,36)
         self.results.setGeometry(14,54,self.search.width(),min(250,max(60,self.height()-130)))
         self.controls.setGeometry(max(0,self.width()-48),max(54,self.height()-130),34,106)
+
+    def set_compact_search(self, active):
+        active=bool(active)
+        if active==self._compact_search:return
+        self._compact_search=active
+        if active:self._collapse_search()
+        else:self._expand_search()
+
+    def _expand_search(self):
+        self._search_leave_timer.stop()
+        self.search_button.hide()
+        self.search.show()
+        self.search.raise_()
+
+    def _activate_search(self):
+        self._expand_search()
+        self.search.setFocus()
+
+    def _collapse_search(self):
+        if not self._compact_search:return
+        self._search_leave_timer.stop()
+        self.search.clearFocus()
+        self.results.clearFocus()
+        self.results.hide()
+        self.search.hide()
+        self.search_button.show()
+        self.search_button.raise_()
+
+    def _collapse_search_if_idle(self):
+        if any(widget.isVisible() and (widget.hasFocus() or widget.underMouse())
+               for widget in (self.search,self.results,self.search_button)):
+            return
+        self._collapse_search()
+
+    def eventFilter(self, watched, event):
+        if watched in (self.search_button,self.search,self.results):
+            if event.type()==QEvent.Type.Enter:
+                self._search_leave_timer.stop()
+                if watched is self.search_button:self._expand_search()
+            elif event.type() in (QEvent.Type.Leave,QEvent.Type.FocusOut):
+                self._search_leave_timer.start()
+        return super().eventFilter(watched,event)
 
     def _search(self,*_):
         self.results.clear()
@@ -158,6 +214,7 @@ class _MapSurface(QWidget):
         if item is None or not item.flags() & Qt.ItemFlag.ItemIsEnabled:return
         self._focus_provider(item.data(Qt.ItemDataRole.UserRole))
         self.results.hide()
+        self._collapse_search()
 
 
 class MapPage(QWidget):
@@ -179,6 +236,7 @@ class MapPage(QWidget):
         self._snapshot=None
         self._panel_catalogs={}
         self._presentation_source=None
+        self._presentation_stats=None
         self._presentation_companies=None
         self._presentation_routes=()
         self._planning_options=None
@@ -309,6 +367,7 @@ class MapPage(QWidget):
             self.surface.search.setPlaceholderText('搜索单条线路')
             self.surface.search.setAccessibleName(self.surface.search.placeholderText())
             self.surface.results.hide()
+            if preset!='single':self.surface.set_compact_search(False)
             self._sync_preset_panels()
             if self.query is not None:
                 self._apply_current()
@@ -377,9 +436,12 @@ class MapPage(QWidget):
         companies={str(row['公司标识']):display_company(row.get('公司名称',''))
                    for row in self.session.get('companies',()) if row.get('公司标识') is not None}
         names=tuple(sorted(companies.items()))
-        if self._presentation_source is routes and self._presentation_companies==names:
+        stats=self.query.stats if self.query is not None else None
+        if (self._presentation_source is routes and self._presentation_companies==names
+                and self._presentation_stats is stats):
             return self._presentation_routes
         self._presentation_source=routes
+        self._presentation_stats=stats
         self._presentation_companies=names
         self._presentation_routes=tuple(dict(id=route.id,name=route.name,
             search_name=route.name,number=route.number,
@@ -484,6 +546,7 @@ class MapPage(QWidget):
 
     def set_session(self, session):
         self._close_building_menu()
+        self.surface.set_compact_search(False)
         self.surface.results.clear()
         self.surface.results.hide()
         self._session_generation+=1
@@ -539,6 +602,7 @@ class MapPage(QWidget):
 
     def cancel_prefetch(self):
         self._close_building_menu()
+        self.surface.set_compact_search(False)
         self.surface.results.clear()
         self.surface.results.hide()
         self._session_generation+=1
@@ -667,11 +731,14 @@ class MapPage(QWidget):
     @staticmethod
     def _network_presentation(state,emphasis):
         return (emphasis,state.get('color_by','mode'),state.get('service_time_mode','off'),
-                state.get('service_start'),state.get('service_end'))
+                state.get('service_start'),state.get('service_end'),state.get('interval_mode','daytime'))
 
     def _apply_current(self):
         state=self._current_state()
         self.result=self.query.select(state)
+        selected=self.presets.state('single')['query']['route_id']
+        self.surface.set_compact_search(self.preset=='single' and any(
+            route.id==selected for route in self.result.routes))
         self.canvas.set_snapshot(self.result.snapshot)
         options={key:value for key,value in state.items() if key in self.canvas.options}
         options.update(route_colors=self.result.route_colors,building_colors=self.result.building_colors,
