@@ -821,16 +821,20 @@ class _MapDrawing:
             self._draw_legend(painter)
 
 
-    def _legend_layout(self,painter):
-        """Caller supplies actual identities; reserve two compact caption rows."""
+    def _legend_layout(self,painter,rect=None):
+        """Shared legend layout; external strips use their own rectangle."""
+        if rect is None and self.options.get('legend_external',False):return []
         if isinstance(self.options['legend_items'],MetricLegend):
-            layout=self._metric_legend_layout(painter)
+            layout=self._metric_legend_layout(painter,rect)
             return [(layout['bounds'],'',None)]
-        available = self.width()-210
+        available = self.width()-210 if rect is None else rect.width()-36
         if available<40:
             return []
         items = []
-        x,row = 190.,0
+        left=190. if rect is None else rect.left()+18
+        right=self.width()-20 if rect is None else rect.right()-18
+        top=self.height()-52 if rect is None else rect.top()+8
+        x,row = left,0
         metrics = painter.fontMetrics()
         for label,color in self.options['legend_items']:
             label = str(label).strip()
@@ -838,25 +842,26 @@ class _MapDrawing:
                 continue
             text = metrics.elidedText(label,Qt.TextElideMode.ElideRight,max(1,int(available-34)))
             width = metrics.horizontalAdvance(text)+34
-            if x+width>self.width()-20:
+            if x+width>right:
                 row += 1
-                x = 190.
+                x = left
             if row>=2:
                 break
-            rect = QRectF(x,self.height()-52+row*22,width,20)
-            items.append((rect,text,color))
+            item_rect = QRectF(x,top+row*22,width,20)
+            items.append((item_rect,text,color))
             x += width+8
         return items
 
-    def _metric_legend_layout(self,painter):
+    def _metric_legend_layout(self,painter,rect=None):
         legend=self.options['legend_items']
         painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
         metrics=painter.fontMetrics()
-        left,width=18.,max(1.,self.width()-72.)
+        left=18. if rect is None else rect.left()+18
+        width=max(1.,self.width()-72. if rect is None else rect.width()-36.)
         ticks=legend.ticks
         label_width=max(metrics.horizontalAdvance(label) for _,_,label,_ in ticks)+6
         stagger=any((second[0]-first[0])*width<label_width for first,second in zip(ticks,ticks[1:]))
-        top=self.height()-(140. if stagger else 118.)
+        top=self.height()-(140. if stagger else 118.) if rect is None else rect.top()+8
         missing_width=metrics.horizontalAdvance('数据缺失')+22
         heading_rect=QRectF(left,top,width-missing_width-12,22)
         missing=QRectF(left+width-missing_width,top,missing_width,22)
@@ -871,9 +876,9 @@ class _MapDrawing:
         return dict(bounds=QRectF(left,top,width,86 if stagger else 64),heading=legend.heading,
                     heading_rect=heading_rect,missing=missing,bar=bar,labels=labels,ticks=positions)
 
-    def _draw_metric_legend(self,painter):
+    def _draw_metric_legend(self,painter,rect=None):
         legend=self.options['legend_items']
-        layout=self._metric_legend_layout(painter)
+        layout=self._metric_legend_layout(painter,rect)
         painter.fillRect(layout['bounds'].adjusted(-6,-4,6,4),QColor(tokens.CARD_BG))
         painter.setPen(QColor(tokens.TEXT_SECONDARY))
         painter.drawText(layout['heading_rect'],Qt.AlignmentFlag.AlignVCenter,layout['heading'])
@@ -890,13 +895,14 @@ class _MapDrawing:
         for rect,label in layout['labels']:
             painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,label)
 
-    def _draw_legend(self,painter):
+    def _draw_legend(self,painter,rect=None):
+        if rect is None and self.options.get('legend_external',False):return
         painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if isinstance(self.options['legend_items'],MetricLegend):
-            self._draw_metric_legend(painter)
+            self._draw_metric_legend(painter,rect)
             return
-        for rect,label,color in self._legend_layout(painter):
+        for rect,label,color in self._legend_layout(painter,rect):
             y = rect.center().y()
             painter.setPen(QPen(QColor(color),3.,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
             painter.drawLine(QPointF(rect.left()+3,y),QPointF(rect.left()+17,y))
@@ -994,6 +1000,7 @@ class MapCanvas(_MapDrawing, QWidget):
     view_changed = Signal(float, float, float)
     frame_ready = Signal()
     export_availability_changed = Signal(bool)
+    legend_changed = Signal()
     render_failed = Signal(str)
     buildingClicked = Signal(int, object)
 
@@ -1038,7 +1045,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self.options = dict(roads=True, buildings=True, routes=True, direction='whole',
                             stops=True, stop_names=True, line_numbers=True, deadhead=False,
                             road_levels=None, building_classes=None, building_uses=None,
-                            layer_modes=None, route_colors={}, building_colors={},legend_items=(),
+                            layer_modes=None, route_colors={}, building_colors={},legend_items=(),legend_external=False,
                             mode_widths={},distinguish_directions=False)
         self.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -1144,9 +1151,12 @@ class MapCanvas(_MapDrawing, QWidget):
             raise TypeError('Unknown map options: ' + ', '.join(sorted(unknown)))
         if 'direction' in options and options['direction'] not in ('whole','up','down'):
             raise ValueError('direction must be whole, up or down')
+        legend_changed=any(key in options and options[key]!=self.options[key]
+                           for key in ('legend_items','legend_external'))
         self.options.update(options)
         self._revision += 1
         self._notify_export_availability()
+        if legend_changed:self.legend_changed.emit()
         self.update()
 
     def _changed(self,interactive=False):
@@ -1411,12 +1421,38 @@ class MapCanvas(_MapDrawing, QWidget):
             self._export_available = available
             self.export_availability_changed.emit(available)
 
+    def legend_strip_height(self,width=None):
+        """Measure the same independent strip that the UI and export paint."""
+        if not self.options['legend_items']:return 0
+        width=max(1,self.width() if width is None else int(width))
+        image=QImage(1,1,QImage.Format.Format_ARGB32_Premultiplied)
+        painter=QPainter(image);painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
+        try:items=self._legend_layout(painter,QRectF(0,0,width,1))
+        finally:painter.end()
+        return math.ceil(max(rect.bottom() for rect,_,_ in items)+8) if items else 0
+
+    def paint_legend_strip(self,painter,rect):
+        if not self.options['legend_items']:return
+        painter.save()
+        try:
+            painter.setClipRect(rect)
+            painter.fillRect(rect,QColor(tokens.CARD_BG))
+            self._draw_legend(painter,QRectF(rect))
+        finally:painter.restore()
+
+    def export_size(self):
+        extra=self.legend_strip_height() if self.options['legend_external'] else 0
+        return QSize(self.width(),self.height()+extra)
+
     def export_image(self,path):
         """Export the current viewport, with the exact same rendering/options."""
         if not self.can_export():
             return False
-        image = QImage(self.size(),QImage.Format.Format_ARGB32_Premultiplied)
+        image = QImage(self.export_size(),QImage.Format.Format_ARGB32_Premultiplied)
         painter = QPainter(image)
         self._paint(painter)
+        if self.options['legend_external']:
+            height=self.legend_strip_height()
+            self.paint_legend_strip(painter,QRectF(0,self.height(),self.width(),height))
         painter.end()
         return image.save(str(Path(path)))
