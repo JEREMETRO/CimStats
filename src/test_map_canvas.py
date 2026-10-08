@@ -5,7 +5,7 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtTest import QTest, QSignalSpy
 from PySide6.QtGui import QImage, QWheelEvent
 from PySide6.QtWidgets import QApplication
-from map_model import (MapSnapshot, MapRoad, MapLane, MapBuilding, MapStop, MapRoute, RouteDirection, GroupCount,
+from map_model import (MapSnapshot, MapRoad, MapLane, MapBuilding, MapStop, MapRoute, RouteDirection, GroupCount, GroupFunctionCount, SOCIAL_GROUPS,
                        MapJunction, MapJunctionConnection)
 from map_canvas import MapCanvas, MAP_BACKGROUND
 
@@ -102,7 +102,9 @@ def test_geometryless_route_remains_searchable_without_invented_path(canvas):
 
 def test_building_social_class_filter_reads_actual_people(canvas):
     building = replace(canvas.snapshot.buildings[0], category='residential',
-                       combined_groups=(GroupCount('Student',2),GroupCount('WhiteCollar',0)))
+                       combined_groups=(GroupCount('Student',2),GroupCount('WhiteCollar',0)),
+                       function_capacities=tuple(GroupFunctionCount(group,10 if group=='Student' else 0,0,0)
+                                                 for group in SOCIAL_GROUPS))
     canvas.set_snapshot(replace(canvas.snapshot, buildings=(building,)))
     canvas.set_options(roads=False, routes=False, stops=False, stop_names=False,
                        building_classes={'Student'}, building_uses={'residential'},
@@ -146,6 +148,52 @@ def test_unknown_and_transport_class_buildings_remain_visible(canvas):
     canvas.set_options(roads=False, routes=False, stops=False, stop_names=False,
                        building_classes={'transport'},building_colors={3:'#cc9988'})
     assert canvas.grab().toImage().pixelColor(canvas.world_to_screen((30.,30.)).toPoint()).name() == '#cc9988'
+
+
+@pytest.mark.parametrize('category',('transport','special','unknown'))
+@pytest.mark.parametrize('selected',(set(),{'Student'},{'BlueCollar'}))
+def test_nonpopulation_buildings_ignore_social_selections_but_obey_master(canvas,category,selected):
+    building=replace(canvas.snapshot.buildings[0],category=category)
+    canvas.set_snapshot(replace(canvas.snapshot,buildings=(building,)))
+    canvas.set_options(roads=False,routes=False,stops=False,stop_names=False,
+                       building_classes=selected,building_colors={3:'#cc9988'})
+    point=canvas.world_to_screen((30.,30.)).toPoint()
+    assert canvas.grab().toImage().pixelColor(point).name()=='#cc9988'
+    canvas.set_options(buildings=False)
+    assert canvas.grab().toImage().pixelColor(point).name()==MAP_BACKGROUND.lower()
+
+
+@pytest.mark.parametrize('category',('transport','special','unknown'))
+def test_nonpopulation_buildings_are_not_removed_by_legacy_usage_selection(canvas,category):
+    canvas.set_snapshot(replace(canvas.snapshot,buildings=(replace(canvas.snapshot.buildings[0],category=category),)))
+    canvas.set_options(roads=False,routes=False,stops=False,stop_names=False,
+                       building_classes=set(),building_uses=set(),building_colors={3:'#cc9988'})
+    assert canvas.grab().toImage().pixelColor(canvas.world_to_screen((30.,30.)).toPoint()).name()=='#cc9988'
+
+
+@pytest.mark.parametrize('category',('transport','special','unknown'))
+def test_native_nonpopulation_category_stays_visible_even_with_known_population(canvas,category):
+    records=tuple(GroupFunctionCount(group,10 if group=='Student' else 0,0,0) for group in SOCIAL_GROUPS)
+    building=replace(canvas.snapshot.buildings[0],category=category,function_capacities=records,
+                     combined_groups=(GroupCount('Student',10),))
+    canvas.set_snapshot(replace(canvas.snapshot,buildings=(building,)))
+    canvas.set_options(roads=False,routes=False,stops=False,stop_names=False,
+                       building_classes=set(),building_colors={3:'#cc9988'})
+    assert canvas.grab().toImage().pixelColor(canvas.world_to_screen((30.,30.)).toPoint()).name()=='#cc9988'
+
+
+@pytest.mark.parametrize('capacity',(0,10))
+def test_empty_population_counts_do_not_turn_native_population_category_into_unknown(canvas,capacity):
+    records=tuple(GroupFunctionCount(group,capacity if group=='Student' else 0,0,0) for group in SOCIAL_GROUPS)
+    building=replace(canvas.snapshot.buildings[0],category='residential',function_capacities=records,
+                     combined_groups=(GroupCount('Student',capacity),))
+    canvas.set_snapshot(replace(canvas.snapshot,buildings=(building,)))
+    canvas.set_options(roads=False,routes=False,stops=False,stop_names=False,
+                       building_classes={'Student'},building_colors={3:'#cc9988'})
+    point=canvas.world_to_screen((30.,30.)).toPoint()
+    assert (canvas.grab().toImage().pixelColor(point).name()=='#cc9988') is (capacity>0)
+    canvas.set_options(building_classes=set())
+    assert canvas.grab().toImage().pixelColor(point).name()==MAP_BACKGROUND.lower()
 
 def test_number_label_is_not_repeated_for_every_real_path_segment(canvas):
     paths=tuple(((10.,0.,float(z)),(90.,0.,float(z))) for z in range(5,100,5))

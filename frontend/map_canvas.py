@@ -17,7 +17,7 @@ from stats_typography import ui_font
 from map_model import MapSnapshot, road_display_level
 from map_visibility import operating_paths, visible_route_stop_ids
 from display_rules import format_line_name
-from semantic_colors import MetricLegend
+from semantic_colors import MetricLegend, is_non_social_building
 from background_work import CooperativeCancellation
 
 # Public visual interpretation, not Apple-internal style constants. Widths
@@ -530,18 +530,17 @@ class _MapDrawing:
         painter.fillRect(self.rect(),QColor(MAP_BACKGROUND))
         if self.options['buildings']:
             for building in self._visible('buildings'):
-                selected = self.options['building_classes']
-                uses = self.options['building_uses']
-                groups = building.combined_groups
-                present = {c.group for c in groups if c.count is not None and c.count>0}
-                if building.category in ('transport','special'):
-                    present = {building.category}
-                if not present:
-                    present = {'unknown'}
-                if selected is not None and not present.intersection(selected):
-                    continue
-                if uses is not None and getattr(building,'usage',building.category) not in uses:
-                    continue
+                if not is_non_social_building(building):
+                    selected = self.options['building_classes']
+                    uses = self.options['building_uses']
+                    groups = building.combined_groups
+                    present = {c.group for c in groups if c.count is not None and c.count>0}
+                    if not present:
+                        present = {'unknown'}
+                    if selected is not None and not present.intersection(selected):
+                        continue
+                    if uses is not None and getattr(building,'usage',building.category) not in uses:
+                        continue
                 if len(building.polygon)<3:
                     continue
                 box = self._boxes['buildings'][building.id]
