@@ -15,7 +15,7 @@ from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, PushButton, 
 from line_schedule import TICKS_PER_SECOND
 from display_rules import format_number
 from map_visibility import usable_paths as _usable_paths
-from map_panels import _ChoiceGroup, _OptionGrid, _SingleLineList, _style_control
+from map_panels import _ChoiceGroup, _OptionGrid, _SingleLineList, _style_control, _population_choices
 from display_rules import display_mode
 from semantic_colors import color_for
 from map_line_labels import resolve_line_labels
@@ -610,11 +610,12 @@ class PlanningPanel(_PresetPanel):
         self.emphasis_check.clicked.connect(self._emphasis_changed)
         lines = _section(self.body_layout); _label(lines, '线路比选', True)
         self.selection_summary = _label(lines, '已选 0 / 共 0')
-        self._catalog_view = _RouteList(); lines.addWidget(self._catalog_view)
+        self._catalog_view = _RouteList(persistent=True); lines.addWidget(self._catalog_view,1)
+        self.body_layout.setStretch(self.body_layout.indexOf(lines.parentWidget()),1)
         self.search = self._catalog_view.search; self.line_list = self._catalog_view.line_list
         self.select_all = self._catalog_view.select_all; self.clear_selection = self._catalog_view.clear_selection
         self._catalog_view.changed.connect(self._selection_changed)
-        self.body_layout.addStretch(1); self._refresh()
+        self._refresh()
 
     def state(self):
         state = deepcopy(self._state); state['selected_line_ids'] = set(state['selected_ids'])
@@ -631,7 +632,7 @@ class PlanningPanel(_PresetPanel):
         self._refresh()
 
     def set_options(self, options):
-        self._class_options = deepcopy(options.get('building_classes', []))
+        self._class_options = deepcopy(_population_choices(options.get('building_classes', [])))
         if self._state['building_classes'] is None and self._class_options:
             self._state['building_classes'] = {v['id'] for v in self._class_options}
         self._refresh()

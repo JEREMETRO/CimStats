@@ -176,9 +176,9 @@ def test_filter_summaries_show_applied_criteria_and_combined_count_only(qt_appli
     uncheck(p,'modes','tram')
     assert p.filter_sections['modes'].summary_label.text()==''
     p.filter_apply_buttons['modes'].click()
-    assert p.filter_sections['modes'].summary_label.text()=='筛选制式：公交 已选：2条'
+    assert p.filter_sections['modes'].summary_label.text()=='公交 已选：2条'
     p.set_result_count(22)
-    assert p.filter_sections['modes'].summary_label.text()=='筛选制式：公交 已选：22条'
+    assert p.filter_sections['modes'].summary_label.text()=='公交 已选：22条'
     p.set_state({'modes':{'bus','tram'}})
     assert p.filter_sections['modes'].summary_label.text()==''
 
@@ -199,10 +199,10 @@ def test_service_summary_uses_weekday_range_and_empty_criteria_remain_blank(qt_a
 
 def test_explicit_zero_infinity_and_empty_manual_selection_have_real_summaries(qt_application):
     p=panel();p.manual_none.click();p.filter_apply_buttons['passengers'].click()
-    assert p.filter_sections['passengers'].summary_label.text()=='筛选客流：0-∞人次 已选：2条'
+    assert p.filter_sections['passengers'].summary_label.text()=='0-∞人次 已选：2条'
     assert p.filter_sections['manual_line_ids'].summary_label.text()==''
     p.filter_apply_buttons['manual_line_ids'].click()
-    assert p.filter_sections['manual_line_ids'].summary_label.text()=='筛选线路：0条 已选：0条'
+    assert p.filter_sections['manual_line_ids'].summary_label.text()=='0条 已选：0条'
     assert p.filter_sections['passengers'].summary_label.text().endswith('已选：0条')
     p.reset_filters.click()
     assert all(section.summary_label.text()=='' for section in p.filter_sections.values())

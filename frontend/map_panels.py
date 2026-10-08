@@ -34,6 +34,11 @@ _FILTER_BLOCK_KEYS = {
     'manual_line_ids':('manual_line_ids',),
 }
 _FILTER_OWNER = {key:block for block,keys in _FILTER_BLOCK_KEYS.items() for key in keys}
+_NON_POPULATION_CLASSES = frozenset(('transport','special','unknown'))
+
+
+def _population_choices(choices):
+    return [choice for choice in choices if choice['id'] not in _NON_POPULATION_CLASSES]
 
 class _WrappedList(ListWidget):
     """Keep the Fluent delegate, with actual row heights for wrapped names."""
@@ -309,7 +314,8 @@ class _RoadSample(QWidget):
 class _OptionCell(QWidget):
     def __init__(self,choice,road=False,parent=None):
         super().__init__(parent)
-        row=QHBoxLayout(self); row.setContentsMargins(0,0,0,0); row.setSpacing(3)
+        self.setMinimumHeight(36)
+        row=QHBoxLayout(self); row.setContentsMargins(0,2,0,2); row.setSpacing(6)
         self.check=_style_control(CheckBox('')); self.check.setFixedWidth(22); self.check.setMinimumHeight(30)
         self.check.setAccessibleName(choice['name']); row.addWidget(self.check)
         if road:sample=_RoadSample(choice['id'])
@@ -327,8 +333,9 @@ class _OptionGrid(QWidget):
     changed=Signal()
     def __init__(self,key,parent=None):
         super().__init__(parent); self.key=key; self.buttons={}; self.expanded=True; self._choices=[]
-        self.layout_box=QVBoxLayout(self); self.layout_box.setContentsMargins(0,0,0,0); self.layout_box.setSpacing(3)
+        self.layout_box=QVBoxLayout(self); self.layout_box.setContentsMargins(0,0,0,0); self.layout_box.setSpacing(8)
     def populate(self,choices,selected):
+        if self.key=='building_classes':choices=_population_choices(choices)
         if choices==self._choices:
             for key,button in self.buttons.items():button.setChecked(key in selected)
             return
@@ -338,12 +345,9 @@ class _OptionGrid(QWidget):
             if item.widget():item.widget().deleteLater()
         self.buttons={}
         groups=[choices]
-        if self.key=='building_classes':
-            groups=[[v for v in choices if v['id'] not in ('transport','special','unknown')],
-                    [v for v in choices if v['id'] in ('transport','special','unknown')]]
         for group_index,group in enumerate(groups):
             if not group:continue
-            widget=QWidget(); grid=QGridLayout(widget); grid.setContentsMargins(0,0,0,0); grid.setHorizontalSpacing(8); grid.setVerticalSpacing(2)
+            widget=QWidget(); grid=QGridLayout(widget); grid.setContentsMargins(0,0,0,0); grid.setHorizontalSpacing(12); grid.setVerticalSpacing(8)
             if self.key=='building_classes' and group_index==0:
                 header=_style_control(TransparentPushButton('社会群体',icon=FluentIcon.CHEVRON_DOWN_MED if self.expanded else FluentIcon.CHEVRON_RIGHT))
                 self.layout_box.addWidget(header); widget.setVisible(self.expanded)
@@ -403,6 +407,7 @@ class _ModeWidths(QWidget):
 
 class _FilterSection(QFrame):
     """The block header only changes visibility; confirmation is a separate action."""
+    expandedChanged=Signal(bool)
     def __init__(self,title,parent=None):
         super().__init__(parent);self._title=title;self.setObjectName('mapFilterSection')
         self.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Maximum)
@@ -427,6 +432,7 @@ class _FilterSection(QFrame):
     def is_expanded(self):return not self.body.isHidden()
     def set_expanded(self,expanded):
         self.body.setVisible(bool(expanded));self.arrow_label.setText('▾' if expanded else '▸')
+        self.expandedChanged.emit(bool(expanded))
     def set_summary(self,text):
         self.summary_label.setText(text);self.summary_label.setVisible(bool(text))
 
@@ -536,7 +542,8 @@ class MapPanelSet(QWidget):
             self.panels[key]=scroll; self._layouts[key]=layout
             scroll.setAccessibleName(title)
         self._build_layers(); self._build_filters(); self._build_display()
-        for layout in self._layouts.values(): layout.addStretch(1)
+        for key,layout in self._layouts.items():
+            if key!='filters':layout.addStretch(1)
         self.set_options({})
 
     def state(self):
@@ -568,6 +575,9 @@ class MapPanelSet(QWidget):
 
     def set_options(self, options):
         self._options=deepcopy(options)
+        self._building_legend_categories={choice['id'] for key in ('building_classes','building_uses')
+            for choice in self._options.get(key,[])}
+        self._options['building_classes']=_population_choices(self._options.get('building_classes',[]))
         self._line_labels=resolve_line_labels(self._options.get('lines',()))
         clock=QDateTime.fromString(str(options.get('simulated_datetime') or ''),Qt.DateFormat.ISODate)
         self._service_clock=clock if clock.isValid() else None
@@ -646,8 +656,10 @@ class MapPanelSet(QWidget):
 
     def _build_layers(self):
         layout=self._layouts['layers']
+        layout.setSpacing(12)
         for key,title in [('roads','路网'),('buildings','建筑'),('routes','公共交通')]:
             section=self._section(layout)
+            section.setContentsMargins(12,12,12,12);section.setSpacing(10)
             box=_style_control(CheckBox(title)); box.setTristate(True)
             box.clicked.connect(lambda checked,k=key:self._toggle_layer(k,checked))
             self.layer_checks[key]=box; section.addWidget(box)
@@ -661,7 +673,7 @@ class MapPanelSet(QWidget):
                 self.building_function_grid=QGridLayout(self.building_function_legend)
                 self.building_function_grid.setContentsMargins(0,0,0,0)
                 self.building_function_grid.setHorizontalSpacing(8)
-                self.building_function_grid.setVerticalSpacing(3)
+                self.building_function_grid.setVerticalSpacing(8)
                 self.building_function_labels={}; self.building_function_swatches={}
                 self._building_legend_keys=()
                 section.addWidget(self.building_function_legend)
@@ -672,7 +684,6 @@ class MapPanelSet(QWidget):
                 row.addWidget(self.building_emphasis_auto); section.addLayout(row)
             else:
                 self._group(section,'layer_modes','制式',140)
-                for option,text in [('stops','标出站点'),('stop_names','站点名称'),('line_numbers','线路编号')]:self._check(section,option,text)
 
     def _build_filters(self):
         layout=self._layouts['filters']
@@ -716,6 +727,16 @@ class MapPanelSet(QWidget):
         self.manual_all.clicked.connect(lambda:self._select_visible(True))
         self.manual_none.clicked.connect(lambda:self._select_visible(False))
         self.line_list=self._group(results,'manual_line_ids','线路结果',114)
+        self.line_list.setProperty('heightCap',None);self.line_list.setMinimumHeight(80);self.line_list.setMaximumHeight(16777215)
+        self.line_list.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Expanding)
+        results.setStretch(results.indexOf(self.line_list),1)
+        block=self.filter_sections['manual_line_ids']
+        block.layout().setStretch(block.layout().indexOf(block.body),1)
+        def stretch_selection(expanded,block=block):
+            block.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Expanding if expanded else QSizePolicy.Policy.Maximum)
+            layout.setStretch(layout.indexOf(block),1 if expanded else 0)
+            layout.setStretch(layout.count()-1,0 if expanded else 1)
+        block.expandedChanged.connect(stretch_selection)
         self.group_summaries['manual_line_ids'].hide()
         for key,block in self.filter_sections.items():
             if key=='passengers':
@@ -723,13 +744,15 @@ class MapPanelSet(QWidget):
                 row.addWidget(self.passenger_date,0,Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
                 row.addStretch(1);row.addWidget(block.apply_button);block.body_layout.addWidget(footer)
             else:block.body_layout.addWidget(block.apply_button,0,Qt.AlignmentFlag.AlignRight)
+        layout.addStretch(0)
         self.filter_sections['manual_line_ids'].set_expanded(True)
 
     def _build_display(self):
         layout=self._layouts['display']
         direction=self._section(layout)
-        self._choices(direction,'direction','线路显示', [('whole','整条线路显示'),('up','仅显示环行与上行线'),('down','仅显示环行与下行线')])
+        self._choices(direction,'direction','线路设置', [('whole','整条线路显示'),('up','仅显示环行与上行线'),('down','仅显示环行与下行线')])
         self._check(direction,'distinguish_directions','区分上下行线形')
+        for option,text in [('stops','标出站点'),('line_numbers','线路编号'),('stop_names','站点名称')]:self._check(direction,option,text)
         colors=self._section(layout)
         self._choices(colors,'color_by','线路染色',[('mode','按制式染同色'),('profit','按盈亏染同色'),('company','按公司染同色'),('line','每条线路都不同颜色'),('interval','按平均间隔染色'),('passengers','按客流染色')],1)
         interval=QWidget(); interval_layout=QVBoxLayout(interval)
@@ -872,7 +895,7 @@ class MapPanelSet(QWidget):
             self._filter_drafts[key]=selected;self._dirty_filters.add(_FILTER_OWNER[key]);return
         self._state[key]=selected
         parent={'road_levels':'roads','building_classes':'buildings','building_uses':'buildings','layer_modes':'routes'}.get(key)
-        if parent:self._state[parent]=bool(selected)
+        if parent and (key!='building_classes' or selected):self._state[parent]=bool(selected)
         # Do not rebuild the emitting view: retain its item and keyboard focus.
         self._sync_layer_checks()
         if key in ('company_ids','modes','profit_statuses'):self._refresh_lines()
@@ -923,7 +946,8 @@ class MapPanelSet(QWidget):
             view.addItem(item)
         view.wrap_items()
         height=sum(view.item(i).sizeHint().height()+6 for i in range(view.count()))+6
-        view.setFixedHeight(min(int(view.property('heightCap')),max(32,height)))
+        cap=view.property('heightCap')
+        if cap is not None:view.setFixedHeight(min(int(cap),max(32,height)))
         view.blockSignals(False)
 
     def _line_matches(self,line):
@@ -983,15 +1007,15 @@ class MapPanelSet(QWidget):
             choices=self._options.get(key,[]);chosen=self._state[key]
             if chosen is None or all(choice['id'] in chosen for choice in choices):continue
             names=[choice['name'] for choice in choices if choice['id'] in chosen]
-            criteria[key]=f"筛选{title}："+('、'.join(names) if names else '无')
+            criteria[key]='、'.join(names) if names else '无'
         selected=self._state['manual_line_ids'];lines=self._options.get('lines',[])
         if selected is not None and not all(line['id'] in selected for line in lines):
-            criteria['manual_line_ids']=f"筛选线路：{sum(line['id'] in selected for line in lines)}条"
+            criteria['manual_line_ids']=f"{sum(line['id'] in selected for line in lines)}条"
         minimum,maximum=self._state['passenger_min'],self._state['passenger_max']
         if minimum is not None or maximum is not None:
             low=format_number(0 if minimum is None else minimum,grouped=False)
             high='∞' if maximum is None else format_number(maximum,grouped=False)
-            criteria['passengers']=f'筛选客流：{low}-{high}人次'
+            criteria['passengers']=f'{low}-{high}人次'
         mode=self._state['service_time_mode']
         if mode!='off':
             start=QDateTime.fromString(self._state['service_start'],Qt.DateFormat.ISODate)
@@ -1030,7 +1054,7 @@ class MapPanelSet(QWidget):
                  ('home_work','住宅／工作',(1,1,0,1)),
                  ('mixed','商业／工作',(0,1,1,1)),
                  ('unknown','其他',(None,None,None,None))]
-        present={v['id'] for v in self._options.get('building_classes',[])}
+        present=self._building_legend_categories
         entries += [(key,category('usage',key).name,None) for key in ('transport','special') if key in present]
         keys=tuple(key for key,_,_ in entries)
         if keys!=self._building_legend_keys:

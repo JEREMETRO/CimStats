@@ -99,13 +99,13 @@ def test_order_list_move_persists_across_options_and_mode_switch(app):
     assert p.state()['mode_order']==['tram','bus']
     assert view.item(0).data(Qt.ItemDataRole.UserRole)=='tram'
 
-def test_building_special_categories_are_filterable_without_becoming_metric_targets(app):
+def test_building_special_categories_are_not_population_choices_or_metric_targets(app):
     from map_panels import MapPanelSet
     p=MapPanelSet(); data=options()
     data['building_classes'] += [{'id':'transport','name':'交通设施'}, {'id':'special','name':'特殊建筑'}, {'id':'unknown','name':'未知'}]
     p.set_options(data)
     grid=p.group_lists['building_classes']
-    assert set(grid.buttons)=={'student','worker','transport','special','unknown'}
+    assert set(grid.buttons)=={'student','worker'}
     assert p.state()['building_class_target']=='student'
     assert 'building_class_target' not in p.controls and 'building_metric' not in p.controls
 
@@ -311,7 +311,7 @@ def test_building_function_legend_remains_separate_from_class_filter(app):
     h=MapDockHost(QWidget(),p.panels); h.resize(1440,921); h.show(); app.processEvents()
     assert p.building_function_legend.isVisible()
     assert [label.text() for label in p.building_function_labels.values()]==[
-        '住宅','工作','商业／休闲','住宅／工作','商业／工作','其他']
+        '住宅','工作','商业／休闲','住宅／工作','商业／工作','其他','交通建筑']
     before=p.state(); spy=QSignalSpy(p.stateChanged)
     p.group_lists['building_classes'].buttons['student'].click()
     assert p.state()['building_classes']=={'worker'} and spy.count()==1

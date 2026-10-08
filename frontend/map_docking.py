@@ -103,6 +103,8 @@ class MapDockHost(QWidget):
         self.content=content; self.panels=dict(panels); self._drag_sources={}; self._press=None; self._drag_key=None
         self._restoring=False; self._pending_layout=None; self._group_collapsed=False; self._active=next(iter(self.panels),'')
         self._dock_width=360
+        self._single_panel=len(self.panels)==1
+        self.frames={}
         layout=QHBoxLayout(self); layout.setContentsMargins(0,0,0,0); layout.setSpacing(0)
         layout.addWidget(content,1)
         self.dock=QFrame(); self.dock.setObjectName('mapDock')
@@ -116,11 +118,17 @@ class MapDockHost(QWidget):
         self.tabs_widget.currentItemChanged.connect(self.activate_panel)
         self.dock_bar=QWidget(); bar_layout=QHBoxLayout(self.dock_bar); bar_layout.setContentsMargins(0,0,0,0); bar_layout.setSpacing(0)
         bar_layout.addWidget(self.tabs_widget,1); bar_layout.addWidget(self.group_button)
+        self.drag_handle=TransparentToolButton(FluentIcon.MOVE,self.dock_bar)
+        self.drag_handle.setFixedSize(32,32);self.drag_handle.setAccessibleName('拖动面板')
+        self.drag_handle.setVisible(self._single_panel)
+        if self._single_panel:
+            self.drag_handle.installEventFilter(self);self._drag_sources[self.drag_handle]=self._active
+            bar_layout.insertWidget(0,self.drag_handle);bar_layout.insertStretch(1,1)
+            self.tabs_widget.hide()
         dock_layout.addWidget(self.dock_bar); self.tabs={}
         self.rail=QWidget(); rail_layout=QVBoxLayout(self.rail); rail_layout.setContentsMargins(0,0,0,0)
         self.rail.hide(); dock_layout.addWidget(self.rail); self.rail_buttons={}
         self.stack=QStackedWidget(); dock_layout.addWidget(self.stack,1)
-        self.frames={}
         for key,panel in self.panels.items():
             tab=self.tabs_widget.addItem(key,panel_title(key,panel)); tab.setFont(ui_font(tokens.FONT_SIZE_BODY))
             tab.setStyleSheet(f'QPushButton {{background:transparent;border:0;outline:0;padding:8px 7px;color:{tokens.TEXT_SECONDARY};}} QPushButton[isSelected="true"] {{color:{tokens.ACCENT};}}')
@@ -222,7 +230,8 @@ class MapDockHost(QWidget):
         collapsed=self._group_collapsed
         self.dock.setFixedWidth(44 if collapsed else min(self._dock_width,max(240,self.width()-200)))
         self.stack.setVisible(not collapsed)
-        self.tabs_widget.setVisible(not collapsed);self.rail.setVisible(collapsed)
+        self.tabs_widget.setVisible(not collapsed and not self._single_panel)
+        self.drag_handle.setVisible(not collapsed and self._single_panel);self.rail.setVisible(collapsed)
         self._emit()
 
     def set_group_collapsed(self,collapsed,animated=False):
@@ -232,7 +241,8 @@ class MapDockHost(QWidget):
         if animated:
             if not collapsed:
                 self.dock.setFixedWidth(min(self._dock_width,max(240,self.width()-200)))
-                self.tabs_widget.show();self.rail.hide()
+                self.tabs_widget.setVisible(not self._single_panel)
+                self.drag_handle.setVisible(self._single_panel);self.rail.hide()
             self.group_motion.set_collapsed(bool(collapsed))
         else:
             self.group_motion.collapsed=bool(collapsed)
