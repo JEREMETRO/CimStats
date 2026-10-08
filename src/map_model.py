@@ -71,15 +71,18 @@ class MapRoad:
 
 @dataclass(frozen=True, slots=True)
 class BuildingServiceLines:
-    """Confirmed saved associations; unavailable source differs from empty.
+    """Confirmed associations; source distinguishes native query from saved data.
 
-    v1.6.3 BuildingData has no such serialized field. Its coverage menu is
-    calculated by TransportManager.ListLines; extraction leaves this unknown.
+    v1.6.3 uses TransportManager.ListLines, not a BuildingData saved list.
+    Complete empty queries differ from missing dependencies or truncated data.
+    Internal completeness/diagnostics are not developer text for the map UI.
     """
     known: bool = False
     route_ids: tuple[int, ...] = ()
     unresolved_refs: tuple[int | None, ...] = ()
     source: str | None = None
+    complete: bool | None = None
+    diagnostic: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +190,7 @@ class MapSnapshot:
     asset_signature: str = ''
     diagnostics: tuple[str, ...] = ()
     bounds: tuple[float, float, float, float] = (0., 0., 1., 1.)
-    schema_version: int = 10
+    schema_version: int = 11
     junctions: tuple[MapJunction, ...] = ()
 
 class MapModel:

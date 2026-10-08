@@ -43,7 +43,7 @@ def probe_script():
 
 
 PROJECT = runtime_root()
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 SOCIAL_GROUPS = ('BlueCollar','WhiteCollar','Student','BusinessPeople','Pensioner','Tourist')
 
 
@@ -365,7 +365,8 @@ def route_leg(references, roads, start=None, end=None, *, connections=None, mode
 def _service_lines(data):
     data = data or {}
     return BuildingServiceLines(data.get('known', False), tuple(dict.fromkeys(data.get('route_ids', ()))),
-                                tuple(data.get('unresolved_refs', ())), data.get('source'))
+                                tuple(data.get('unresolved_refs', ())), data.get('source'),
+                                data.get('complete'), data.get('diagnostic'))
 
 
 def _route_service(data):
@@ -827,7 +828,7 @@ def _read_catalog(bundles):
     if not files:
         raise ValueError(f'No game asset bundles found in {bundles}')
     env=UnityPy.load(*(str(p) for p in files))
-    catalog={}
+    catalog={}; registered_types=set()
     for obj in env.objects:
         if obj.type.name!='MonoBehaviour': continue
         values=vars(obj.read()); identity=values.get('m_id'); script=values.get('m_Script')
@@ -839,8 +840,20 @@ def _read_catalog(bundles):
             if key in catalog and catalog[key]!=record:
                 raise ValueError(f'Conflicting road type: {key}')
             catalog[key]=record
-        if not isinstance(identity,str) or not identity or script is None: continue
+        if script is None: continue
         class_name=str(script.read().m_ClassName)
+        if class_name=='VehicleTypeDataStore':
+            for item in values.get('m_vehicleTypeInfo',[]):
+                item=item if isinstance(item,dict) else vars(item)
+                pointer=item.get('m_typeObject')
+                if pointer is not None and pointer.path_id:
+                    registered_types.add(str(vars(pointer.read()).get('m_id') or ''))
+        if not isinstance(identity,str) or not identity: continue
+        if class_name=='VehicleTypeObject':
+            record=dict(id=identity,class_name=class_name,public_transport=bool(values.get('m_publicTransport')))
+            key='vehicletype:'+identity
+            if key in catalog and catalog[key]!=record: raise ValueError(f'Conflicting vehicle type:{identity}')
+            catalog[key]=record; continue
         if class_name not in ('BuildingObject','DepotObject','LandmarkObject','StopObject','PropObject','TreeObject','RoadObject'): continue
         record=dict(id=identity,class_name=class_name,homes=int(values.get('m_homeCount',0)),
                     work=int(values.get('m_workPlaceCount',0)),recreation=int(values.get('m_recreationValue',0)),outline=[],transport_links=[])
@@ -850,6 +863,8 @@ def _read_catalog(bundles):
         if generated is not None and generated.path_id:
             record['outline']=list(vars(generated.read()).get('m_collisionArea') or [])
         if class_name=='StopObject':
+            record['catchment_area']=values.get('m_catchmentArea')
+            record['type_ids']=[str(vars(p.read()).get('m_id') or '') if p.path_id else None for p in values.get('m_types',[])]
             public=any(vars(p.read()).get('m_publicTransport') for p in values.get('m_types',[]) if p.path_id)
             if public:
                 pointers=[values.get('m_entrancePrefab')]
@@ -858,7 +873,13 @@ def _read_catalog(bundles):
         if identity in catalog and catalog[identity]!=record:
             raise ValueError(f'Conflicting asset identity: {identity}')
         catalog[identity]=record
-    transport={identity for r in catalog.values() for identity in r['transport_links']}
+    for identity in registered_types:
+        if 'vehicletype:'+identity not in catalog: raise ValueError(f'Missing registered vehicle type:{identity}')
+    for record in catalog.values():
+        if record['class_name']=='VehicleTypeObject':record['registered']=record['id'] in registered_types
+    catalog['coverage:catalog']=dict(class_name='NativeCoverageCatalog',public_type_ids=sorted(
+        r['id'] for r in catalog.values() if r['class_name']=='VehicleTypeObject' and r['registered'] and r['public_transport']))
+    transport={identity for r in catalog.values() for identity in r.get('transport_links',())}
     for identity,r in catalog.items(): r['transport']=identity in transport
     return catalog
 
@@ -1190,6 +1211,15 @@ def _extract_objects(e,root,catalog):
                           passenger_diagnostic='no_serialized_previous_day_line_passengers',service=service_record(line)))
         line=field(line,'m_nextLine')
     if len(lines)!=int(field(transport,'m_lineCount')): raise ValueError('Line manager count mismatch')
+    # BuildingData does not save a list: reconstruct only metadata/rules and
+    # invoke the actual native query on the original serialized stop grid.
+    from map_native_coverage import NativeCoverageQuery
+    coverage=NativeCoverageQuery(e,root,catalog,field=field)
+    building_objects={oid:obj for (kind,oid),obj in unique.items() if kind in ('BuildingData','DepotData','LandmarkData')}
+    for building in buildings:
+        native=coverage.query(field(building_objects[building['id']],'m_position'))
+        building['service_lines']=asdict(native)
+    if coverage.diagnostic:diagnostics.append(coverage.diagnostic)
     if not catalog: diagnostics.append('building_asset_catalog_unavailable')
     diagnostics.append('previous_day_line_passengers_unavailable')
     return dict(roads=roads,buildings=buildings,stops=stops,lines=lines,diagnostics=diagnostics,junctions=list(junctions.values()))
