@@ -904,7 +904,7 @@ class _FrameSurface(_MapDrawing):
 
 class _FrameSignals(QObject):
     completed=Signal(object,object,object,object)
-    failed=Signal(object,str)
+    failed=Signal(object,object,str)
 
 
 class _FrameJob(QRunnable):
@@ -930,7 +930,7 @@ class _FrameJob(QRunnable):
         try:
             surface._paint(painter,overlays=False)
         except Exception as error:
-            self._emit('failed',self.key,str(error))
+            self._emit('failed',self.key,self.view,str(error))
             return
         finally:
             painter.end()
@@ -982,6 +982,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._base_cache = None
         self._async_render = False
         self._failed_frame_key = None
+        self._failed_frame_view = None
         self._export_available = False
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -1265,7 +1266,7 @@ class MapCanvas(_MapDrawing, QWidget):
             return
         key=self._render_key()
         view = (*self.center,self.zoom)
-        if key==self._failed_frame_key:
+        if key==self._failed_frame_key and view==self._failed_frame_view:
             return
         if self._frame is None or key!=self._frame_key or (view!=self._frame_view and (self._async_render or not self._render_timer.isActive())):
             if self._async_render:
@@ -1315,11 +1316,14 @@ class MapCanvas(_MapDrawing, QWidget):
         if not self.isVisible() and (key!=self._render_key() or view!=(*self.center,self.zoom)):
             self.prepare_frame()
 
-    @Slot(object,str)
-    def _frame_failed(self,key,message):
+    @Slot(object,object,str)
+    def _frame_failed(self,key,view,message):
         self._frame_job=None
-        if key==self._render_key():
+        if self._index_closed:
+            return
+        if key==self._render_key() and view==(*self.center,self.zoom):
             self._failed_frame_key=key
+            self._failed_frame_view=view
             self._notify_export_availability()
             self.render_failed.emit(message)
         else:
@@ -1349,7 +1353,8 @@ class MapCanvas(_MapDrawing, QWidget):
                             self.snapshot.routes, self.snapshot.stops, self.snapshot.junctions))):
             return False
         key = self._render_key()
-        return (self._frame_key == key and self._failed_frame_key != key
+        return (self._frame_key == key
+                and (self._failed_frame_key, self._failed_frame_view) != (key, self._frame_view)
                 and self._index_failed_key != _index_key(self.snapshot))
 
     def _notify_export_availability(self):

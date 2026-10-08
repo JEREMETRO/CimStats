@@ -238,7 +238,7 @@ def test_export_readiness_tracks_exact_frame_zoom_failure_and_empty_save(qt_appl
     canvas._render_timer.stop()
     canvas.prepare_frame()
     assert canvas.can_export() and changes[-1] is True
-    canvas._frame_failed(canvas._render_key(), 'render failure')
+    canvas._frame_failed(canvas._render_key(), (*canvas.center, canvas.zoom), 'render failure')
     assert not canvas.can_export() and changes[-1] is False
     canvas.set_snapshot(snapshot); canvas.prepare_frame()
     assert canvas.can_export() and canvas.export_image(tmp_path/'ready.png')
@@ -290,6 +290,68 @@ def test_late_frame_cannot_enable_export_for_new_save(qt_application, monkeypatc
     _wait_for(canvas.can_export)
     assert canvas._frame_key == canvas._render_key()
     canvas.close()
+
+
+def test_late_view_render_failure_reprepares_current_complete_frame(qt_application, monkeypatch):
+    import threading
+    import map_canvas
+    entered, release = threading.Event(), threading.Event()
+    original = map_canvas._FrameSurface._paint
+    attempts = []
+    def paint(surface, *args, **kwargs):
+        attempts.append((*surface.center, surface.zoom))
+        if len(attempts) == 1:
+            entered.set()
+            assert release.wait(3)
+            raise ValueError('old viewport failed')
+        return original(surface, *args, **kwargs)
+    monkeypatch.setattr(map_canvas._FrameSurface, '_paint', paint)
+    canvas = map_canvas.MapCanvas(); canvas.resize(500, 400)
+    errors = []; canvas.render_failed.connect(errors.append)
+    try:
+        canvas.set_snapshot(_large_map())
+        _wait_for(entered.is_set)
+        old_key = canvas._render_key()
+        canvas.center = (canvas.center[0]+5, canvas.center[1]+10)
+        canvas._changed()
+        assert canvas._render_key() == old_key
+        release.set()
+        _wait_for(lambda: errors or canvas.can_export())
+        assert not errors, 'a late failure must not fail the new viewport'
+        assert canvas.can_export()
+        assert attempts[-1] == (*canvas.center, canvas.zoom)
+    finally:
+        release.set()
+        _wait_for(lambda: canvas._frame_job is None)
+        canvas.close()
+
+
+def test_current_view_render_failure_retries_only_after_view_change(qt_application, monkeypatch):
+    import map_canvas
+    original = map_canvas._FrameSurface._paint
+    attempts = []
+    def paint(surface, *args, **kwargs):
+        attempts.append((*surface.center, surface.zoom))
+        if len(attempts) == 1:
+            raise ValueError('current viewport failed')
+        return original(surface, *args, **kwargs)
+    monkeypatch.setattr(map_canvas._FrameSurface, '_paint', paint)
+    canvas = map_canvas.MapCanvas(); canvas.resize(500, 400)
+    errors = []; canvas.render_failed.connect(errors.append)
+    try:
+        canvas.set_snapshot(_large_map())
+        _wait_for(lambda: bool(errors))
+        assert errors == ['current viewport failed'] and not canvas.can_export()
+        canvas.prepare_frame()
+        assert canvas._frame_job is None and len(attempts) == 1
+        canvas.center = (canvas.center[0]+5, canvas.center[1]+10)
+        canvas._changed(); canvas.prepare_frame()
+        _wait_for(canvas.can_export)
+        assert errors == ['current viewport failed']
+        assert attempts[-1] == (*canvas.center, canvas.zoom)
+    finally:
+        _wait_for(lambda: canvas._frame_job is None)
+        canvas.close()
 
 
 def test_current_index_failure_reports_once_and_new_save_can_retry(qt_application, monkeypatch):
