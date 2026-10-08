@@ -200,8 +200,10 @@ def test_cross_midnight_axis_paints_two_short_ends_and_keeps_instant_end_disable
     p.controls['service_time_mode'].buttons['range'].click();editor=p.service_editor;editor.end_edit.setText('01:00')
     host=MapDockHost(QWidget(),p.panels);host.resize(960,800);host.show();host.activate_panel('filters');qt_application.processEvents()
     image=editor.time_axis.grab().toImage()
-    assert image.pixelColor(image.width()//2,20).name()!='#0067c0'
-    assert image.pixelColor(12,20).name()=='#0067c0'
+    ratio=image.devicePixelRatio()
+    def color(x,y):return image.pixelColor(round(x*ratio),round(y*ratio)).name()
+    assert color(editor.time_axis.width()/2,20)!='#0067c0'
+    assert color(12,20)=='#0067c0'
     end=p.state()['service_end'];p.controls['service_time_mode'].buttons['instant'].click()
     assert not editor.end_edit.isEnabled() and not editor.time_axis.handles[1].isEnabled()
     p.controls['service_time_mode'].buttons['range'].click()
