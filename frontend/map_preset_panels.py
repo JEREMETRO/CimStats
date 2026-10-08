@@ -597,7 +597,8 @@ class PlanningPanel(_PresetPanel):
 
     def __init__(self, parent=None):
         super().__init__(parent); self.setAccessibleName('建筑视图与线路比选')
-        self._state = dict(selected_ids=set(), building_view='combined', building_emphasis=True, building_classes=None)
+        self._state = dict(selected_ids=set(), building_view='combined', building_emphasis=True, building_classes=set())
+        self._default_classes=True
         self._routes = []; self._class_options = []; self._class_population = None
         self._popup_host = None; self.building_menu = None
         section = _section(self.body_layout); _label(section, '建筑视图', True)
@@ -628,12 +629,13 @@ class PlanningPanel(_PresetPanel):
         if state.get('building_view') in self.building_view_buttons: self._state['building_view'] = state['building_view']
         if 'building_emphasis' in state: self._state['building_emphasis'] = True if state['building_emphasis'] is None else bool(state['building_emphasis'])
         if 'building_classes' in state:
-            self._state['building_classes'] = ({v['id'] for v in self._class_options} if self._class_options else None) if state['building_classes'] is None else set(state['building_classes'])
+            self._default_classes=state['building_classes'] is None
+            self._state['building_classes'] = {v['id'] for v in self._class_options} if self._default_classes else set(state['building_classes'])
         self._refresh()
 
     def set_options(self, options):
         self._class_options = deepcopy(_population_choices(options.get('building_classes', [])))
-        if self._state['building_classes'] is None and self._class_options:
+        if self._default_classes:
             self._state['building_classes'] = {v['id'] for v in self._class_options}
         self._refresh()
 
@@ -685,6 +687,7 @@ class PlanningPanel(_PresetPanel):
     def _classes_changed(self):
         selected = self.class_grid.selected()
         if selected != self._state['building_classes']:
+            self._default_classes=False
             self._state['building_classes'] = selected; self.buildingClassesChanged.emit(set(selected))
 
     def _refresh(self):

@@ -131,6 +131,21 @@ def test_planning_none_classes_initializes_all_without_erasing_explicit_empty(qt
     assert all(b.isChecked() for b in p.class_grid.buttons.values())
 
 
+def test_planning_empty_population_defaults_are_explicit_and_preserve_user_empty(qt_application):
+    from map_preset_panels import PlanningPanel
+    p=PlanningPanel();classes=QSignalSpy(p.buildingClassesChanged)
+    p.set_options({})
+    assert p.state()['building_classes']==set()
+    p.set_state({'building_classes':None})
+    assert p.state()['building_classes']==set()
+    population={'building_classes':[{'id':'Student','name':'学生'}]}
+    p.set_options(population)
+    assert p.state()['building_classes']=={'Student'}
+    p.set_state({'building_classes':set()});p.set_options(population)
+    assert p.state()['building_classes']==set() and not p.class_grid.buttons['Student'].isChecked()
+    assert classes.count()==0
+
+
 def test_same_catalog_refresh_preserves_item_keyboard_focus_and_scroll(qt_application):
     from map_preset_panels import PlanningPanel
     p = PlanningPanel(); p.resize(360, 680); p.show()

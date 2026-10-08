@@ -353,7 +353,7 @@ def test_native_capacity_options_restore_six_classes_and_drive_function_filter(a
     from map_model import BuildingFunctionValues
     records=tuple(GroupFunctionCount(g,100 if g=='BlueCollar' else 0,
                                      100 if g=='Student' else 0,20) for g in SOCIAL_GROUPS)
-    b=MapBuilding(1,'fixture','',(0,0,0),function_capacities=records)
+    b=MapBuilding(1,'fixture','',(0,0,0),category='residential',function_capacities=records)
     query=MapQuery(MapSnapshot(buildings=(b,)))
     p=MapPanelSet(); p.set_options(query.panel_options())
     assert set(SOCIAL_GROUPS)<=set(p.group_lists['building_classes'].buttons)
