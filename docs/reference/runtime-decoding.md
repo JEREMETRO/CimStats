@@ -22,5 +22,6 @@
 - 线路缓存可能没有重建；里程、预计时间与配车按路径及班次重算，并区分缓存值与推导值，见[线路指标](line-metrics.md)。
 - 城市 `trip-number`不是线路发班；当前存档没有可无损还原的逐小时线路客流历史或首次启用日期，不以总客流均摊伪造。
 - 实际存档中的对象数量、地图名、城市名、玩家标识是输入属性，不是业务常量。
+- 建筑服务关系在隔离地图工作进程中调用原生 `TransportManager.ListLines`，输入为保存的固定点建筑位置和原站点网格，依赖随包提供的实际站点／车型类型元数据及保存规则。默认 `company=null` 使用原生全公司分支；不推断运行时本地玩家。关系不是 `BuildingData` 保存的列表，来源、完整性、真实空结果、悬空引用与未知分别记录；原生缓冲区或遍历保护截断留内部诊断，不修改输入存档。
 
 实现入口：[extract_runtime_data.py](../../src/extract_runtime_data.py)、[history_contract.py](../../src/history_contract.py)、[parser_backend.py](../../parser_backend.py)。容器回写工具与只读统计是不同操作；任何回写应输出新文件并重新反序列化验证，不能在正常统计中覆盖输入。
