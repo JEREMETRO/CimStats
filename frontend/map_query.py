@@ -10,6 +10,7 @@ from map_model import MapSnapshot, SOCIAL_GROUPS, BuildingFunctionValues, buildi
 from map_visibility import operating_paths, visible_route_stop_ids
 from display_rules import display_map_km
 from report_model import display_company
+from map_line_labels import resolve_line_labels
 from semantic_colors import (SOCIAL, category, canonical_key, color_for,
                              company_palette, line_palette, map_fill, building_function_fill)
 
@@ -81,6 +82,7 @@ class MapQuery:
         self.snapshot = replace(snapshot, routes=tuple(route for route in snapshot.routes
                                 if canonical_key('mode',route.mode) != 'waterbus'))
         self.stats = dict(stats or {})
+        self.line_labels = resolve_line_labels(self.snapshot.routes)
         self.line_colors = line_palette(route.id for route in snapshot.routes)
         self.company_colors = company_palette({str(identity) for identity in company_ids}
                                               | {route.company_id for route in snapshot.routes})
@@ -319,8 +321,10 @@ class MapQuery:
         return {**base,
                 'simulated_datetime': (session or {}).get('simulation_time'),
                 'building_emphasis_effective': (result or self.select(state)).building_emphasis,
-                'lines': [{'id':route.id,'name':route.name,'mode':canonical_key('mode',route.mode),
-                           'company_id':route.company_id,'passengers':self.stats.get(route.id,RouteStats()).passengers,
+                'lines': [{'id':route.id,'name':route.name,'display_label':self.line_labels[route.id],
+                           'number':route.number,'mode':canonical_key('mode',route.mode),
+                           'company_id':route.company_id,'company_name':display_company(route.company_name),
+                           'passengers':self.stats.get(route.id,RouteStats()).passengers,
                            'profit':self.stats.get(route.id,RouteStats()).profit_status,
                            'service_matches': True if service_matches is None else service_matches[route.id],
                            'color':self.route_color(route,state)} for route in self.snapshot.routes],
