@@ -121,11 +121,11 @@ def test_colouring_and_options_preserve_filter_geometry_and_share_values():
     assert isinstance(legend,semantic_colors.MetricLegend)
     assert legend.date=='2013-05-23' and legend.unit=='千人次'
     assert legend.source=='average' and '平均客流' in legend.heading
-    assert legend.labels==('<1','1–5','5–10','10–20','20–30','30–50','≥50')
+    assert legend.labels==('1','3','7.5','15','25','40','50')
     assert legend.missing_colour=='#98A8B9'
     mean=query.legend_items({'color_by':'interval'},interval)
     assert mean.date=='2013-05-23' and mean.unit=='min'
-    assert mean.labels==('≤5','5–10','10–15','15–20','20–30','30–45','≥45')
+    assert mean.labels==('5','7.5','12.5','17.5','25','37.5','45')
     assert mean.gradient_stops[0][1]=='#5A1020' and mean.gradient_stops[-1][1]=='#173D6E'
 
 

@@ -77,6 +77,16 @@ def metric_color(metric,value):
     return scale.anchors[-1][1]
 
 
+def _metric_anchor_position(scale,value):
+    count=len(scale.ranges)
+    # Endpoint ranges are constant-colour plateaus: mark their centre.
+    for index,(low,high) in enumerate(scale.ranges):
+        if low==high==value:return (index+.5)/count
+    for index,(low,high) in enumerate(scale.ranges):
+        if low<=value<=high:return (index+(value-low)/(high-low))/count
+    raise ValueError('Metric anchor lies outside its legend ranges')
+
+
 @dataclass(frozen=True)
 class MetricLegend:
     metric: str
@@ -91,7 +101,13 @@ class MetricLegend:
     @property
     def unit(self):return METRIC_SCALES[self.metric].unit
     @property
-    def labels(self):return METRIC_SCALES[self.metric].labels
+    def labels(self):return tuple(label for _,_,label,_ in self.ticks)
+    @property
+    def ticks(self):
+        scale=METRIC_SCALES[self.metric]
+        divisor=1000 if self.metric=='passengers' else 1
+        return tuple((_metric_anchor_position(scale,value),value,f'{value/divisor:g}',
+                      metric_color(self.metric,value)) for value,_ in scale.anchors)
     @property
     def missing_colour(self):return PROFIT[-1].color
     @property
@@ -112,9 +128,7 @@ class MetricLegend:
 
     def __iter__(self):
         # Existing pair-based legend consumers remain compatible until drawn as a ramp.
-        scale=METRIC_SCALES[self.metric]
-        items=[(label,metric_color(self.metric,(low+high)/2))
-               for label,(low,high) in zip(scale.labels,scale.ranges)]
+        items=[(label,color) for _,_,label,color in self.ticks]
         items[0]=(self.heading+' '+items[0][0],items[0][1])
         return iter((*items,('数据缺失',self.missing_colour)))
 

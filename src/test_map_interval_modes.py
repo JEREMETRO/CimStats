@@ -58,7 +58,7 @@ def test_weekday_peak_mean_is_gap_weighted_and_ignores_weekend_even_on_sunday_sa
     legend=query.legend_items(state)
     assert legend.title=='平均间隔'
     assert legend.date=='2013-05-26'
-    assert legend.labels==('≤3','3–5','5–8','8–12','12–18','18–25','≥25')
+    assert legend.labels==('3','4','6.5','10','15','21.5','25')
 
 
 def test_peak_never_connects_windows_or_includes_their_endpoints():

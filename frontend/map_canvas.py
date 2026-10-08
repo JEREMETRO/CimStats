@@ -853,21 +853,23 @@ class _MapDrawing:
         painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
         metrics=painter.fontMetrics()
         left,width=18.,max(1.,self.width()-72.)
-        count=len(legend.labels)
-        label_width=max(metrics.horizontalAdvance(label) for label in legend.labels)+4
-        stagger=label_width>width/count
+        ticks=legend.ticks
+        label_width=max(metrics.horizontalAdvance(label) for _,_,label,_ in ticks)+6
+        stagger=any((second[0]-first[0])*width<label_width for first,second in zip(ticks,ticks[1:]))
         top=self.height()-(140. if stagger else 118.)
         missing_width=metrics.horizontalAdvance('数据缺失')+22
         heading_rect=QRectF(left,top,width-missing_width-12,22)
         missing=QRectF(left+width-missing_width,top,missing_width,22)
         bar=QRectF(left,top+28,width,10)
-        labels=[]
-        for i,label in enumerate(legend.labels):
-            span=max(width/count,label_width)
-            x=max(left,min(left+width-span,left+(i+.5)*width/count-span/2))
+        labels=[];positions=[]
+        for i,(position,_,label,_) in enumerate(ticks):
+            tick_x=bar.left()+position*bar.width()
+            span=metrics.horizontalAdvance(label)+6
+            x=max(left,min(left+width-span,tick_x-span/2))
             labels.append((QRectF(x,top+42+(22*(i%2) if stagger else 0),span,22),label))
+            positions.append((tick_x,label))
         return dict(bounds=QRectF(left,top,width,86 if stagger else 64),heading=legend.heading,
-                    heading_rect=heading_rect,missing=missing,bar=bar,labels=labels)
+                    heading_rect=heading_rect,missing=missing,bar=bar,labels=labels,ticks=positions)
 
     def _draw_metric_legend(self,painter):
         legend=self.options['legend_items']
@@ -882,6 +884,9 @@ class _MapDrawing:
         gradient=QLinearGradient(bar.topLeft(),bar.topRight())
         for position,color in legend.gradient_stops:gradient.setColorAt(position,QColor(color))
         painter.fillRect(bar,gradient)
+        painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY),1))
+        for x,_ in layout['ticks']:
+            painter.drawLine(QPointF(x,bar.bottom()+1),QPointF(x,bar.bottom()+4))
         for rect,label in layout['labels']:
             painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,label)
 
