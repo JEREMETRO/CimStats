@@ -11,12 +11,14 @@ class CooperativeCancellation:
     def __init__(self, cancelled=lambda: False, *, budget=.001, pause=.001):
         self.cancelled = cancelled
         self.budget, self.pause = budget, pause
-        self.deadline = time.monotonic() + budget
+        # Python 3.12's Windows monotonic clock uses 15.6 ms ticks. The
+        # performance counter is also monotonic and can enforce a 1 ms budget.
+        self.deadline = time.perf_counter() + budget
 
     def __call__(self):
         if self.cancelled():
             return True
-        if time.monotonic() >= self.deadline:
+        if time.perf_counter() >= self.deadline:
             time.sleep(self.pause)
-            self.deadline = time.monotonic() + self.budget
+            self.deadline = time.perf_counter() + self.budget
         return self.cancelled()
