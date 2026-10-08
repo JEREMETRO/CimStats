@@ -9,13 +9,14 @@ def route_has_geometry(route):
     return route is not None and usable_paths(operating_paths(route))
 
 
-def operating_leg_indices(route, direction='whole'):
+def operating_leg_indices(route, direction='whole', *, leg_count=None):
     terminal = route.direction.terminal_index
-    indices = range(len(route.leg_paths))
+    count = len(route.leg_paths) if leg_count is None else leg_count
+    indices = range(count)
     if route.direction.kind != 'roundtrip' or terminal is None:
         return indices
     if direction == 'up':
-        return range(terminal, len(route.leg_paths))
+        return range(terminal, count)
     if direction == 'down':
         return range(terminal)
     return indices

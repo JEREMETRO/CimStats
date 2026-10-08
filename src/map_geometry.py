@@ -28,6 +28,7 @@ from map_model import (GroupCount, GroupFunctionCount, MapBuilding, MapRoad, Map
                        BuildingServiceLines, RouteService, ServiceTimetable)
 from map_analysis import infer_direction
 from display_rules import format_line_name
+from map_route_metrics import saved_leg_map_length
 
 def runtime_root():
     """Source checkout root or the PyInstaller bundle root, never its parent."""
@@ -43,7 +44,7 @@ def probe_script():
 
 
 PROJECT = runtime_root()
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 SOCIAL_GROUPS = ('BlueCollar','WhiteCollar','Student','BusinessPeople','Pensioner','Tourist')
 
 
@@ -578,7 +579,11 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
                                ';'.join(dict.fromkeys(issues)) or None,line.get('company_index'),
                                line.get('previous_day_passengers'),line.get('passenger_date'),
                                line.get('passenger_diagnostic','no_serialized_previous_day_line_passengers'),
-                               _route_service(line.get('service'))))
+                               _route_service(line.get('service')),
+                               tuple(leg.get('map_length_units') for leg in raw_legs[1:-1]) if has_depot else (),
+                               tuple(raw_legs[i].get('map_length_units') for i in (0,len(raw_legs)-1))
+                               if has_depot and raw_legs else (),
+                               tuple(s.get('arrival_offset_ticks') for s in operational)))
     if direction_jobs:
         if direction_worker_dir is None:
             directions={index:infer_direction(points,legs,names,lambda:_check(cancelled))
@@ -617,7 +622,10 @@ def _decode_snapshot(d):
         direction=r['direction']; direction=RouteDirection(**(direction|{'paired_stations':tuple(tuple(v) for v in direction['paired_stations'])}))
         routes.append(MapRoute(**(r|{'stop_ids':tuple(r['stop_ids']),'paths':paths(r['paths']),
                                       'depot_paths':paths(r['depot_paths']),'leg_paths':tuple(paths(p) for p in r['leg_paths']),
-                                      'direction':direction, 'service':_route_service(r.get('service'))})))
+                                      'direction':direction, 'service':_route_service(r.get('service')),
+                                      'leg_map_length_units':tuple(r.get('leg_map_length_units',())),
+                                      'depot_map_length_units':tuple(r.get('depot_map_length_units',())),
+                                      'stop_arrival_offsets_ticks':tuple(r.get('stop_arrival_offsets_ticks',()))})))
     return MapSnapshot(**(d|{'roads':roads,'buildings':buildings,'stops':stops,'routes':tuple(routes),
                             'diagnostics':tuple(d['diagnostics']),'bounds':tuple(d['bounds']),'junctions':junctions}))
 
@@ -1198,7 +1206,9 @@ def _extract_objects(e,root,catalog):
         legs=[]; line_stops=[]
         for i,stop in enumerate(array(field(line,'m_stops'))):
             actual=field(stop,'m_stop')
-            line_stops.append(dict(id=identity(actual),name=str(field(actual,'m_name') or ''),position=vector(field(actual,'m_position'))))
+            line_stops.append(dict(id=identity(actual),name=str(field(actual,'m_name') or ''),
+                                   position=vector(field(actual,'m_position')),
+                                   arrival_offset_ticks=optional_int(stop,'m_timeOffset')))
             references=[]
             for segment in array(field(stop,'m_path')):
                 road=field(segment,'m_road')
@@ -1206,7 +1216,8 @@ def _extract_objects(e,root,catalog):
                 mask=int(field(segment,'m_typeMask') or 0)
                 references.append(dict(id=identity(road),mask=mask,reverse=bool(mask&2) and not bool(mask&1),
                                        min_lane=int(field(segment,'m_minLane') or 0),max_lane=int(field(segment,'m_maxLane') or 0)))
-            legs.append(dict(index=i,dirty=bool(field(stop,'m_pathDirty')),roads=references))
+            legs.append(dict(index=i,dirty=bool(field(stop,'m_pathDirty')),roads=references,
+                             map_length_units=saved_leg_map_length(field(stop,'m_path'),field,array)))
         lines.append(dict(id=oid,name=str(field(line,'m_name') or ''),number=int(field(line,'m_number') or 0),
                           mode=str(field(field(line,'m_type'),'m_id') or ''),company=str(field(owner,'m_name') or ''),
                           company_id=company_id,company_index=owner_index,stops=line_stops,legs=legs,

@@ -179,6 +179,11 @@ class MapRoute:
     passenger_date: str | None = None
     passenger_diagnostic: str | None = None
     service: RouteService = RouteService()
+    # Original map-road counts and saved cumulative stop arrival offsets.
+    # These are independent of lane/junction geometry used for drawing.
+    leg_map_length_units: tuple[int | None, ...] = ()
+    depot_map_length_units: tuple[int | None, ...] = ()
+    stop_arrival_offsets_ticks: tuple[int | None, ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class MapSnapshot:
@@ -190,7 +195,7 @@ class MapSnapshot:
     asset_signature: str = ''
     diagnostics: tuple[str, ...] = ()
     bounds: tuple[float, float, float, float] = (0., 0., 1., 1.)
-    schema_version: int = 11
+    schema_version: int = 12
     junctions: tuple[MapJunction, ...] = ()
 
 class MapModel:
