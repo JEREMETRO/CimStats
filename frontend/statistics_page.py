@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QEvent, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QDateTime, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QAction, QColor, QPalette
 from shiboken6 import isValid
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
@@ -29,7 +29,7 @@ from stats_charts import ChartPanel
 from stats_view_model import preset_window, resolve_comparison
 from company_dashboard import CompanyDashboard, DEFAULT_SLOTS
 from stats_range_picker import RangePicker
-from stats_controls import FluentSegmentedControl, StatisticsScrollArea, SummaryToggleButton, button_text_size
+from stats_controls import FluentSegmentedControl, StatisticsScrollArea, SummaryToggleButton, button_text_size, configure_navigation_pivot
 from stats_style import CARD_PADDING, CONTROL_GAP, NARROW_MARGIN, PAGE_MARGIN, SECTION_GAP
 from stats_text import label, group_label
 from stats_integration import configure_dashboard
@@ -321,28 +321,15 @@ class StatisticsPage(QWidget):
         outer.setSpacing(CONTROL_GAP)
         self.tab_bar = Pivot(self)
         self.tab_bar.setObjectName('statsSubTabs')
-        self.tab_bar.setMinimumHeight(40)
-        self.tab_bar.setMaximumWidth(480)
-        self.tab_bar.setItemFontSize(15)
         self._tab_icons = {'company': FluentIcon.PEOPLE,
                            'network': FluentIcon.BUS, 'city': FluentIcon.GLOBE}
         for route, title, icon in (('company', '公司数据', FluentIcon.PEOPLE),
                                    ('network', '网络数据', FluentIcon.BUS),
                                    ('city', '城市数据', FluentIcon.GLOBE)):
-            item = self.tab_bar.addItem(route, title,
+            self.tab_bar.addItem(route, title,
                                         icon=icon.icon(color=QColor(ACCENT if route == 'company'
                                                                    else TEXT_SECONDARY)))
-            item.setIconSize(QSize(18, 18))
-            item.setMinimumHeight(40)
-            item.setFixedWidth(148)
-            item.setProperty('keyboardFocus', False)
-            item.installEventFilter(self)
-            # Keep the established Pivot underline, without a filled tab or
-            # surrounding frame. Keyboard focus emphasizes the text only.
-            item.setStyleSheet('QPushButton { background: transparent; border: 0; outline: 0; padding: 7px 12px 7px 34px; '
-                               'color: #65758B; } QPushButton:hover { background: transparent; color: #0067C0; } '
-                               'QPushButton[isSelected="true"] { color: #0067C0; font-weight: 600; } '
-                               'QPushButton[keyboardFocus="true"] { text-decoration: underline; background: transparent; border: 0; outline: 0; }')
+        configure_navigation_pivot(self.tab_bar,self._tab_icons)
         self.tab_bar.currentItemChanged.connect(self._tab_changed)
         self.tab_bar.setCurrentItem('company')
         outer.addWidget(self.tab_bar)
@@ -772,9 +759,6 @@ class StatisticsPage(QWidget):
         animation.start()
 
     def _tab_changed(self, route):
-        for key, icon in self._tab_icons.items():
-            self.tab_bar.items[key].setIcon(icon.icon(
-                color=QColor(ACCENT if key == route else TEXT_SECONDARY)))
         if hasattr(self, 'data_stack'):
             self.data_stack.setCurrentIndex(('company', 'network', 'city').index(route))
             target = self.data_stack.currentWidget()
@@ -974,17 +958,6 @@ class StatisticsPage(QWidget):
 
     def _can_compare_companies(self):
         return len(self.companies) >= 2
-
-    def eventFilter(self, watched, event):
-        if hasattr(self, 'tab_bar') and watched in self.tab_bar.items.values() and event.type() in (
-                QEvent.Type.FocusIn, QEvent.Type.FocusOut, QEvent.Type.MouseButtonPress):
-            keyboard = (event.type() == QEvent.Type.FocusIn and event.reason() in (
-                Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
-                Qt.FocusReason.ShortcutFocusReason))
-            watched.setProperty('keyboardFocus', keyboard)
-            watched.style().unpolish(watched)
-            watched.style().polish(watched)
-        return super().eventFilter(watched, event)
 
     def _refresh_company_tags(self, *_):
         while self.company_tag_layout.count():

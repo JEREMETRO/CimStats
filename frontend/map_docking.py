@@ -8,7 +8,7 @@ import stats_tokens as tokens
 from stats_typography import ui_font
 from stats_motion import CollapseMotion
 
-_TITLES={'layers':'图层控制','filters':'线路筛选','display':'显示设置',
+_TITLES={'layers':'图层控制','filters':'线路筛选','display':'显示设置','lines':'线路列表',
          'single':'线路信息','planning':'建筑视图与线路比选'}
 
 def panel_title(key,panel=None):
@@ -156,6 +156,8 @@ class MapDockHost(QWidget):
 
     def activate_panel(self,key):
         if key not in self.frames:return
+        if self._pending_layout is not None and not self._restoring:
+            self._pending_layout['active']=key
         frame=self.frames[key]
         if frame.floating:frame.show(); frame.raise_(); return
         self._active=key

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QEasingCurve, QVariantAnimation, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QVariantAnimation, QRect, QRectF, QSize, Qt, Signal, QObject
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QPainter
-from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QPushButton, QStyle, QStyleOptionButton
+from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QPushButton, QStyle, QStyleOptionButton, QLayout
 from qfluentwidgets import ComboBox, ScrollArea, TogglePushButton, TransparentToolButton, FluentIcon
 from qfluentwidgets import PushButton, PrimaryPushButton
 
@@ -14,6 +14,55 @@ from stats_typography import ui_font
 import stats_motion as motion_policy
 
 _FONT_ID = -1
+
+
+class _NavigationPivotStyle(QObject):
+    """Shared icon states and keyboard emphasis for page navigation."""
+    def __init__(self,pivot,icons):
+        super().__init__(pivot)
+        self.pivot=pivot;self.icons=dict(icons)
+        for item in pivot.items.values():
+            item.setProperty('keyboardFocus',False)
+            item.installEventFilter(self)
+
+    def update_icons(self,route):
+        for key,icon in self.icons.items():
+            self.pivot.items[key].setIcon(icon.icon(
+                color=QColor(tokens.ACCENT if key==route else tokens.TEXT_SECONDARY)))
+
+    def eventFilter(self,watched,event):
+        if (event.type()==QEvent.Type.DynamicPropertyChange
+                and bytes(event.propertyName())==b'isSelected'):
+            self.update_icons(self.pivot.currentRouteKey())
+        if event.type() in (QEvent.Type.FocusIn,QEvent.Type.FocusOut,QEvent.Type.MouseButtonPress):
+            keyboard=(event.type()==QEvent.Type.FocusIn and event.reason() in (
+                Qt.FocusReason.TabFocusReason,Qt.FocusReason.BacktabFocusReason,Qt.FocusReason.ShortcutFocusReason))
+            watched.setProperty('keyboardFocus',keyboard)
+            watched.style().unpolish(watched);watched.style().polish(watched)
+        return super().eventFilter(watched,event)
+
+
+def configure_navigation_pivot(pivot,icons=None,*,in_header=False):
+    """Reuse the established statistics Pivot appearance and header sizing."""
+    # Pivot's forced layout minimum would overwrite the explicit 40px host.
+    pivot.hBoxLayout.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
+    pivot.setMinimumHeight(40)
+    pivot.setMaximumWidth(16777215 if in_header else 480)
+    if in_header:pivot.setItemFontSize(14)
+    rule=('QPushButton { background: transparent; border: 0; outline: 0; padding: 7px 12px 7px 34px; '
+          'color: #65758B; } QPushButton:hover { background: transparent; color: #0067C0; } '
+          'QPushButton[isSelected="true"] { color: #0067C0; font-weight: 600; } '
+          'QPushButton[keyboardFocus="true"] { text-decoration: underline; background: transparent; border: 0; outline: 0; }')
+    for item in pivot.items.values():
+        item.setIconSize(QSize(18,18))
+        item.setMinimumHeight(36 if in_header else 40)
+        item.setFixedWidth(118 if in_header else 148)
+        item.setStyleSheet(rule)
+    if not hasattr(pivot,'_navigation_style'):
+        pivot._navigation_style=_NavigationPivotStyle(pivot,icons or {})
+    elif icons is not None:
+        pivot._navigation_style.icons=dict(icons)
+    pivot._navigation_style.update_icons(pivot.currentRouteKey())
 
 
 def button_text_size(button):

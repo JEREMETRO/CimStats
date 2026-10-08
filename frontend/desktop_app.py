@@ -621,18 +621,19 @@ class MainWindow(FluentMainWindow):
         self.pages.addWidget(self.statistics_page)
         # The statistics sub-tabs live in the shared header next to the title.
         self.stats_tabs = self.statistics_page.tab_bar
-        self.statistics_page.layout().removeWidget(self.stats_tabs)
-        self.stats_tabs.setParent(self.header)
-        self.stats_tabs.hide()
-        self.stats_tabs.setItemFontSize(14)
-        self.stats_tabs.setMaximumWidth(16777215)
-        for tab in self.stats_tabs.items.values():
-            tab.setFixedWidth(118)
-            tab.setMinimumHeight(36)
+        self._mount_header_tabs(self.statistics_page,self.stats_tabs)
         self.statistics_page.export_button.hide()
         self.statistics_page.stats_integration.export_failed.connect(
             lambda error: self._notify('导出失败', str(error), error=True))
         self.statistics_page.query_failed.connect(self._dashboard_failed)
+
+    def _mount_header_tabs(self,page,tabs):
+        """Share the existing statistics tab sizing and AppHeader reflow."""
+        from stats_controls import configure_navigation_pivot
+        page.layout().removeWidget(tabs)
+        tabs.setParent(self.header)
+        tabs.hide()
+        configure_navigation_pivot(tabs,in_header=True)
 
     def _finish_ui(self):
         self.loading_overlay = LoadingOverlay(self.centralWidget(), self.cancel_parse,
@@ -687,7 +688,8 @@ class MainWindow(FluentMainWindow):
                 motion.finish()
         self.pages.setCurrentIndex(index)
         route, title, icon = PAGES[index]
-        self.header.set_page(title, icon, self.stats_tabs if index == 3 else None)
+        tabs=self.stats_tabs if index==3 else self.map_tabs if index==1 else None
+        self.header.set_page(title, icon, tabs)
         self.sidebar.setCurrentItem(route)
         for position, button in enumerate(self.nav_buttons):
             glyph = PAGES[position][2]
@@ -822,6 +824,8 @@ class MainWindow(FluentMainWindow):
     def build_map(self):
         from map_page import MapPage
         self.map_page = MapPage(self.settings, self.pages, cache_dir=JOBS / 'map-cache')
+        self.map_tabs=self.map_page.preset_pivot
+        self._mount_header_tabs(self.map_page,self.map_tabs)
         self.map_page.failed.connect(lambda message: self._notify('地图读取失败', message, error=True))
         self.map_page.ready.connect(self._refresh_exports)
         self.map_page.canvas.export_availability_changed.connect(lambda _:self._refresh_exports())

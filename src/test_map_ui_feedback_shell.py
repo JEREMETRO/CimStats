@@ -45,7 +45,7 @@ def test_map_search_surface_is_opaque_in_each_state(app,state):
 # Rail text must not fall back to an internal preset key even without accessible metadata.
 def test_dock_titles_are_chinese_for_tab_float_and_rail(app):
     from map_docking import MapDockHost
-    for key,wanted in (('single','线路信息'),('planning','建筑视图与线路比选')):
+    for key,wanted in (('lines','线路列表'),('single','线路信息'),('planning','建筑视图与线路比选')):
         panel=QWidget()
         host=MapDockHost(QWidget(),{key:panel});host.resize(960,680);host.show();app.processEvents()
         try:

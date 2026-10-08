@@ -11,7 +11,9 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWi
 from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar, Pivot
 import stats_tokens as tokens
 from stats_typography import ui_font
+from stats_controls import configure_navigation_pivot
 from map_canvas import MapCanvas, ROAD_STYLES, MapSearchResult
+from map_icon import MAP_ICON
 from map_panels import MapPanelSet
 from map_docking import MapDockHost
 from map_model import MapSnapshot, road_display_level
@@ -211,9 +213,10 @@ class MapPage(QWidget):
         self.dock_stack=QStackedWidget(self)
         self.dock_stack.addWidget(self.dock)
         self.preset_pivot=Pivot(self)
-        self.preset_pivot.setItemFontSize(tokens.FONT_SIZE_BODY)
         for key,title in [('single','单线'),('network','线网'),('planning','规划')]:
             self.preset_pivot.addItem(key,title)
+        configure_navigation_pivot(self.preset_pivot,{
+            'single':FluentIcon.BUS,'network':MAP_ICON,'planning':FluentIcon.EDIT})
         self.preset_pivot.setCurrentItem('network')
         self.preset_pivot.currentItemChanged.connect(self.set_preset)
         layout.addWidget(self.preset_pivot)
@@ -255,11 +258,14 @@ class MapPage(QWidget):
         if preset in self.docks:return self.docks[preset]
         from map_preset_panels import SingleLinePanel, PlanningPanel
         if preset=='single':
+            from map_preset_panels import SingleLineListPanel
+            self.single_list_panel=SingleLineListPanel(self)
+            self.single_list_panel.routeSelected.connect(lambda identity:self.show_route(identity,self.save_token))
             self.single_panel=SingleLinePanel(self)
             self.single_panel.routeSelected.connect(lambda identity:self.show_route(identity,self.save_token))
             self.single_panel.directionChanged.connect(lambda value:self._preset_changed('single',direction=value))
             self.single_panel.deadheadChanged.connect(lambda value:self._preset_changed('single',deadhead=value))
-            panels={'single':self.single_panel}
+            panels={'lines':self.single_list_panel,'single':self.single_panel}
         else:
             self.planning_panel=PlanningPanel(self)
             self.planning_panel.set_popup_host(self.surface)
@@ -276,6 +282,8 @@ class MapPage(QWidget):
         host.layoutChanged.connect(lambda state,key=preset:self._save_layout(key,state))
         saved=self.presets.state(preset)['layout']
         if saved:host.restore_layout(saved)
+        elif preset=='single' and self.presets.state('single')['query']['route_id'] is not None:
+            host.activate_panel('single')
         return host
 
     def set_preset(self,preset):
@@ -323,6 +331,14 @@ class MapPage(QWidget):
     def _sync_preset_panels(self):
         if self.query is None:self.panel_set.set_result_count(0)
         routes=self._presentation_catalog()
+        if hasattr(self,'single_list_panel'):
+            state=self.presets.state('single')['query']
+            if self._panel_catalogs.get('lines') is not routes:
+                self.single_list_panel.set_routes(routes)
+                self._panel_catalogs['lines']=routes
+            self.single_list_panel.set_state({'selected_route_id':state['route_id']})
+            if state['route_id'] is None and self._pending_route is None:
+                self.docks['single'].activate_panel('lines')
         if hasattr(self,'single_panel'):
             state=self.presets.state('single')['query']
             if self._panel_catalogs.get('single') is not routes:
@@ -420,8 +436,13 @@ class MapPage(QWidget):
         except (TypeError,ValueError):return False
         if self.query is not None and not route_has_geometry(next(
                 (r for r in self.query.snapshot.routes if r.id==route_id),None)):return False
+        if (self.query is not None and self.preset=='single'
+                and self.presets.state('single')['query']['route_id']==route_id):
+            self.docks['single'].activate_panel('single')
+            return True
         self._pending_route=(self.save_token,route_id)
         self.set_preset('single')
+        self.docks['single'].activate_panel('single')
         if self.query is not None:self._consume_pending_route()
         else:self.ensure_loaded()
         return True
