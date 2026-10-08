@@ -44,7 +44,7 @@ def test_single_search_is_full_catalog_and_unavailable_path_cannot_select(qt_app
     p = SingleLinePanel(); spy = QSignalSpy(p.routeSelected)
     p.set_routes(routes()); p.set_state({'selected_route_id': 12})
     assert spy.count() == 0
-    assert '同名公司 · a' in p.route_list.item(0).text()
+    assert p.route_list.item(0).text()=='公交12 中央线'
     p.search.setText('23'); assert p.route_list.count() == 1
     p.route_list.setCurrentRow(0); p.route_list.itemActivated.emit(p.route_list.item(0))
     assert spy.at(0)[0] == 23
@@ -83,15 +83,15 @@ def test_planning_native_unknown_empty_unresolved_and_unavailable_are_distinct(q
     p = PlanningPanel(host); p.set_routes(routes(), set())
     p.open_building_menu({'name': '建筑'}, None, set(), host.mapToGlobal(QPoint(30, 30)))
     m = p.building_menu
-    assert m.status_label.text() == '服务线路数据不可用'
+    assert m.status_label.text() == '线路信息暂不可用'
     assert m.line_list.count() == 0 and not m.select_all.isEnabled()
-    p.open_building_menu({'name': '建筑'}, [], set(), host.mapToGlobal(QPoint(30, 30)), source_known=True)
+    p.open_building_menu({'name': '建筑','service_lines':{'known':True,'complete':True,'route_ids':(),'unresolved_refs':()}}, [], set(), host.mapToGlobal(QPoint(30, 30)), source_known=True)
     assert m.status_label.text() == '无服务线路'
     p.open_building_menu({'name': '建筑'}, [routes()[2], routes()[2]], set(), host.mapToGlobal(QPoint(30, 30)), source_known=True, unresolved_refs=(808, 808))
-    assert m.line_list.count() == 2
+    assert m.line_list.count() == 1
     assert '无地图路径' in m.line_list.item(0).text()
-    assert '808' in m.line_list.item(1).text()
-    assert all(not m.line_list.item(i).flags() & Qt.ItemFlag.ItemIsEnabled for i in range(2))
+    assert m.source_unresolved_refs == (808,) and m.status_label.text()=='线路信息暂不可用'
+    assert all(not m.line_list.item(i).flags() & Qt.ItemFlag.ItemIsEnabled for i in range(m.line_list.count()))
     m.select_all.click(); assert p.state()['selected_line_ids'] == set()
 
 
@@ -163,16 +163,15 @@ def test_network_time_uses_simulated_clock_and_valid_cross_midnight(qt_applicati
     p = MapPanelSet(); spy = QSignalSpy(p.stateChanged)
     p.set_options({'simulated_datetime': '2030-01-02T23:30:00'})
     assert spy.count() == 0 and p.state()['service_time_mode'] == 'off'
-    assert p.controls['service_start'].dateTime().toString('yyyy-MM-ddTHH:mm:ss') == '2030-01-02T23:30:00'
+    assert p.controls['service_start'].text() == '23:30'
     p.controls['service_time_mode'].buttons['instant'].click()
     assert p.state()['service_start'] == '2030-01-02T23:30:00'
-    from PySide6.QtCore import QDateTime
-    p.controls['service_end'].setDateTime(QDateTime.fromString('2030-01-03T01:00:00', Qt.DateFormat.ISODate))
     p.controls['service_time_mode'].buttons['range'].click()
+    p.controls['service_end'].setText('01:00')
     assert p.state()['service_time_mode'] == 'range'
     assert p.state()['service_end'] == '2030-01-03T01:00:00'
     before = p.state(); n = spy.count()
-    p.controls['service_end'].setDateTime(QDateTime.fromString('2030-01-02T20:00:00', Qt.DateFormat.ISODate))
+    p.controls['service_end'].setText('25:99')
     assert p.state() == before and spy.count() == n and p.service_error.text()
     p.reset_filters.click(); assert p.state()['service_time_mode'] == 'off'
 
@@ -242,8 +241,10 @@ def test_network_restored_range_and_missing_simulated_clock_do_not_use_wall_cloc
     assert p.state()['service_time_mode'] == 'off' and spy.count() == 0
     p.set_state({'service_time_mode': 'range', 'service_start': '2031-02-01T23:00:00', 'service_end': '2031-02-02T01:00:00'})
     p.set_options({})
-    assert p.controls['service_start'].dateTime().toString(Qt.DateFormat.ISODate) == '2031-02-01T23:00:00'
-    assert p.controls['service_end'].dateTime().toString(Qt.DateFormat.ISODate) == '2031-02-02T01:00:00'
+    assert p.controls['service_start'].text() == '23:00'
+    assert p.controls['service_end'].text() == '01:00'
+    assert p.state()['service_start'] == '2031-02-01T23:00:00'
+    assert p.state()['service_end'] == '2031-02-02T01:00:00'
     assert spy.count() == 0
 
 

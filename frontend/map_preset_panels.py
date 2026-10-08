@@ -6,14 +6,17 @@ from copy import deepcopy
 from math import isfinite
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor,QPixmap,QIcon
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QListWidgetItem, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, CheckBox, LineEdit, PushButton, TransparentPushButton
 
 from line_schedule import TICKS_PER_SECOND
 from display_rules import format_number
 from map_visibility import usable_paths as _usable_paths
-from map_panels import _ChoiceGroup, _OptionGrid, _WrappedList, _style_control
+from map_panels import _ChoiceGroup, _OptionGrid, _SingleLineList, _style_control
+from display_rules import display_mode
+from semantic_colors import color_for
+from map_line_labels import resolve_line_labels
 from stats_controls import StatisticsScrollArea
 from stats_typography import ui_font
 import stats_tokens as tokens
@@ -37,6 +40,8 @@ def _number(value, unit, precision=0):
 
 def _catalog(routes):
     """Normalize identity once per catalog, never infer building associations."""
+    routes=tuple(routes or ())
+    labels=resolve_line_labels(routes) if any(not (_field(r,'display_label') or _field(r,'label')) for r in routes) else {}
     result = []
     seen = set()
     for route in routes or ():
@@ -51,7 +56,8 @@ def _catalog(routes):
             selectable = _usable_paths(tuple(path for leg in legs for path in leg) if legs else has_paths)
         result.append(dict(id=identity, name=str(_field(route, 'name', identity)),
                            company_id=_field(route, 'company_id'), company_name=str(_field(route, 'company_name', '') or ''),
-                           mode=_field(route, 'mode'), color=_field(route, 'color'), selectable=bool(selectable)))
+                           mode=_field(route, 'mode'), color=_field(route, 'color'), selectable=bool(selectable),
+                           display_label=_field(route,'display_label',_field(route,'label')) or labels.get(identity)))
     return result
 
 
@@ -102,15 +108,38 @@ class _RouteList(QWidget):
             layout.addLayout(row)
             self.select_all.clicked.connect(lambda: self._bulk(True))
             self.clear_selection.clicked.connect(lambda: self._bulk(False))
-        self.line_list = _WrappedList(); _style_control(self.line_list)
+        self.line_list = _SingleLineList(); _style_control(self.line_list)
         self.line_list.setProperty('heightCap', 260); self.line_list.setFixedHeight(260)
-        self.line_list.setWordWrap(True); self.line_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.line_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(self.line_list)
-        self.search.textChanged.connect(self.refresh)
+        self.search.textChanged.connect(self._searched)
+        self.search.returnPressed.connect(self._submit)
+        self.search.installEventFilter(self)
         self.line_list.itemChanged.connect(self._item_changed)
         self.line_list.itemClicked.connect(self._activate)
         self.line_list.itemActivated.connect(self._activate)
+        if not checked:self.line_list.hide()
+
+    def _searched(self,*_):
+        self.refresh()
+        if not self._checked:self.line_list.show()
+
+    def eventFilter(self,watched,event):
+        if watched is self.search and not self._checked and event.type()==QEvent.Type.FocusIn:
+            if event.reason() in (Qt.FocusReason.MouseFocusReason,Qt.FocusReason.TabFocusReason,Qt.FocusReason.BacktabFocusReason):
+                self.line_list.show()
+        return super().eventFilter(watched,event)
+
+    def collapse_results(self):
+        if not self._checked:self.line_list.hide()
+
+    def _submit(self):
+        available=[self.line_list.item(i) for i in range(self.line_list.count()) if self.line_list.item(i).flags()&Qt.ItemFlag.ItemIsEnabled]
+        if len(available)==1:self._activate(available[0])
+        else:
+            self.line_list.show()
+            if available:
+                self.line_list.setCurrentItem(available[0]);self.line_list.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def set_routes(self, routes, selected, duplicate_companies=()):
         if routes == self._routes and set(duplicate_companies) == self._duplicate_companies:
@@ -123,12 +152,14 @@ class _RouteList(QWidget):
         self._selected = set(selected)
         blocked = self.line_list.blockSignals(True)
         try:
+            matched=False
             for i in range(self.line_list.count()):
                 item = self.line_list.item(i)
                 if self._checked and item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
                     item.setCheckState(Qt.CheckState.Checked if item.data(Qt.ItemDataRole.UserRole) in self._selected else Qt.CheckState.Unchecked)
                 elif not self._checked and item.data(Qt.ItemDataRole.UserRole) in self._selected:
-                    self.line_list.setCurrentItem(item)
+                    self.line_list.setCurrentItem(item);matched=True
+            if not self._checked and not matched:self.line_list.setCurrentRow(-1)
         finally:
             self.line_list.blockSignals(blocked)
 
@@ -137,16 +168,15 @@ class _RouteList(QWidget):
         blocked = self.line_list.blockSignals(True)
         self.line_list.clear()
         for route in self._routes:
-            company = route['company_name']
-            if company in self._duplicate_companies:
-                company = f"{company} · {route['company_id']}"
-            text = route['name'] + (f'\n{company}' if company else '')
-            if not route['selectable']:
-                text += '\n' + route.get('unavailable_text', '无地图路径')
-            if query and query not in f"{text} {route['id']}".casefold():
+            text=route.get('display_label') or f"{display_mode(route.get('mode'))} {route['name']}".strip()
+            if query and query not in f"{text} {route['id']} {route['company_name']}".casefold():
                 continue
             item = QListWidgetItem(text); item.setData(Qt.ItemDataRole.UserRole, route['id'])
+            color=route.get('color') or color_for('mode',route.get('mode'))
+            pix=QPixmap(10,10);pix.fill(QColor(color));item.setIcon(QIcon(pix))
             item.setFont(ui_font(tokens.FONT_SIZE_BODY)); item.setToolTip('')
+            if not route['selectable']:
+                item.setData(Qt.ItemDataRole.AccessibleDescriptionRole,route.get('unavailable_text','无地图路径'))
             item.setForeground(QColor(tokens.TEXT_PRIMARY if route['selectable'] else tokens.TEXT_DISABLED))
             if self._checked and route['selectable']:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -183,8 +213,13 @@ class _RouteList(QWidget):
             self._selected = selected; self.changed.emit(set(selected))
 
     def _activate(self, item):
-        if not self._checked and item.flags() & Qt.ItemFlag.ItemIsEnabled:
-            self.activated.emit(item.data(Qt.ItemDataRole.UserRole))
+        if not item.flags()&Qt.ItemFlag.ItemIsEnabled:return
+        identity=item.data(Qt.ItemDataRole.UserRole)
+        if self._checked:
+            if identity not in self._selected:
+                selected=self._selected|{identity};self.set_selection(selected);self.changed.emit(set(selected))
+        else:
+            self.collapse_results();self.activated.emit(identity)
 
 
 def _duplicate_companies(routes):
@@ -202,14 +237,15 @@ class SingleLinePanel(_PresetPanel):
     def __init__(self, parent=None):
         super().__init__(parent); self.setAccessibleName('线路信息')
         self._state = dict(direction='up', deadhead=False, selected_route_id=None)
-        self._route = None; self._facts = None; self._operating_km = None; self._deadhead_km = None
+        self._route = None; self._facts = None; self._operating_km = None; self._deadhead_km = None;self._information=None;self._information_schema=None
         self._routes = []
-        search_section = _section(self.body_layout); _label(search_section, '线路', True)
-        self._search_section = search_section.parentWidget()
-        self._catalog_view = _RouteList(False); search_section.addWidget(self._catalog_view)
+        search_section = QVBoxLayout();search_section.setContentsMargins(0,0,0,0);self.body_layout.addLayout(search_section)
+        self._search_section = self._catalog_view_host = QWidget()
+        search_section.addWidget(self._catalog_view_host);search_layout=QVBoxLayout(self._catalog_view_host);search_layout.setContentsMargins(0,0,0,0)
+        self._catalog_view = _RouteList(False); search_layout.addWidget(self._catalog_view)
+        self._catalog_view.line_list.setProperty('heightCap',112)
         self.search = self._catalog_view.search; self.route_list = self._catalog_view.line_list
         self._catalog_view.activated.connect(self._route_selected)
-        self._search_section.hide()
         section = _section(self.body_layout); self.route_title = _label(section, '线路信息', True)
         self.route_identity = _label(section, '')
         self._direction = _ChoiceGroup([('up', '上行'), ('down', '下行'), ('whole', '双向')], 3)
@@ -218,43 +254,78 @@ class SingleLinePanel(_PresetPanel):
         section.addWidget(self._direction); self._direction.changed.connect(self._direction_changed)
         self.deadhead_check = _style_control(CheckBox('计入空放里程')); section.addWidget(self.deadhead_check)
         self.deadhead_check.clicked.connect(self._deadhead_changed)
-        metrics = _section(self.body_layout); self.fact_labels = {}
-        for key, title in [('geometry_km', '地图长度'), ('operating_km', '运营长度'), ('deadhead_km', '空放长度'),
-                           ('duration_minutes', '核定时间（全线）'), ('transported_today', '当日客流'),
-                           ('scheduled_departures', '当日发班（计划）')]:
-            row = QHBoxLayout(); caption = _label(row, title)
-            value = _style_control(BodyLabel('—')); value.setWordWrap(True)
-            row.addWidget(value, 1, Qt.AlignmentFlag.AlignRight); metrics.addLayout(row)
-            self.fact_labels[key] = value
-            if key in ('operating_km', 'deadhead_km'):
-                setattr(self, f'_{key}_widgets', (caption, value))
+        self.data_sections={};self._data_layouts={};self.information_labels={};self.fact_labels={}
+        for key,title in [('line_information','线路信息'),('passenger_data','客流数据')]:
+            layout=_section(self.body_layout);_label(layout,title,True)
+            self.data_sections[key]=layout.parentWidget();self._data_layouts[key]=layout
+        self._build_information()
         self.body_layout.addStretch(1); self._refresh()
 
     def state(self):
         return deepcopy(self._state)
 
     def set_state(self, state):
+        old_identity=self._state['selected_route_id']
         direction = state.get('direction', self._state['direction'])
         if direction == 'both': direction = 'whole'
         if direction in ('up', 'down', 'whole'): self._state['direction'] = direction
         for key in ('deadhead', 'selected_route_id'):
             if key in state: self._state[key] = bool(state[key]) if key == 'deadhead' else state[key]
         self._catalog_view.set_selection({self._state['selected_route_id']}); self._refresh()
+        if self._state['selected_route_id']!=old_identity:self.collapse_results()
 
     def set_routes(self, routes):
         self._routes = _catalog(routes)
         self._catalog_view.set_routes(self._routes, {self._state['selected_route_id']}, _duplicate_companies(self._routes))
 
     def set_search_visible(self, visible):
-        """Shell provides the main map search; standalone hosts may expose this one."""
+        """Show the sidebar's full-catalog search beside the shared map search."""
         self._search_section.setVisible(bool(visible))
 
-    def set_route(self, route, facts, operating_km, deadhead_km):
+    def collapse_results(self):self._catalog_view.collapse_results()
+
+    def set_route(self, route, facts, operating_km, deadhead_km,information=None):
         self._route = route; self._facts = facts; self._operating_km = operating_km; self._deadhead_km = deadhead_km
         self._state['selected_route_id'] = _field(route, 'id')
+        self._information=deepcopy(information);self._build_information()
         self._catalog_view.set_selection({self._state['selected_route_id']}); self._refresh()
 
+    def set_information(self,information):
+        self._information=deepcopy(information);self._build_information();self._refresh()
+
+    def _build_information(self):
+        sections=_field(self._information,'sections') or (
+            ('line_information','线路信息',(('duration_minutes','核定时间（全线）','—'),('scheduled_departures','当日发班（计划）','—'))),
+            ('passenger_data','客流数据',(('transported_today','当日客流','—'),)))
+        schema=tuple((key,tuple((field,label) for field,label,text in rows)) for key,title,rows in sections)
+        if schema!=self._information_schema:
+            self._information_schema=schema;self.fact_labels={};self.information_labels={}
+            for layout in self._data_layouts.values():
+                while layout.count()>1:
+                    item=layout.takeAt(1)
+                    if item.widget():item.widget().hide();item.widget().deleteLater()
+            def add_row(layout,key,title):
+                host=QWidget();row=QHBoxLayout(host);row.setContentsMargins(0,0,0,0);row.setSpacing(10)
+                caption=_style_control(BodyLabel(title),tokens.FONT_SIZE_BODY,tokens.TEXT_SECONDARY);caption.setWordWrap(True)
+                value=_style_control(BodyLabel('—'));value.setWordWrap(True);value.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+                row.addWidget(caption);row.addWidget(value,1);layout.addWidget(host);self.information_labels[key]=value
+                return host,value
+            geometry=self._data_layouts['line_information']
+            for key,title in [('geometry_km','所选方向长度'),('operating_km','运营长度'),('deadhead_km','空放长度')]:
+                host,value=add_row(geometry,key,title);self.fact_labels[key]=value
+                if key!='geometry_km':setattr(self,f'_{key}_widgets',(host,))
+            aliases={'单程时间':'duration_minutes','今日客流':'transported_today','当日发班数':'scheduled_departures'}
+            for section_id,title,rows in sections:
+                layout=self._data_layouts.get(section_id)
+                if layout is None:continue
+                for key,label,text in rows:
+                    host,value=add_row(layout,key,label);self.fact_labels[aliases.get(key,key)]=value
+        for section_id,title,rows in sections:
+            for key,label,text in rows:
+                if key in self.information_labels:self.information_labels[key].setText(str(text))
+
     def _route_selected(self, identity):
+        self.collapse_results()
         if identity == self._state['selected_route_id']: return
         self._state['selected_route_id'] = identity; self.routeSelected.emit(identity)
 
@@ -268,8 +339,12 @@ class SingleLinePanel(_PresetPanel):
 
     def _refresh(self):
         route = self._route
-        self.route_title.setText(str(_field(route, 'name', '线路信息')))
-        self.route_identity.setText(str(_field(route, 'company_name', '') or ''))
+        identity=_field(self._information,'identity')
+        route_id=_field(route,'id')
+        label=next((record.get('display_label') for record in self._routes if record['id']==route_id),None)
+        if route is not None and not label:label=resolve_line_labels((route,)).get(route_id)
+        self.route_title.setText(str(label or _field(identity,'name',_field(route, 'name', '线路信息'))))
+        self.route_identity.setText(str(_field(identity,'company_name',_field(route, 'company_name', '')) or ''))
         roundtrip = _field(_field(route, 'direction'), 'kind') == 'roundtrip'
         for button in self._direction.buttons.values(): button.setEnabled(roundtrip)
         self._direction.set_value(self._state['direction'])
@@ -284,12 +359,13 @@ class SingleLinePanel(_PresetPanel):
         self.fact_labels['deadhead_km'].setText(_number(self._deadhead_km, 'km', 2))
         for key in ('operating_km', 'deadhead_km'):
             for widget in getattr(self, f'_{key}_widgets'): widget.setVisible(self._state['deadhead'])
-        ticks = _field(self._facts, 'approved_duration_ticks')
-        duration = ticks / TICKS_PER_SECOND / 60 if ticks is not None else _field(self._facts, 'duration_minutes')
-        today = _field(self._facts, 'today_passengers', _field(self._facts, 'transported_today'))
-        self.fact_labels['duration_minutes'].setText(_number(duration, '分钟', 2))
-        self.fact_labels['transported_today'].setText(_number(today, '人次'))
-        self.fact_labels['scheduled_departures'].setText(_number(_field(self._facts, 'scheduled_departures'), '班次'))
+        if self._information is None:
+            ticks = _field(self._facts, 'approved_duration_ticks')
+            duration = ticks / TICKS_PER_SECOND / 60 if ticks is not None else _field(self._facts, 'duration_minutes')
+            today = _field(self._facts, 'today_passengers', _field(self._facts, 'transported_today'))
+            self.fact_labels['duration_minutes'].setText(_number(duration, '分钟', 2))
+            self.fact_labels['transported_today'].setText(_number(today, '人次'))
+            self.fact_labels['scheduled_departures'].setText(_number(_field(self._facts, 'scheduled_departures'), '班次'))
 
 
 class BuildingLineMenu(QFrame):
@@ -310,7 +386,7 @@ class BuildingLineMenu(QFrame):
         self.select_all = self._catalog_view.select_all; self.clear_selection = self._catalog_view.clear_selection
         self._catalog_view.changed.connect(self.selectionChanged)
         self.close_button.clicked.connect(self.hide)
-        self._anchor = QPoint(); self.hide()
+        self._anchor = QPoint();self.source_unresolved_refs=();self.source_complete=False;self.hide()
 
     def showEvent(self, event):
         QApplication.instance().installEventFilter(self)
@@ -321,9 +397,13 @@ class BuildingLineMenu(QFrame):
         super().hideEvent(event)
 
     def present(self, building, routes, selected, global_pos, known, duplicate_companies):
-        self.title_label.setText(str(_field(building, 'name', '') or _field(building, 'id', '')))
+        self.title_label.setText(str(_field(building, 'name', '') or '建筑服务线路'))
         self.search.clear(); self._catalog_view.set_routes(routes, selected, duplicate_companies)
-        self.status_label.setText('服务线路数据不可用' if not known else '无服务线路' if not routes else '')
+        association=_field(building,'service_lines')
+        self.source_complete=bool(known and _field(association,'complete') is True and not self.source_unresolved_refs)
+        available=any(route['selectable'] for route in routes)
+        confirmed_empty=self.source_complete and not routes and not _field(association,'route_ids',())
+        self.status_label.setText('无服务线路' if confirmed_empty else '线路信息暂不可用' if not known or not available else '部分线路不可用' if not self.source_complete else '')
         self.status_label.setVisible(bool(self.status_label.text()))
         self._anchor = self.parentWidget().mapFromGlobal(global_pos)
         self._place(); self.show(); self.raise_(); self.search.setFocus(Qt.FocusReason.PopupFocusReason)
@@ -419,17 +499,14 @@ class PlanningPanel(_PresetPanel):
             source_known = _field(association, 'known', candidate_routes is not None)
         if not unresolved_refs: unresolved_refs = _field(association, 'unresolved_refs', ())
         candidates = _catalog(candidate_routes) if source_known and candidate_routes is not None else []
-        if source_known:
-            seen = set()
-            for reference in unresolved_refs:
-                if reference in seen: continue
-                seen.add(reference)
-                candidates.append(dict(id=('unresolved', reference), name=f'线路 {reference}' if reference is not None else '未记录线路标识',
-                                       company_id=None, company_name='', selectable=False, unavailable_text='线路不可用'))
+        full_labels={route['id']:route.get('display_label') for route in self._routes}
+        for route in candidates:
+            if full_labels.get(route['id']):route['display_label']=full_labels[route['id']]
         self._state['selected_ids'] = set(selected_ids or ())
         host = self._popup_host or self.window()
         if self.building_menu is None:
             self.building_menu = BuildingLineMenu(host); self.building_menu.selectionChanged.connect(self._selection_changed)
+        self.building_menu.source_unresolved_refs=tuple(dict.fromkeys(unresolved_refs))
         self._refresh()
         self.building_menu.present(building, candidates, self._state['selected_ids'], global_pos, bool(source_known), _duplicate_companies(self._routes + candidates))
 

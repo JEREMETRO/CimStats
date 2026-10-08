@@ -2,15 +2,20 @@
 from __future__ import annotations
 from copy import deepcopy
 from math import isfinite
+from datetime import datetime,timedelta
+import re
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QDateTime
 from PySide6.QtGui import QColor, QIcon, QPixmap, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QListWidgetItem, QAbstractItemView, QFrame, QGridLayout, QButtonGroup
-from qfluentwidgets import CheckBox, ComboBox, LineEdit, PushButton, ListWidget, BodyLabel, RadioButton, FluentIcon, TransparentPushButton, CompactDoubleSpinBox, DateTimeEdit, setCustomStyleSheet
+from qfluentwidgets import CheckBox, ComboBox, LineEdit, PushButton, ListWidget, BodyLabel, RadioButton, FluentIcon, TransparentPushButton, CompactDoubleSpinBox, setCustomStyleSheet
+from qfluentwidgets.components.widgets.slider import SliderHandle
 from stats_controls import StatisticsScrollArea
 from stats_typography import ui_font
 import stats_tokens as tokens
 from semantic_colors import PROFIT, category, building_function_fill, map_fill
 from map_model import BuildingFunctionValues
+from display_rules import display_mode
+from map_line_labels import resolve_line_labels
 from ui_kit import FlowLayout
 from map_canvas import ROAD_STYLES
 
@@ -43,6 +48,23 @@ class _WrappedList(ListWidget):
         super().resizeEvent(event); self.wrap_items()
 
 
+class _SingleLineList(_WrappedList):
+    def __init__(self,parent=None):
+        super().__init__(parent)
+        self.setWordWrap(False);self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    def wrap_items(self):
+        blocked=self.blockSignals(True)
+        try:
+            height=0
+            for i in range(self.count()):
+                item=self.item(i);row_height=max(28,QFontMetrics(item.font()).height()+8)
+                item.setSizeHint(QSize(max(1,self.viewport().width()-4),row_height));height+=row_height+6
+            cap=self.property('heightCap')
+            if cap is not None:self.setFixedHeight(min(int(cap),max(32,height+6)))
+        finally:self.blockSignals(blocked)
+
+
 def _style_control(widget, size=tokens.FONT_SIZE_BODY, color=tokens.TEXT_PRIMARY):
     widget.setFont(ui_font(size))
     if hasattr(widget,'setTextColor'):widget.setTextColor(QColor(color),QColor(color))
@@ -63,6 +85,198 @@ class _ChoiceGroup(QWidget):
             grid.addWidget(button,index//columns,index%columns)
     def set_value(self,value):
         if value in self.buttons:self.buttons[value].setChecked(True)
+
+
+class _RangeHandle(SliderHandle):
+    def __init__(self,axis,index):
+        super().__init__(axis);self.axis=axis;self.index=index
+        self.setHandleColor(tokens.ACCENT,tokens.ACCENT)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    def mousePressEvent(self,event):
+        if event.button()==Qt.MouseButton.LeftButton:
+            self.setFocus(Qt.FocusReason.MouseFocusReason);self.axis._drag=self.index
+        super().mousePressEvent(event)
+    def mouseMoveEvent(self,event):
+        if self.axis._drag==self.index:
+            self.axis._move_to(self.index,self.axis.mapFromGlobal(event.globalPosition().toPoint()).x());event.accept()
+        else:super().mouseMoveEvent(event)
+    def mouseReleaseEvent(self,event):
+        self.axis._drag=None;super().mouseReleaseEvent(event)
+    def keyPressEvent(self,event):
+        keys={Qt.Key.Key_Left:-1,Qt.Key.Key_Down:-1,Qt.Key.Key_Right:1,Qt.Key.Key_Up:1,
+              Qt.Key.Key_PageDown:-self.axis.page_step,Qt.Key.Key_PageUp:self.axis.page_step}
+        value=self.axis.values()[self.index]
+        if event.key() in keys:value+=keys[event.key()]
+        elif event.key()==Qt.Key.Key_Home:value=0
+        elif event.key()==Qt.Key.Key_End:value=self.axis.maximum
+        else:super().keyPressEvent(event);return
+        self.axis._change(self.index,value);event.accept()
+
+
+class _RangeAxis(QWidget):
+    """Independent named endpoints; wrapped selections are drawn as two ends."""
+    valueChanged=Signal(int,int)
+    def __init__(self,maximum,ticks,accessible,parent=None):
+        super().__init__(parent);self.maximum=maximum;self.page_step=60 if maximum==1440 else 1
+        self._values=(0,maximum);self._single=False;self._drag=None;self.ticks=ticks
+        self.setFixedHeight(51);self.setAccessibleName(accessible)
+        self.handles=[_RangeHandle(self,i) for i in (0,1)]
+        for i,handle in enumerate(self.handles):handle.setAccessibleName(('开始' if i==0 else '结束')+accessible)
+    def values(self):return self._values
+    def set_values(self,start,end):
+        self._values=(min(self.maximum,max(0,int(start))),min(self.maximum,max(0,int(end))))
+        self._place_handles();self.update()
+    def set_single(self,single):
+        self._single=bool(single);self.handles[1].setVisible(not single);self.handles[1].setEnabled(not single);self.update()
+    def _x(self,value):return 12+(max(1,self.width()-24))*value/self.maximum
+    def _place_handles(self):
+        for handle,value in zip(self.handles,self._values):handle.move(round(self._x(value))-11,9)
+    def resizeEvent(self,event):super().resizeEvent(event);self._place_handles()
+    def _change(self,index,value):
+        if index==1 and self._single:return
+        values=list(self._values);values[index]=min(self.maximum,max(0,int(value)))
+        if tuple(values)!=self._values:self.set_values(*values);self.valueChanged.emit(*values)
+    def _move_to(self,index,x):
+        self._change(index,round((x-12)*self.maximum/max(1,self.width()-24)))
+    def mousePressEvent(self,event):
+        if event.button()!=Qt.MouseButton.LeftButton:super().mousePressEvent(event);return
+        candidates=(0,) if self._single else (0,1)
+        self._drag=min(candidates,key=lambda i:abs(event.position().x()-self._x(self._values[i])))
+        self.handles[self._drag].setFocus(Qt.FocusReason.MouseFocusReason);self._move_to(self._drag,event.position().x());event.accept()
+    def mouseMoveEvent(self,event):
+        if self._drag is not None:self._move_to(self._drag,event.position().x());event.accept()
+        else:super().mouseMoveEvent(event)
+    def mouseReleaseEvent(self,event):self._drag=None;event.accept()
+    def wheelEvent(self,event):event.accept()
+    def paintEvent(self,event):
+        painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(tokens.BORDER_STRONG),4,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
+        painter.drawLine(12,20,self.width()-12,20)
+        first,last=self._values
+        painter.setPen(QPen(QColor(tokens.ACCENT),4,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
+        if not self._single:
+            segments=((first,last),) if first<=last else ((0,last),(first,self.maximum))
+            for a,b in segments:painter.drawLine(round(self._x(a)),20,round(self._x(b)),20)
+        painter.setFont(ui_font(tokens.FONT_SIZE_CAPTION));painter.setPen(QColor(tokens.TEXT_SECONDARY))
+        names=[(first,'开始')] if self._single else [(first,'开始'),(last,'结束')]
+        if not self._single and abs(self._x(first)-self._x(last))<36:names=[(first,'开始/结束')]
+        for value,text in names:
+            width=70 if '/' in text else 36;x=min(max(0,round(self._x(value)-width/2)),max(0,self.width()-width))
+            painter.drawText(QRect(x,0,width,16),Qt.AlignmentFlag.AlignCenter,text)
+        for value,text in self.ticks:
+            x=min(max(0,round(self._x(value)-20)),max(0,self.width()-40))
+            painter.drawText(QRect(x,33,40,18),Qt.AlignmentFlag.AlignCenter,text)
+
+
+def _local_datetime(value):
+    if isinstance(value,datetime):return value
+    try:return datetime.fromisoformat(str(value))
+    except (ValueError,TypeError):return None
+
+
+class _ServiceTimeEditor(QWidget):
+    edited=Signal(str,str)
+    def __init__(self,parent=None):
+        super().__init__(parent);self._clock=None;self._start_date=None;self._end_date=None;self._setting=False;self._mode='off'
+        box=QVBoxLayout(self);box.setContentsMargins(0,0,0,0);box.setSpacing(4)
+        self.week_axis=_RangeAxis(6,list(enumerate(('周一','周二','周三','周四','周五','周六','周日'))),'星期')
+        box.addWidget(self.week_axis);row=QHBoxLayout();row.setSpacing(8)
+        self.labels={}
+        for key,text in [('start','开始时间'),('end','结束时间')]:
+            host=QWidget();column=QHBoxLayout(host);column.setContentsMargins(0,0,0,0);column.setSpacing(4)
+            caption=_style_control(BodyLabel('开始' if key=='start' else '结束'),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY);column.addWidget(caption);self.labels[key]=caption
+            edit=_style_control(LineEdit());edit.setPlaceholderText('HH:mm');edit.setAccessibleName(text);edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            edit.textChanged.connect(self._time_changed);column.addWidget(edit,1);row.addWidget(host);setattr(self,key+'_edit',edit)
+        box.addLayout(row)
+        self.time_axis=_RangeAxis(1440,[(0,'00'),(360,'06'),(720,'12'),(1080,'18'),(1440,'24')],'时间')
+        box.addWidget(self.time_axis)
+        self.summary=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.TEXT_SECONDARY);self.summary.setWordWrap(True);box.addWidget(self.summary)
+        self.error_label=_style_control(BodyLabel(''),tokens.FONT_SIZE_CAPTION,tokens.ERROR_COLOR);self.error_label.setWordWrap(True);self.error_label.hide();box.addWidget(self.error_label)
+        self.week_axis.valueChanged.connect(self._weekday_changed);self.time_axis.valueChanged.connect(self._axis_time_changed)
+    @staticmethod
+    def _minutes(text):
+        if text=='24:00':return 1440
+        if not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]',text):return None
+        hours,minutes=map(int,text.split(':'));return hours*60+minutes
+    @staticmethod
+    def _text(minutes):return f'{minutes//60:02d}:{minutes%60:02d}'
+    def _error(self,text):self.error_label.setText(text);self.error_label.setVisible(bool(text))
+    def set_state(self,state,clock):
+        self._clock=_local_datetime(clock)
+        start=_local_datetime(state.get('service_start')) or self._clock
+        end=_local_datetime(state.get('service_end')) or (start+timedelta(hours=1) if start else None)
+        current=self.values(show_error=False)
+        wanted=(start.isoformat(timespec='seconds'),end.isoformat(timespec='seconds')) if start and end else None
+        if wanted!=current:
+            self._setting=True
+            try:
+                self._start_date=start.date() if start else None;self._end_date=end.date() if end else None
+                self.start_edit.setText(start.strftime('%H:%M') if start else '')
+                self.end_edit.setText(end.strftime('%H:%M') if end else '')
+                self.time_axis.set_values(start.hour*60+start.minute if start else 0,end.hour*60+end.minute if end else 60)
+                self.week_axis.set_values(start.weekday() if start else 0,end.weekday() if end else 0)
+            finally:self._setting=False
+        self.set_mode(state.get('service_time_mode','off'));self._summary()
+    def set_mode(self,mode):
+        self._mode=mode;self.setVisible(mode!='off');valid=self._start_date is not None
+        if mode!='range' and self._minutes(self.end_edit.text()) is None:
+            self._setting=True
+            try:self.end_edit.setText(self._text(self.time_axis.values()[1]))
+            finally:self._setting=False
+        self.start_edit.setEnabled(valid);self.end_edit.setEnabled(valid and mode=='range')
+        for axis in (self.week_axis,self.time_axis):axis.setEnabled(valid);axis.set_single(mode!='range')
+        if mode=='off':self._error('')
+    def values(self,show_error=True):
+        first,last=self._minutes(self.start_edit.text()),self._minutes(self.end_edit.text())
+        if last is None and self._mode!='range':last=self.time_axis.values()[1]
+        if self._start_date is None or self._end_date is None:
+            if show_error:self._error('模拟日期不可用')
+            return None
+        if first is None or last is None:
+            if show_error:self._error('请输入有效的 HH:mm 时间')
+            return None
+        start=datetime.combine(self._start_date,datetime.min.time())+timedelta(minutes=first)
+        end=datetime.combine(self._end_date,datetime.min.time())+timedelta(minutes=last)
+        if self._mode=='range' and end<start and self._end_date==self._start_date:end+=timedelta(days=1)
+        if end<=start and self._mode=='range':
+            if show_error:self._error('结束时间须晚于开始时间')
+            return None
+        if show_error:self._error('')
+        return start.isoformat(timespec='seconds'),end.isoformat(timespec='seconds')
+    def _summary(self):
+        values=self.values(show_error=False)
+        if values:self.summary.setText(' — '.join(value.replace('T',' ')[:16] for value in values) if self._mode=='range' else values[0].replace('T',' ')[:16])
+        else:self.summary.clear()
+    def _publish(self):
+        values=self.values()
+        if values is None:return
+        start,end=map(datetime.fromisoformat,values)
+        self._start_date=start.date()
+        if self._mode=='range':self._end_date=end.date()
+        if self._minutes(self.start_edit.text())==1440 or self._minutes(self.end_edit.text())==1440:
+            self._setting=True
+            try:
+                self.start_edit.setText(start.strftime('%H:%M'));self.end_edit.setText(end.strftime('%H:%M'))
+                self.time_axis.set_values(start.hour*60+start.minute,end.hour*60+end.minute)
+            finally:self._setting=False
+        self.week_axis.set_values(start.weekday(),end.weekday());self._summary();self.edited.emit(*values)
+    def _time_changed(self,*_):
+        if self._setting:return
+        values=self.values()
+        if values is None:return
+        self.time_axis.set_values(self._minutes(self.start_edit.text()),self._minutes(self.end_edit.text()));self._publish()
+    def _axis_time_changed(self,start,end):
+        self._setting=True
+        try:self.start_edit.setText(self._text(start));self.end_edit.setText(self._text(end))
+        finally:self._setting=False
+        self._publish()
+    def _weekday_changed(self,start,end):
+        anchor=self._clock or (datetime.combine(self._start_date,datetime.min.time()) if self._start_date else None)
+        if anchor is None:return
+        monday=anchor.date()-timedelta(days=anchor.weekday())
+        self._start_date=monday+timedelta(days=start)
+        if self._mode=='range':self._end_date=monday+timedelta(days=end+7 if end<start else end)
+        self._publish()
 
 
 class _RoadSample(QWidget):
@@ -219,6 +433,7 @@ class MapPanelSet(QWidget):
 
     def set_options(self, options):
         self._options=deepcopy(options)
+        self._line_labels=resolve_line_labels(self._options.get('lines',()))
         clock=QDateTime.fromString(str(options.get('simulated_datetime') or ''),Qt.DateFormat.ISODate)
         self._service_clock=clock if clock.isValid() else None
         # Aliases accept model-facing category names, preserving public state keys.
@@ -262,7 +477,8 @@ class MapPanelSet(QWidget):
         if key in ('road_levels','building_classes','building_uses','layer_modes'):
             view=_OptionGrid(key); view.changed.connect(lambda k=key:self._group_changed(k))
         else:
-            view=_WrappedList(); view.setWordWrap(True); view.setTextElideMode(Qt.TextElideMode.ElideNone)
+            view=_SingleLineList() if key=='manual_line_ids' else _WrappedList()
+            if key!='manual_line_ids':view.setWordWrap(True); view.setTextElideMode(Qt.TextElideMode.ElideNone)
             view.itemChanged.connect(lambda item,k=key:self._group_changed(k))
         _style_control(view)
         if not isinstance(view,_OptionGrid):
@@ -323,22 +539,23 @@ class MapPanelSet(QWidget):
 
     def _build_filters(self):
         layout=self._layouts['filters']
+        layout.setSpacing(5)
         row=QHBoxLayout(); self.selection_summary=self._label(row,'已选 0 / 共 0',True)
         self.reset_filters=_style_control(PushButton('重置')); self.reset_filters.setFixedWidth(64)
         self.reset_filters.clicked.connect(self._reset_filters); row.addWidget(self.reset_filters); layout.addLayout(row)
         self.filter_tags=QWidget(); self.tag_layout=FlowLayout(self.filter_tags,spacing=4)
         layout.addWidget(self.filter_tags)
-        manual=self._section(layout); self._label(manual,'手动选择',True)
         row=QHBoxLayout(); row.setSpacing(4)
         self.search=_style_control(LineEdit()); self.search.setPlaceholderText('搜索线路'); self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(lambda _:self._refresh_lines()); row.addWidget(self.search,1)
         self.manual_all=_style_control(PushButton('全选')); self.manual_all.setFixedWidth(50)
         self.manual_none=_style_control(PushButton('全不选')); self.manual_none.setFixedWidth(66)
-        row.addWidget(self.manual_all); row.addWidget(self.manual_none); manual.addLayout(row)
+        row.addWidget(self.manual_all); row.addWidget(self.manual_none); layout.addLayout(row)
         self.manual_all.clicked.connect(lambda:self._select_visible(True))
         self.manual_none.clicked.connect(lambda:self._select_visible(False))
         conditions=self._section(layout)
-        self._group(conditions,'company_ids','公司',72)
+        company=QHBoxLayout();company.setSpacing(6);conditions.addLayout(company)
+        self._group(company,'company_ids','公司',72)
         mode,profit=self._columns(conditions)
         self._group(mode,'modes','制式',120)
         self._group(profit,'profit_statuses','盈亏 · 周化估计',120)
@@ -350,18 +567,16 @@ class MapPanelSet(QWidget):
             self.controls[key]=edit; row.addWidget(edit)
         conditions.addLayout(row)
         service=self._section(layout)
-        self._choices(service,'service_time_mode','运营时间', [('off','不限时间'),('instant','指定时刻'),('range','指定时段')])
-        self.service_labels={}
-        for key,text in [('service_start','开始日期时间'),('service_end','结束日期时间')]:
-            self.service_labels[key]=self._label(service,text)
-            edit=_style_control(DateTimeEdit()); edit.setDisplayFormat('yyyy-MM-dd HH:mm:ss')
-            edit.setCalendarPopup(False); edit.setMinimumHeight(36); edit.setAccessibleName(text)
-            edit.dateTimeChanged.connect(self._service_edited)
-            self.controls[key]=edit; service.addWidget(edit)
-        self.service_error=self._label(service,'')
-        self.service_error.hide()
+        service_modes=QHBoxLayout();service_modes.setSpacing(6);service.addLayout(service_modes)
+        self._choices(service_modes,'service_time_mode','运营时间', [('off','不限'),('instant','时刻'),('range','时段')],3)
+        self.service_editor=_ServiceTimeEditor();service.addWidget(self.service_editor)
+        self.service_editor.edited.connect(self._service_edited)
+        self.controls['service_start']=self.service_editor.start_edit;self.controls['service_end']=self.service_editor.end_edit
+        self.service_labels={'service_start':self.service_editor.labels['start'],'service_end':self.service_editor.labels['end']}
+        self.service_error=self.service_editor.error_label
         results=self._section(layout)
-        self.line_list=self._group(results,'manual_line_ids','线路结果',160)
+        self.line_list=self._group(results,'manual_line_ids','线路结果',114)
+        for section in (conditions,service,results):section.setContentsMargins(10,6,10,6)
 
     def _build_display(self):
         layout=self._layouts['display']
@@ -421,15 +636,11 @@ class MapPanelSet(QWidget):
 
     def _service_values(self,mode):
         if mode=='off':return {}
-        if self._service_clock is None and self._state['service_start'] is None:
-            self.service_error.setText('模拟日期不可用'); self.service_error.show(); return None
-        start=self.controls['service_start'].dateTime()
-        end=self.controls['service_end'].dateTime()
-        if mode=='range' and end<=start:
-            self.service_error.setText('结束日期时间须晚于开始'); self.service_error.show(); return None
-        self.service_error.hide()
-        values={'service_start':start.toString(Qt.DateFormat.ISODate)}
-        if mode=='range':values['service_end']=end.toString(Qt.DateFormat.ISODate)
+        old_mode=self.service_editor._mode;self.service_editor._mode=mode
+        pair=self.service_editor.values();self.service_editor._mode=old_mode
+        if pair is None:return None
+        values={'service_start':pair[0]}
+        if mode=='range':values['service_end']=pair[1]
         return values
 
     def _service_mode_changed(self,mode):
@@ -449,11 +660,7 @@ class MapPanelSet(QWidget):
             self._state.update(values); self.stateChanged.emit(self.state())
 
     def _sync_service_controls(self):
-        mode=self._state['service_time_mode']
-        for key in ('service_start','service_end'):
-            visible=mode!='off' and (key=='service_start' or mode=='range')
-            self.controls[key].setVisible(visible); self.service_labels[key].setVisible(visible)
-        if mode=='off':self.service_error.hide()
+        self.service_editor.set_mode(self._state['service_time_mode'])
 
     def _passenger_changed(self,key,edit):
         text=edit.text().strip()
@@ -560,10 +767,9 @@ class MapPanelSet(QWidget):
         modes={entry['id']:entry['name'] for entry in self._options.get('modes',[])}
         display=[]
         for line in choices:
-            passengers=line.get('passengers')
-            amount='—' if passengers is None else (f'{int(passengers):,}' if float(passengers).is_integer() else f'{float(passengers):,.2f}'.rstrip('0').rstrip('.'))
-            mode=modes.get(line.get('mode'),str(line.get('mode') or '—'))
-            display.append(dict(line,name=f"{line['name']}\n{mode} · {amount} 人次"))
+            mode=modes.get(line.get('mode'),display_mode(line.get('mode')))
+            text=line.get('display_label') or line.get('label') or self._line_labels.get(line['id']) or f"{mode}{line['name']}"
+            display.append(dict(line,name=text))
         self._fill(self.line_list,display,self._state['manual_line_ids'] or set())
         self._summaries()
 
@@ -645,13 +851,9 @@ class MapPanelSet(QWidget):
             self.mode_width_controls=self.width_editor.spins
             self.width_section.setVisible(bool(self._options.get('modes')))
             for key,widget in self.controls.items():
+                if key in ('service_start','service_end'):continue
                 widget.blockSignals(True)
                 if isinstance(widget,_ChoiceGroup):widget.set_value(self._state[key])
-                elif isinstance(widget,DateTimeEdit):
-                    value=QDateTime.fromString(str(self._state[key] or ''),Qt.DateFormat.ISODate)
-                    if not value.isValid() and self._service_clock is not None:
-                        value=self._service_clock.addSecs(3600) if key=='service_end' else self._service_clock
-                    if value.isValid():widget.setDateTime(value)
                 elif isinstance(widget,CheckBox):
                     value=self._options.get('building_emphasis_effective',True) if key=='building_emphasis' and self._state[key] is None else self._state[key]
                     widget.setChecked(bool(value))
@@ -672,5 +874,6 @@ class MapPanelSet(QWidget):
             date=self._options.get('passenger_date')
             self.passenger_date.setText(f'客流 · {date} · 人次' if date else '客流 · 人次')
             self._refresh_lines(); self._sync_layer_checks(); self._summaries()
+            self.service_editor.set_state(self._state,self._service_clock.toPython() if self._service_clock is not None else None)
             self._sync_service_controls()
         finally:self._updating=False

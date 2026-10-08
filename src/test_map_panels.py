@@ -181,13 +181,15 @@ def test_direction_text_uses_shared_dark_blue_in_actual_paint(app):
     assert not h.frames['display'].header.isVisible()
     h.close()
 
-def test_result_rows_show_current_period_units_and_real_missing(app):
+def test_single_line_results_preserve_passenger_filter_without_metric_text(app):
     from map_panels import MapPanelSet
     p=MapPanelSet(); p.set_options(options())
-    assert '公交 · 234 人次' in p.line_list.item(0).text()
-    assert '有轨电车 · 0 人次' in p.line_list.item(1).text()
+    assert p.line_list.item(0).text()=='公交12 长途公交'
+    assert p.line_list.item(1).text()=='有轨电车23 电车'
     data=options(); data['lines'][1]['passengers']=None; p.set_options(data)
-    assert '有轨电车 · — 人次' in p.line_list.item(1).text()
+    assert p.line_list.item(1).text()=='有轨电车23 电车'
+    p.set_state({'passenger_min':1})
+    assert p.line_list.count()==1 and p.line_list.item(0).data(Qt.ItemDataRole.UserRole)==12
 
 def test_class_and_road_grids_reuse_controls_on_same_options(app):
     from map_panels import MapPanelSet
