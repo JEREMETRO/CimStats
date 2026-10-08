@@ -32,6 +32,8 @@ py -3.12 -m venv .venv
 
 组件测试默认使用离屏模式；系统 DPI 和真实窗口验收在桌面上进行。界面截图与输入验收在创建控件前调用共享 `initialize_theme`，确保使用程序的字体与强调色，而非 Fluent 默认主题。需要测试存档的用例使用本地输入，存档不提交到仓库。
 
+地图输入测试截图记录实际窗口尺寸、设备像素比和主题强调色；原生缩放验收可设置 `CIM2_TEST_EXPECTED_DPR`，比例不符时直接失败。`QT_SCALE_FACTOR` 会与系统缩放叠乘，不能用该变量或截图文件名代替实际设备像素比。
+
 ## 调整输出位置
 
 命令行解析可使用 `CIM2_PAYLOAD_DIR` 和 `CIM2_EXPORT_DIR` 指定中间结果及导出目录。`CIM2_RUNTIME_DATA_DIR` 和 `CIM2_MANAGED_ROOT` 可覆盖解析资源的位置。

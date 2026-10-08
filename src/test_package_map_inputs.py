@@ -1,4 +1,6 @@
 """Exercise smoke inputs against real widgets and explicit synthetic geometry."""
+import json
+import os
 import time
 import pytest
 from PySide6.QtCore import QSettings, QEventLoop, QTimer
@@ -20,6 +22,8 @@ def map_page(qt_application, tmp_path):
     page = MapPage(QSettings(str(tmp_path/'map.ini'),QSettings.Format.IniFormat))
     page.set_session({'save_key':'synthetic', 'simulation_time':'2013-05-23T23:59:00'})
     page.resize(960,680); page.show(); qt_application.processEvents()
+    if expected_dpr := os.environ.get('CIM2_TEST_EXPECTED_DPR'):
+        assert page.devicePixelRatioF()==pytest.approx(float(expected_dpr))
     page.set_snapshot(MapSnapshot(roads=(MapRoad(1,'road','',path),),routes=routes,buildings=(building,),
                                   bounds=(0.,0.,100.,100.)),stats={
         identity:RouteStats(passengers=value,daytime_interval_minutes=10,peak_interval_minutes=5,
@@ -62,6 +66,12 @@ def test_smoke_map_real_interactions_and_stable_captures(map_page,tmp_path):
         assert map_page.grab().save(str(tmp_path/(name+'.png')))
         captures.append(name)
     evidence=_exercise_map_inputs(map_page,map_page,settle,wait_until,capture)
+    (tmp_path/'capture-theme.json').write_text(json.dumps({
+        'source':'explicit synthetic geometry',
+        'accent':qconfig.get(qconfig.themeColor).name(),
+        'actual_dpr':map_page.devicePixelRatioF(),
+        'actual_size':[map_page.width(),map_page.height()],
+    },indent=2),encoding='utf-8')
     assert evidence['search']['query']=='7' and set(evidence['search']['matches'])=={70,170}
     assert 707 not in evidence['search']['matches']
     assert evidence['sorting']['selection_preserved']
