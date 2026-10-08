@@ -203,9 +203,11 @@ def test_building_menu_uses_original_candidates_and_preserves_global_set(setting
     page = page_with_map(settings, app)
     absent = replace(routes()[0], id=30, name='No geometry', paths=())
     buildings = (
-        MapBuilding(1, '', 'Known', (0,0,0), service_lines=BuildingServiceLines(True,(20,30,20),(99,), 'native')),
-        MapBuilding(2, '', 'Empty', (0,0,0), service_lines=BuildingServiceLines(True)),
-        MapBuilding(3, '', 'Unavailable', (0,0,0)),
+        MapBuilding(1, '', 'Known', (0,0,0), service_lines=BuildingServiceLines(True,(20,30,20),(99,), 'native',complete=True)),
+        MapBuilding(2, '', 'Empty', (0,0,0), service_lines=BuildingServiceLines(True,source='native',complete=True)),
+        MapBuilding(3, '', 'Unavailable', (0,0,0), service_lines=BuildingServiceLines(False,complete=False)),
+        MapBuilding(4, '', 'Unconfirmed completeness', (0,0,0), service_lines=BuildingServiceLines(True)),
+        MapBuilding(5, '', 'Incomplete', (0,0,0), service_lines=BuildingServiceLines(True,complete=False)),
     )
     try:
         page.set_snapshot(MapSnapshot(routes=(*routes(), absent), buildings=buildings))
@@ -216,14 +218,27 @@ def test_building_menu_uses_original_candidates_and_preserves_global_set(setting
         menu = page.planning_panel.building_menu
         ids = [menu.line_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(menu.line_list.count())]
         assert ids.count(20) == 1 and 10 not in ids
+        assert 30 in ids and 99 not in ids
+        unavailable=next(menu.line_list.item(i) for i in range(menu.line_list.count())
+                         if menu.line_list.item(i).data(Qt.ItemDataRole.UserRole)==30)
+        assert not unavailable.flags() & Qt.ItemFlag.ItemIsEnabled
+        assert 'No geometry' in unavailable.text()
+        assert unavailable.data(Qt.ItemDataRole.AccessibleDescriptionRole)=='无地图路径'
+        assert unavailable.toolTip()==''
         menu.select_all.click()
         assert {r.id for r in page.canvas.snapshot.routes} == {10,20}
         assert (*page.canvas.center, page.canvas.zoom) == before
         assert page.show_building(2, page.surface.mapToGlobal(QPoint(20,60)))
         assert not page.planning_panel.building_menu.select_all.isEnabled()
         known_empty_text = page.planning_panel.building_menu.status_label.text()
+        assert known_empty_text=='无服务线路'
         assert page.show_building(3, page.surface.mapToGlobal(QPoint(20,60)))
-        assert page.planning_panel.building_menu.status_label.text() != known_empty_text
+        unknown_text=page.planning_panel.building_menu.status_label.text()
+        assert unknown_text=='线路信息暂不可用'
+        for identity in (4,5):
+            assert page.show_building(identity,page.surface.mapToGlobal(QPoint(20,60)))
+            assert page.planning_panel.building_menu.status_label.text()==unknown_text
+            assert page.planning_panel.building_menu.line_list.count()==0
         assert {r.id for r in page.canvas.snapshot.routes} == {10,20}
         page.set_session({'save_key':'B'})
         assert not page.planning_panel.building_menu.isVisible()
