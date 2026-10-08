@@ -146,7 +146,7 @@ def test_display_choices_are_always_visible_and_exclusive(app):
     p=MapPanelSet(); p.set_options(options()); h=MapDockHost(QWidget(),p.panels)
     h.resize(960,680); h.show(); h.activate_panel('display'); app.processEvents()
     assert len(p.controls['direction'].buttons)==3
-    assert len(p.controls['color_by'].buttons)==4
+    assert len(p.controls['color_by'].buttons)==6
     assert len(p.controls['priority_by'].buttons)==3
     assert all(b.isVisible() for key in ('direction','color_by','priority_by') for b in p.controls[key].buttons.values())
     p.controls['direction'].buttons['down'].click()

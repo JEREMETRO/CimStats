@@ -12,13 +12,19 @@ from display_rules import display_map_km
 from report_model import display_company
 from map_line_labels import resolve_line_labels
 from semantic_colors import (SOCIAL, category, canonical_key, color_for,
-                             company_palette, line_palette, map_fill, building_function_fill)
+                             company_palette, line_palette, map_fill, building_function_fill,
+                             METRIC_SCALES,metric_color,metric_legend)
 
 
 @dataclass(frozen=True)
 class RouteStats:
     passengers: float | None = None
     profit: float | None = None
+    average_interval_minutes: float | None = None
+    scheduled_departures: int | None = None
+    opened_at: str | None = None
+    simulated_date: str | None = None
+    passenger_source: str | None = None
 
     @property
     def profit_status(self):
@@ -47,7 +53,8 @@ def optional_number(value):
 
 
 def stats_from_session(session, routes):
-    by_id = {}
+    by_id = {};lines={}
+    day,source=_passenger_context(session)
     for line in session.get('lines', ()):
         raw = line.get('原始字段', {})
         identity = line.get('对象ID', raw.get('对象ID'))
@@ -58,8 +65,67 @@ def stats_from_session(session, routes):
         income, expense = optional_number(raw.get('收入_累计')), optional_number(raw.get('支出_累计'))
         # Match the existing weekly smoothing scale without converting missing to zero.
         by_id[identity] = None if income is None or expense is None else (income-expense)/102400
-    return {route.id: RouteStats(optional_number(getattr(route, 'previous_day_passengers', None)),
-                                by_id.get(route.id)) for route in routes}
+        lines[identity]=line if identity not in lines else None
+    result={}
+    for route in routes:
+        line=lines.get(route.id)
+        schedule=_schedule_for_day(line,day)
+        opened=None
+        if line is not None and line.get('字段可用性',{}).get('开线日期') is not False:
+            original=line.get('原始字段',{}).get('开线日期',line.get('开线日期',''))
+            try:opened=datetime.fromisoformat(str(original)).isoformat()
+            except (TypeError,ValueError):pass
+        result[route.id]=RouteStats(_passenger_value(line,source),
+            by_id.get(route.id),schedule['average_interval'] if schedule is not None else None,
+            schedule['count'] if schedule is not None else None,opened,day.isoformat() if day else None,source)
+    return result
+
+
+def _passenger_context(session):
+    """Save clock selects today from 23:00; an unknown clock selects neither."""
+    value=(session or {}).get('simulation_time')
+    try:moment=datetime.fromisoformat(value)
+    except (TypeError,ValueError):return None,None
+    # A date-only ISO value confirms the calendar day, but not its saved clock.
+    source=None if len(value.strip())<=10 else 'today' if moment.hour>=23 else 'average'
+    return moment.date(),source
+
+
+def _passenger_value(line,source):
+    if line is None or source not in ('today','average'):return None
+    key='今日客流' if source=='today' else '平均客流'
+    raw_key='客流_今日' if source=='today' else '客流_累计'
+    available=line.get('字段可用性',{})
+    if available.get(key) is False or available.get(raw_key) is False:return None
+    raw=line.get('原始字段',{}).get(raw_key)
+    number=optional_number(raw) if not isinstance(raw,bool) else None
+    if number is None or number<0:return None
+    if source=='today':return number
+    # Reuse the existing information-page daily average; never parse its display text.
+    value=line.get(key)
+    if isinstance(value,bool) or not isinstance(value,(int,float)):return None
+    average=optional_number(value)
+    return average if average is not None and average>=0 else None
+
+
+def _schedule_for_day(line,day):
+    """Confirm one natural simulated day before using prepare_schedule's minutes."""
+    from map_service_time import session_departures,DAY_TICKS
+    from line_schedule import optional_integer,running_day_mask,prepare_schedule
+    if line is None or day is None or line.get('班次数据完整') is False:return None
+    entries=session_departures(line)
+    if entries is None:return None
+    selected=[]
+    for row in entries:
+        mask=running_day_mask(row.get('运行日掩码',row.get('时刻表_运行日掩码')))
+        if mask is not None and not mask & 0x7f:continue
+        tick=optional_integer(row.get('发班_tick'))
+        if mask is None or tick is None or tick<0 or tick>=2*DAY_TICKS:return None
+        anchor=day-timedelta(days=tick//DAY_TICKS)
+        if mask & (1<<((anchor.weekday()+1)%7)):
+            selected.append(dict(row,发班_tick=tick%DAY_TICKS))
+    prepared=prepare_schedule(selected)
+    return prepared if prepared['data_complete'] else None
 
 
 def _selected(state, key, value):
@@ -82,6 +148,10 @@ class MapQuery:
         self.snapshot = replace(snapshot, routes=tuple(route for route in snapshot.routes
                                 if canonical_key('mode',route.mode) != 'waterbus'))
         self.stats = dict(stats or {})
+        dates={value.simulated_date for value in self.stats.values() if value.simulated_date}
+        self._simulated_date=next(iter(dates)) if len(dates)==1 else ''
+        sources={value.passenger_source for value in self.stats.values()}
+        self._passenger_source=next(iter(sources)) if len(sources)==1 else None
         self.line_labels = resolve_line_labels(self.snapshot.routes)
         self._company_names = {}
         self.line_colors = line_palette(route.id for route in snapshot.routes)
@@ -187,6 +257,9 @@ class MapQuery:
 
     def route_color(self, route, state):
         mode = state.get('color_by', 'mode')
+        if mode in METRIC_SCALES:
+            data=self.stats.get(route.id,RouteStats())
+            return metric_color(mode,data.average_interval_minutes if mode=='interval' else data.passengers)
         if mode == 'company':
             return self.company_colors[route.company_id]
         if mode == 'profit':
@@ -280,6 +353,9 @@ class MapQuery:
         if state.get('color_by') == 'line':
             return ()
         mode = state.get('color_by','mode')
+        if mode in METRIC_SCALES:
+            return metric_legend(mode,self._simulated_date,
+                                 self._passenger_source if mode=='passengers' else None)
         if mode == 'profit':
             from semantic_colors import PROFIT
             return tuple((item.name,item.color) for item in PROFIT)
@@ -319,10 +395,10 @@ class MapQuery:
                                      for key in dict.fromkeys(groups)],
                 'building_uses': entries('usage', sorted({b.category for b in self.snapshot.buildings})),
             }
-        try:
-            date = (datetime.fromisoformat((session or {})['simulation_time'])-timedelta(days=1)).strftime('%Y-%m-%d')
-        except (KeyError, ValueError, TypeError):
-            date = ''
+        if session is not None:
+            day,self._passenger_source=_passenger_context(session)
+            self._simulated_date=day.isoformat() if day else ''
+        date=self._simulated_date
         # Callers populate mutable controls; keep each response independent.
         base = {key: [dict(item) for item in entries] for key, entries in self._base_options.items()}
         for company in base['companies']:
@@ -336,7 +412,10 @@ class MapQuery:
                            'company_id':route.company_id,
                            'company_name':display_company(self._company_names.get(str(route.company_id),route.company_name)),
                            'passengers':self.stats.get(route.id,RouteStats()).passengers,
+                           'opened_at':self.stats.get(route.id,RouteStats()).opened_at,
+                           'scheduled_departures':self.stats.get(route.id,RouteStats()).scheduled_departures,
                            'profit':self.stats.get(route.id,RouteStats()).profit_status,
                            'service_matches': True if service_matches is None else service_matches[route.id],
                            'color':self.route_color(route,state)} for route in self.snapshot.routes],
-                'passenger_date':date}
+                'passenger_date':date,'passenger_source':self._passenger_source,
+                'passenger_label':{'today':'今日客流','average':'平均客流'}.get(self._passenger_source,'客流')}

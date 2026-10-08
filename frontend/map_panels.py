@@ -589,7 +589,7 @@ class MapPanelSet(QWidget):
         direction=self._section(layout)
         self._choices(direction,'direction','线路显示', [('whole','整条线路显示'),('up','仅显示环行与上行线'),('down','仅显示环行与下行线')])
         self._check(direction,'distinguish_directions','区分上下行线形')
-        self._choices(self._section(layout),'color_by','线路染色',[('mode','按制式染同色'),('profit','按盈亏染同色'),('company','按公司染同色'),('line','每条线路都不同颜色')],1)
+        self._choices(self._section(layout),'color_by','线路染色',[('mode','按制式染同色'),('profit','按盈亏染同色'),('company','按公司染同色'),('line','每条线路都不同颜色'),('interval','按平均间隔染色'),('passengers','按客流染色')],1)
         width=self._section(layout); self.width_section=width.parentWidget()
         row=QHBoxLayout(); self._label(row,'线路粗细',True)
         self.reset_widths=_style_control(TransparentPushButton('默认')); self.reset_widths.setFixedWidth(54)

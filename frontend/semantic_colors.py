@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 from colorsys import hls_to_rgb
+from math import isfinite
 import stats_tokens as tokens
 
 
@@ -30,6 +31,91 @@ USAGES = tuple(Category(key, name, color) for key, name, color in (
 ))
 PROFIT = (Category('profit', '盈利', '#159A79'), Category('loss', '亏损', '#C63864'),
           Category('zero', '持平', '#C49A37'), Category('missing', '数据缺失', '#98A8B9', True))
+
+
+@dataclass(frozen=True)
+class MetricScale:
+    title: str
+    unit: str
+    anchors: tuple
+    ranges: tuple
+    labels: tuple
+
+
+METRIC_SCALES = {
+    'interval': MetricScale('平均间隔','min',
+        ((5,'#5A1020'),(7.5,'#E52222'),(12.5,'#FF8A00'),
+         (17.5,'#F3CF32'),(25,'#A6CE39'),(37.5,'#2E8B57'),(45,'#173D6E')),
+        ((5,5),(5,10),(10,15),(15,20),(20,30),(30,45),(45,45)),
+        ('≤5','5–10','10–15','15–20','20–30','30–45','≥45')),
+    'passengers': MetricScale('客流','千人次',
+        ((1000,'#173D6E'),(3000,'#2E8B57'),(7500,'#F3CF32'),(15000,'#F2AA24'),
+         (25000,'#E45F2B'),(40000,'#D32F2F'),(50000,'#5A1020')),
+        ((1000,1000),(1000,5000),(5000,10000),(10000,20000),
+         (20000,30000),(30000,50000),(50000,50000)),
+        ('<1','1–5','5–10','10–20','20–30','30–50','≥50')),
+}
+
+
+def metric_color(metric,value):
+    """Continuous RGB colour; categorical labels describe representative ranges."""
+    scale=METRIC_SCALES[metric]
+    try:number=float(value) if not isinstance(value,bool) else float('nan')
+    except (ValueError,TypeError):number=float('nan')
+    if not isfinite(number) or number<0:return PROFIT[-1].color
+    if number<=scale.anchors[0][0]:return scale.anchors[0][1]
+    for (low,first),(high,second) in zip(scale.anchors,scale.anchors[1:]):
+        if number<=high:
+            factor=(number-low)/(high-low)
+            return '#'+''.join(f'{round(int(first[i:i+2],16)*(1-factor)+int(second[i:i+2],16)*factor):02X}'
+                               for i in (1,3,5))
+    return scale.anchors[-1][1]
+
+
+@dataclass(frozen=True)
+class MetricLegend:
+    metric: str
+    date: str | None
+    source: str | None = None
+
+    @property
+    def title(self):
+        if self.metric=='passengers':
+            return {'today':'今日客流','average':'平均客流'}.get(self.source,'客流')
+        return METRIC_SCALES[self.metric].title
+    @property
+    def unit(self):return METRIC_SCALES[self.metric].unit
+    @property
+    def labels(self):return METRIC_SCALES[self.metric].labels
+    @property
+    def missing_colour(self):return PROFIT[-1].color
+    @property
+    def heading(self):return f'{self.title}/{self.unit} · {self.date or "日期未知"}'
+
+    @property
+    def gradient_stops(self):
+        """Equal range bands, with exact stops from the map's same RGB resolver."""
+        scale=METRIC_SCALES[self.metric];count=len(scale.ranges);stops={}
+        for index,(low,high) in enumerate(scale.ranges):
+            if low==high:
+                stops[index/count]=stops[(index+1)/count]=metric_color(self.metric,low)
+                continue
+            values={low,high}|{value for value,_ in scale.anchors if low<value<high}
+            for value in sorted(values):
+                stops[(index+(value-low)/(high-low))/count]=metric_color(self.metric,value)
+        return tuple(sorted(stops.items()))
+
+    def __iter__(self):
+        # Existing pair-based legend consumers remain compatible until drawn as a ramp.
+        scale=METRIC_SCALES[self.metric]
+        items=[(label,metric_color(self.metric,(low+high)/2))
+               for label,(low,high) in zip(scale.labels,scale.ranges)]
+        items[0]=(self.heading+' '+items[0][0],items[0][1])
+        return iter((*items,('数据缺失',self.missing_colour)))
+
+
+def metric_legend(metric,date=None,source=None):
+    return MetricLegend(metric,date or None,source)
 UNKNOWN = Category('unknown', '未分类', '#B7BCC2', True)
 REGISTRY = {'social': SOCIAL, 'mode': MODES, 'usage': USAGES, 'profit': PROFIT}
 MODE_ALIASES = {'公交': 'bus', '有轨电车': 'tram', '无轨电车': 'trolley',
