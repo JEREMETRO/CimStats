@@ -1,12 +1,13 @@
 """Real elapsed-time regressions for surface reveals and content expansion."""
 import os
 import sys
+import time
 from pathlib import Path
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'frontend'))
 import pytest
-from PySide6.QtCore import QEvent
-from PySide6.QtTest import QTest
+from PySide6.QtCore import QEvent, QTimer
+from PySide6.QtTest import QTest, QSignalSpy
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
 from shiboken6 import isValid
 from stats_motion import SurfaceMotion, CollapseMotion
@@ -35,7 +36,8 @@ def test_chart_and_home_card_reveal_on_show(enabled):
         card.close()
 
 
-def test_hidden_expansion_starts_at_zero_and_has_intermediate_height(enabled):
+@pytest.mark.parametrize('queued_work_ms', [0, 70])
+def test_hidden_expansion_starts_at_zero_and_has_intermediate_height(enabled, queued_work_ms):
     host = QWidget(); layout = QVBoxLayout(host)
     content = QLabel('内容'); content.setMinimumHeight(0)
     layout.addWidget(content); host.resize(300, 180); host.show()
@@ -45,9 +47,21 @@ def test_hidden_expansion_starts_at_zero_and_has_intermediate_height(enabled):
     assert content.isHidden()
     motion.set_collapsed(False)
     assert content.maximumHeight() == 0
-    QTest.qWait(45)
-    assert 0 < content.maximumHeight() < content.sizeHint().height()
-    QTest.qWait(300)
+    animation = motion.animation
+    frames = []
+    animation.valueChanged.connect(lambda _value: frames.append(
+        (animation.currentTime(), content.maximumHeight())))
+    changed, finished = QSignalSpy(animation.valueChanged), QSignalSpy(animation.finished)
+    if queued_work_ms:
+        QTimer.singleShot(0, lambda: time.sleep(queued_work_ms / 1000))
+    # Wall-clock waiting can expire before Qt delivers its first animation tick.
+    # Inspect that real tick, including the height applied by the controller.
+    assert changed.wait(1000)
+    frame_time, frame_height = frames[0]
+    assert 0 < frame_time < animation.duration()
+    assert 0 < frame_height < content.sizeHint().height()
+    if not finished.count():
+        assert finished.wait(1000)
     assert content.isVisible() and content.maximumHeight() == 16777215
     host.close()
 
