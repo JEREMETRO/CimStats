@@ -43,7 +43,7 @@ def test_individual_route_palette_is_not_eight_repeating_colors():
 def test_options_follow_semantic_social_order_not_alphabetical():
     from map_model import MapBuilding,GroupFunctionCount
     from semantic_colors import SOCIAL
-    b=MapBuilding(1,'','',(0,0,0),function_capacities=tuple(GroupFunctionCount(g.key,1,0,0) for g in SOCIAL))
+    b=MapBuilding(1,'','',(0,0,0),category='residential',function_capacities=tuple(GroupFunctionCount(g.key,1,0,0) for g in SOCIAL))
     q=MapQuery(MapSnapshot(buildings=(b,)))
     assert [v['id'] for v in q.panel_options()['building_classes']][:6]==[g.key for g in SOCIAL]
 
@@ -126,7 +126,7 @@ def test_building_function_colors_follow_selected_capacity_not_observed_populati
     from semantic_colors import map_fill
     records=tuple(GroupFunctionCount(g,100 if g=='BlueCollar' else 0,
                                      100 if g=='Student' else 0,0) for g in SOCIAL_GROUPS)
-    b=MapBuilding(1,'','',(0,0,0),function_capacities=records)
+    b=MapBuilding(1,'','',(0,0,0),category='mixed',function_capacities=records)
     q=MapQuery(MapSnapshot(buildings=(b,)))
     home=q.select({'building_classes':['BlueCollar']})
     work=q.select({'building_classes':['Student']})

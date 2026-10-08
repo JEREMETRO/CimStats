@@ -11,7 +11,7 @@ from map_visibility import operating_paths, visible_route_stop_ids
 from display_rules import display_map_km
 from report_model import display_company
 from map_line_labels import resolve_line_labels
-from semantic_colors import (SOCIAL, category, canonical_key, color_for,
+from semantic_colors import (SOCIAL, is_non_social_building, category, canonical_key, color_for,
                              company_palette, line_palette, map_fill, building_function_fill,
                              metric_color,metric_legend)
 
@@ -317,8 +317,7 @@ class MapQuery:
 
     def _buildings_for(self, selected, emphasis, view='combined'):
         groups = None if selected is None else tuple(g for g in SOCIAL_GROUPS if g in selected)
-        key = (view, groups, bool(emphasis), None if selected is None else
-               frozenset(g for g in selected if g in ('transport', 'special', 'unknown')))
+        key = (view, groups, bool(emphasis), None if selected is None else 'unknown' in selected)
         if key in self._building_cache:
             self._building_cache.move_to_end(key)
             return self._building_cache[key]
@@ -326,23 +325,24 @@ class MapQuery:
         capacity_colors = {}
         for building in self.snapshot.buildings:
             if building.category in ('transport', 'special'):
-                if selected is not None and building.category not in selected:
-                    continue
                 color = map_fill('usage', building.category, .65 if emphasis else .20)
             else:
+                always_visible = is_non_social_building(building)
+                effective_groups = None if always_visible else groups
                 capacities = building.function_capacities
-                cached = capacity_colors.get(capacities)
+                capacity_key = (capacities, always_visible)
+                cached = capacity_colors.get(capacity_key)
                 if cached is None:
-                    value_key = (capacities, groups)
+                    value_key = (capacities, effective_groups)
                     values = self._capacity_values.get(value_key)
                     if values is None:
-                        values = building_function_values(building, groups)
+                        values = building_function_values(building, effective_groups)
                         self._capacity_values[value_key] = values
-                    included = ((selected is None or 'unknown' in selected) if values.denominator is None
+                    included = always_visible or ((selected is None or 'unknown' in selected) if values.denominator is None
                                 else selected is None or any(v is not None and v > 0
                                                              for v in (values.home, values.work, values.leisure)))
                     cached = (included, building_function_fill(_function_view(values, view), bool(emphasis)) if included else None)
-                    capacity_colors[capacities] = cached
+                    capacity_colors[capacity_key] = cached
                 included, color = cached
                 if not included:
                     continue
@@ -409,8 +409,9 @@ class MapQuery:
                           and _selected(state, 'layer_modes', canonical_key('mode', route.mode))]
         if emphasis is None:
             emphasis = not any(self._geometry_for(route, direction)[0] for route in visible_routes)
-        buildings, building_colors = self._buildings_for(state.get('building_classes'), emphasis,
+        buildings, building_colors = (self._buildings_for(state.get('building_classes'), emphasis,
                                                         state.get('building_view', 'combined'))
+                                      if state.get('buildings', True) else ((), MappingProxyType({})))
         # Display offsets and colouring never enter distance calculations.
         length = 0.
         visible_stop_ids = set()
@@ -439,7 +440,8 @@ class MapQuery:
                 if building.category in ('transport','special'):
                     keys.add(building.category)
                     continue
-                values=_function_view(building_function_values(building,groups),
+                values=_function_view(building_function_values(building,
+                                      None if is_non_social_building(building) else groups),
                                       state.get('building_view', 'combined'))
                 if values.denominator is None or values.denominator==0:
                     keys.add('unknown')
@@ -479,21 +481,19 @@ class MapQuery:
             modes = sorted({canonical_key('mode', route.mode) for route in self.snapshot.routes})
             companies = {route.company_id: display_company(route.company_name) for route in self.snapshot.routes}
             present_groups = {entry.group for b in self.snapshot.buildings
+                              if not is_non_social_building(b)
                               for entry in b.function_capacities
-                              if any(v is not None and v>0 for v in (entry.home,entry.work,entry.leisure))}
+                              if entry.group in SOCIAL_GROUPS
+                              and any(v is not None and v>0 for v in (entry.home,entry.work,entry.leisure))}
             known_order = [entry.key for entry in SOCIAL]
             groups = [key for key in known_order if key in present_groups]
-            groups += sorted(present_groups - set(known_order) - {'unknown'})
-            groups += ['transport', 'special', 'unknown']
             def entries(domain, keys):
                 return [{'id': key, 'name': category(domain,key).name, 'color': color_for(domain,key)} for key in keys]
             self._base_options = {
                 'modes': entries('mode', modes),
                 'companies': [{'id': key, 'name': name, 'color': self.company_colors[key]}
                               for key,name in sorted(companies.items())],
-                'building_classes': [dict(id=key, name=category('usage' if key in ('transport','special','unknown') else 'social',key).name,
-                                          color=color_for('usage' if key in ('transport','special','unknown') else 'social',key))
-                                     for key in dict.fromkeys(groups)],
+                'building_classes': entries('social', groups),
                 'building_uses': entries('usage', sorted({b.category for b in self.snapshot.buildings})),
             }
         if session is not None:

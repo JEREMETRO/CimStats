@@ -40,7 +40,7 @@ def test_capacity_projection_reuses_equal_records_and_keeps_filter_semantics(mon
 
     capacity = tuple(GroupFunctionCount(group, 10 if group == 'BlueCollar' else 0, 0, 0)
                      for group in SOCIAL_GROUPS)
-    buildings = tuple(MapBuilding(i, '', '', (float(i), 0., 0.), function_capacities=capacity)
+    buildings = tuple(MapBuilding(i, '', '', (float(i), 0., 0.), category='residential', function_capacities=capacity)
                       for i in (1, 2))
     query = MapQuery(MapSnapshot(buildings=buildings))
     original = map_query.building_function_values

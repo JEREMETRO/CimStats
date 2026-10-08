@@ -20,6 +20,14 @@ SOCIAL = tuple(Category(key, name, tokens.DATA_CATEGORY_COLORS[tokens.DATA_CATEG
                for key,name in (('BlueCollar','蓝领'),('WhiteCollar','白领'),
                                 ('BusinessPeople','商务人士'),('Pensioner','退休人员'),
                                 ('Student','学生'),('Tourist','游客')))
+NON_SOCIAL_BUILDING_CATEGORIES = frozenset(('transport', 'special', 'unknown'))
+
+
+def is_non_social_building(building):
+    """Native category decides membership; missing/zero population does not."""
+    return building.category in NON_SOCIAL_BUILDING_CATEGORIES
+
+
 MODES = tuple(Category(key, name, tokens.transport_color(key)) for key, name in (
     ('bus', '公交'), ('tram', '有轨电车'), ('trolley', '无轨电车'),
     ('metro', '地铁'), ('waterbus', '水上巴士'), ('monorail', '单轨'),
