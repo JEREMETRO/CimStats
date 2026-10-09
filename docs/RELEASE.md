@@ -26,7 +26,7 @@ python tools/candidate_package.py freeze --output docs/preflight/local-review.js
 
 该流程同样生成单文件 `build/candidates/<唯一名称>/package/CimStats/CimStats.exe`。核验直接检查 EXE 内嵌的版本、法律文本、图标和需要审查的依赖，不能以不存在的 `_internal` 目录代替；旁边保留可读文档和源码核验记录。冻结清单放在被忽略的 `docs/preflight/*.json`，不得复用已有输出文件。本地验收不会上传、修改版本或覆盖已发布资产。
 
-交付包移入 `dist/<版本目录>/` 时，保留原 EXE、ZIP、源码快照和核验记录。移动前后核对 SHA-256，旧版本保留在原目录。后续更新的发布说明单独附在版本目录中，记录其文档提交与 EXE 对应的源码提交。EXE 内嵌文档和已冻结 ZIP 保留构建时内容。
+交付目录沿用 `dist/v<版本>/`，仅放 `CimStats_x64_v<版本>.exe`、`CimStats_<版本>_source.zip` 和 `SHA256SUMS.txt`。`dist/CimStats.exe` 为当前本地版本的快捷副本，替换前保留旧副本。候选包、内嵌文件清单、核验记录、发布说明及文档修订放在被忽略的 `jobs/release-<版本>-<日期>/`，构建中间文件保留在 `build/`。移动和复制后核对 SHA-256，旧版本目录保留。原 EXE、源码快照和已冻结 ZIP 保持构建时内容，文档修订单独记录对应提交。
 
 本地候选包标记为 `local_review_only`，公开发布条件由核验记录中的 `public_blocking_files` 和 `remaining_gates` 列出。公开预检通过后再创建正式标签和上传资产，包完整性核验仅确认文件与冻结清单一致。
 
