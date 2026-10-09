@@ -1,8 +1,8 @@
 # CimStats 构建与发布
 
-当前正式版为 **0.1.2**，下载见 [0.1.2 Release](https://github.com/JEREMETRO/CimStats/releases/tag/v0.1.2)。更新与未修复的已知问题记录在[版本记录](../CHANGELOG.md)，发布说明不得将已知问题列为已修复。
+当前正式版为 **0.1.3**，下载见 [0.1.3 Release](https://github.com/JEREMETRO/CimStats/releases/tag/v0.1.3)。更新与未修复的已知问题记录在[版本记录](../CHANGELOG.md)，发布说明不得将已知问题列为已修复。
 
-0.2.0 为当前本地验收版本，由根目录 `VERSION` 统一驱动关于页面、EXE 文件／产品版本及包名。该版本尚未公开发布，本地打包不修改已有 Release。
+0.2.0 为当前本地验收版本，正在准备发布。根目录 `VERSION` 统一驱动关于页面、EXE 文件／产品版本及包名。当前候选包包含规划建筑菜单取消勾选、搜索展开动画和地图加载卡顿三项已知问题，具体表现见[版本记录](../CHANGELOG.md#已知问题)。
 
 ## 构建单文件 EXE
 
@@ -25,6 +25,10 @@ python tools/candidate_package.py freeze --output docs/preflight/local-review.js
 ```
 
 该流程同样生成单文件 `build/candidates/<唯一名称>/package/CimStats/CimStats.exe`。核验直接检查 EXE 内嵌的版本、法律文本、图标和需要审查的依赖，不能以不存在的 `_internal` 目录代替；旁边保留可读文档和源码核验记录。冻结清单放在被忽略的 `docs/preflight/*.json`，不得复用已有输出文件。本地验收不会上传、修改版本或覆盖已发布资产。
+
+交付包移入 `dist/<版本目录>/` 时，保留原 EXE、ZIP、源码快照和核验记录。移动前后核对 SHA-256，旧版本保留在原目录。后续更新的发布说明单独附在版本目录中，记录其文档提交与 EXE 对应的源码提交。EXE 内嵌文档和已冻结 ZIP 保留构建时内容。
+
+本地候选包标记为 `local_review_only`，公开发布条件由核验记录中的 `public_blocking_files` 和 `remaining_gates` 列出。公开预检通过后再创建正式标签和上传资产，包完整性核验仅确认文件与冻结清单一致。
 
 ## 发布前验证
 
