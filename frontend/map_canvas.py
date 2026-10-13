@@ -17,7 +17,8 @@ from map_scale import (detail_fraction, route_width,
                        stop_outline, stop_radius)
 from stats_typography import ui_font
 from map_model import MapSnapshot, road_display_level
-from map_visibility import operating_paths, visible_route_stop_ids
+from map_visibility import (operating_paths, visible_route_stop_ids,
+                            operating_leg_indices, route_stop_symbols)
 from display_rules import format_line_name
 from semantic_colors import MetricLegend, is_non_social_building
 from background_work import CooperativeCancellation
@@ -169,6 +170,7 @@ class _IndexState:
     stops: dict
     roads: dict
     connection_boxes: dict
+    stop_symbols: dict
 
 
 def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_only=False):
@@ -181,6 +183,13 @@ def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_
              else {stop.id:stop for stop in snapshot.stops})
     roads = (previous.roads if previous is not None and snapshot.roads is old.roads
              else {road.id:road for road in snapshot.roads})
+    if previous is not None and snapshot.routes is old.routes and snapshot.stops is old.stops:
+        stop_symbols=previous.stop_symbols
+    else:
+        stop_symbols={}
+        for route in snapshot.routes:
+            _index_check(cancelled)
+            stop_symbols[route.id]=route_stop_symbols(route,stops)
     if previous is not None and snapshot.junctions is old.junctions:
         connection_boxes = previous.connection_boxes
     else:
@@ -221,7 +230,7 @@ def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_
         cache[key] = (items, stop_dependency, indexes[name], boxes[name])
         if len(cache) > 4:
             cache.popitem(last=False)
-    return _IndexState(snapshot, caches, indexes, boxes, stops, roads, connection_boxes)
+    return _IndexState(snapshot, caches, indexes, boxes, stops, roads, connection_boxes,stop_symbols)
 
 
 class _IndexSignals(QObject):
@@ -280,6 +289,32 @@ class _MapDrawing:
 
     def route_paths(self,route):
         return operating_paths(route,self.options['direction'])
+
+
+    def _display_stops(self,routes,*,clip=True):
+        """One symbol per station on the last painted associated visible leg."""
+        selected={}
+        viewport=self._viewport_bounds(40.) if clip else None
+        direction=self.options['direction']
+        for route in routes:
+            legs=set(operating_leg_indices(route,direction))
+            stop_ids=visible_route_stop_ids(route,direction)
+            for leg,sid,position in self._stop_symbols.get(route.id,()):
+                if sid not in stop_ids or (leg!=-1 and leg not in legs):
+                    continue
+                if viewport and not (viewport[0]<=position[0]<=viewport[2] and
+                                     viewport[1]<=position[2]<=viewport[3]):
+                    continue
+                selected[sid]=position
+        return tuple((self._stops[sid],position) for sid,position in selected.items())
+
+
+    def _draw_stop_highlight(self,painter,position):
+        point=self.world_to_screen(position)
+        radius=stop_radius(self.zoom)+4
+        painter.setPen(QPen(QColor(tokens.ACCENT),2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(point,radius,radius)
 
 
     def _route_path_groups(self,route):
@@ -756,13 +791,10 @@ class _MapDrawing:
                             number_placed = True
                             number_count += 1
                             break
-        stop_ids = {sid for route in routes
-                    for sid in visible_route_stop_ids(route,self.options['direction'])}
         stop_cells = set()
-        for stop in self._visible('stops'):
-            if stop.id not in stop_ids:
-                continue
-            point = self.world_to_screen(stop.position)
+        displayed_stops=self._display_stops(routes)
+        for stop,position in displayed_stops:
+            point = self.world_to_screen(position)
             if self.options['stops']:
                 cell = (int(point.x()/6),int(point.y()/6))
                 if self.zoom>=.15 or cell not in stop_cells:
@@ -775,6 +807,11 @@ class _MapDrawing:
                 self._label(painter,point,stop.name,occupied)
         if self._highlight and self._highlight[0] != 'route':
             kind,identity = self._highlight
+            if kind=='stop':
+                position=next((p for s,p in displayed_stops if s.id==identity),None)
+                if position is not None:
+                    self._draw_stop_highlight(painter,position)
+                kind='displayed_stop'
             index = self._indexes.get(kind+'s')
             if index:
                 for item,box in index.entries:
@@ -912,7 +949,7 @@ class _FrameSurface(_MapDrawing):
         if (hasattr(canvas, '_revision')
                 and getattr(canvas, '_vector_key', None) != canvas._revision):
             self._vector_prepared = None
-        for name in ('snapshot','center','zoom','_indexes','_stops','_roads',
+        for name in ('snapshot','center','zoom','_indexes','_stops','_roads','_stop_symbols',
                      '_connection_boxes','_boxes','_highlight'):
             setattr(self,name,getattr(canvas,name))
         self.options=dict(canvas.options)
@@ -1035,6 +1072,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._index_closed = False
         self._pending_focus = None
         self._stops = {}
+        self._stop_symbols = {}
         self._highlight = None
         self._world_polygons = {}
         self._continuous_cache = {}
@@ -1125,6 +1163,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._indexes, self._boxes = state.indexes, state.boxes
         self._stops, self._roads = state.stops, state.roads
         self._connection_boxes = state.connection_boxes
+        self._stop_symbols = state.stop_symbols
         self._indexes_ready = True
 
     def _start_index_job(self):
@@ -1326,6 +1365,15 @@ class MapCanvas(_MapDrawing, QWidget):
         for item,box in self._indexes.get(result.kind+'s',_SpatialIndex([],self.snapshot.bounds)).entries:
             if item.id == result.id:
                 self._highlight = (result.kind,result.id)
+                if result.kind=='stop':
+                    from semantic_colors import canonical_key
+                    modes=self.options['layer_modes']
+                    routes=(r for r in self.snapshot.routes if self.options['routes'] and
+                            (modes is None or canonical_key('mode',r.mode) in modes))
+                    position=next((p for s,p in self._display_stops(tuple(routes),clip=False)
+                                   if s.id==result.id),None)
+                    if position is not None:
+                        box=(position[0],position[2],position[0],position[2])
                 if result.kind == 'route':
                     self._fit_bounds(box)
                 else:

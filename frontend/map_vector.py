@@ -23,7 +23,6 @@ import stats_tokens as tokens
 from map_scale import (detail_fraction, route_width,
                        stop_outline, stop_radius)
 from semantic_colors import canonical_key, is_non_social_building
-from map_visibility import visible_route_stop_ids
 
 
 _RANK = {'unknown': 0, 'local': 1, 'pedestrian': 2, 'secondary': 3,
@@ -913,13 +912,10 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
     if profile is not None:
         profile['route_labels_ms'] = 1000*(time.perf_counter()-started)
         started = time.perf_counter()
-    stop_ids = {sid for route in routes for sid in visible_route_stop_ids(route, surface.options['direction'])}
     stop_cells = set()
-    visible_stops = {s.id for s in surface._visible('stops')}
-    for stop in prepared.stops:
-        if stop.id not in visible_stops or stop.id not in stop_ids:
-            continue
-        point = surface.world_to_screen(stop.position)
+    displayed_stops=surface._display_stops(routes)
+    for stop,position in displayed_stops:
+        point = surface.world_to_screen(position)
         if surface.options['stops']:
             cell = (int(point.x()/6), int(point.y()/6))
             if surface.zoom >= .15 or cell not in stop_cells:
@@ -935,6 +931,11 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
         started = time.perf_counter()
     if surface._highlight and surface._highlight[0] != 'route':
         kind, identity = surface._highlight
+        if kind=='stop':
+            position=next((p for s,p in displayed_stops if s.id==identity),None)
+            if position is not None:
+                surface._draw_stop_highlight(painter,position)
+            kind='displayed_stop'
         index = surface._indexes.get(kind+'s')
         if index:
             for item, box in index.entries:

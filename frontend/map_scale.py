@@ -8,7 +8,8 @@ def detail_fraction(zoom, midpoint=.75):
 
 def route_width(zoom):
     """Readable overview stroke with gentle continued growth in close views."""
-    return 1.4+4.6*detail_fraction(zoom)+2.2*math.log2(1+zoom)
+    return (1.4+4.6*detail_fraction(zoom)+2.2*math.log2(1+zoom)
+            -.55*math.exp(-(zoom/.18)**2))
 
 
 def stop_radius(zoom):

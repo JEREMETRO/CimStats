@@ -512,6 +512,14 @@ def _exercise_map_zoom_views(window,page,settle,wait,capture):
     path = max(canvas.route_paths(route),key=lambda path:len(path))
     a,b = max(zip(path,path[1:]),key=lambda pair:(pair[1][0]-pair[0][0])**2+(pair[1][2]-pair[0][2])**2)
     center = ((a[0]+b[0])/2,(a[2]+b[2])/2)
+    # Include a real lane-displacement case in every detailed native capture.
+    import math
+    symbols=canvas._display_stops(canvas.snapshot.routes,clip=False)
+    shifted=[(stop,point) for stop,point in symbols if math.dist(stop.position,point)>2.]
+    focus_stop=focus_point=None
+    if shifted:
+        focus_stop,focus_point=min(shifted,key=lambda row:math.hypot(row[1][0]-center[0],row[1][2]-center[1]))
+        center=(focus_point[0],focus_point[2])
     prepared = canvas._vector_prepared
     rows = []
     for width,height in ((960,680),(1440,960)):
@@ -525,8 +533,13 @@ def _exercise_map_zoom_views(window,page,settle,wait,capture):
             wait(lambda:canvas.can_export(),120);settle()
             capture(f'map-zoom-{name}-{width}x{height}')
             assert canvas._vector_prepared is prepared, 'Zoom rebuilt world geometry'
+            if name!='city' and focus_stop is not None:
+                assert dict((s.id,p) for s,p in canvas._display_stops(canvas.snapshot.routes))[focus_stop.id]==focus_point
             rows.append(dict(name=name,zoom=zoom,center=list(position),
                              automatic_line_width=route_width(zoom),shared_line_offset=0.,
+                             station_id=focus_stop.id if focus_stop else None,
+                             station_symbol=list(focus_point) if focus_point else None,
+                             station_native_position=list(focus_stop.position) if focus_stop else None,
                              stop_radius=stop_radius(zoom),window=_window_workarea_evidence(window)))
     page.apply_state(previous_state)
     page.set_preset(previous_preset)

@@ -125,6 +125,38 @@ class MapCancelled(Exception):
     """A cancelled job never publishes a snapshot."""
 
 
+def _stop_worker(process):
+    """Reap this worker's launcher children before closing its private logs."""
+    children=[]
+    if os.name=='nt' and process.poll() is None:
+        import psutil
+        try:
+            children=psutil.Process(process.pid).children(recursive=True)
+        except psutil.NoSuchProcess:
+            pass
+        for child in reversed(children):
+            try:
+                child.terminate()
+            except psutil.NoSuchProcess:
+                pass
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill();process.wait(timeout=10)
+    if children:
+        _,alive=psutil.wait_procs(children,timeout=10)
+        for child in alive:
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        _,alive=psutil.wait_procs(alive,timeout=10)
+        if alive:
+            raise RuntimeError('Map worker descendants did not exit')
+
+
 def _check(cancelled):
     if cancelled and cancelled():
         raise MapCancelled('Map load cancelled')
@@ -436,12 +468,7 @@ def _parallel_directions(jobs, directory, cancelled=None):
             return results
         finally:
             for _,process,_ in processes:
-                if process.poll() is None:
-                    process.terminate()
-            for _,process,_ in processes:
-                try: process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill(); process.wait(timeout=10)
+                _stop_worker(process)
 
 
 def direction_worker_main(config_path):
@@ -810,7 +837,7 @@ class MapGeometryService:
                             pass
                 finally:
                     if process.poll() is None:
-                        process.terminate(); process.wait(timeout=10)
+                        _stop_worker(process)
             if code:
                 raise RuntimeError('Map runtime extraction failed: '+(job/'worker.log').read_text(encoding='utf-8')[-5000:])
             _check(cancelled)

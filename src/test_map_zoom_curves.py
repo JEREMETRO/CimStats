@@ -68,7 +68,12 @@ def test_shared_lines_overlap_on_saved_centerline_at_every_zoom(qt_application, 
     assert set(offsets.values()) == {0.}
     actual=image.pixelColor(200,95).getRgb()[:3]
     expected=colours[prepared.routes[-1].id].getRgb()[:3]
-    assert max(abs(a-b) for a,b in zip(actual,expected)) < 12
+    # Overview strokes cover a fraction of the pixel; AA blends shared lines.
+    # The last visible route must still determine the dominant colour.
+    distance = lambda colour: sum((a-b)**2 for a,b in zip(actual,colour.getRgb()[:3]))
+    assert min(colours, key=lambda key: distance(colours[key])) == prepared.routes[-1].id
+    if zoom >= .15:
+        assert max(abs(a-b) for a,b in zip(actual,expected)) < 12
     from map_scale import route_width
     half_width = route_width(zoom)/2
     for y in range(image.height()):
@@ -97,12 +102,21 @@ def test_automatic_curves_have_finite_smooth_derivatives_and_documented_anchors(
             left = (function(zoom)-function(zoom-h))/h
             right = (function(zoom+h)-function(zoom))/h
             assert left == pytest.approx(right, rel=1e-3, abs=1e-6)
-    assert route_width(.05) == pytest.approx(1.842357521361075)
+    assert route_width(.05) == pytest.approx(1.3331991323760102)
     assert route_width(1.) == pytest.approx(6.228571428571429)
     assert route_width(4.) == pytest.approx(10.381926019278)
     assert 20. < route_width(100.) < 22.
     for zoom in (.05,1.,4.,16.,100.):
         assert stop_radius(zoom) > route_width(zoom)/2
+
+
+def test_overview_thins_without_losing_close_view_width():
+    from map_scale import route_width
+    assert 1.6 < route_width(.08974) < 1.8
+    assert route_width(.25) > 3.
+    assert route_width(1.) == pytest.approx(6.228571428571429)
+    assert route_width(4.) == pytest.approx(10.381926019278)
+    assert route_width(100.) == pytest.approx(20.613822581684897)
 
 
 def test_far_overview_checks_populated_tiles_instead_of_millions_of_empty_cells(qt_application,monkeypatch):
