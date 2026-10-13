@@ -68,11 +68,66 @@ def _font(item):
 def _text_height(text,width,size,role='label',weight=400):
     item=TextItem(text,(0,0,width,10000),size,weight,role)
     metrics=QFontMetricsF(_font(item))
-    if role=='number' and metrics.horizontalAdvance(text)<=width:
+    if role in ('number','unit') and metrics.horizontalAdvance(text)<=width:
         return metrics.tightBoundingRect(text).height()+4
     bounds=metrics.boundingRect(QRectF(0,0,width,10000),
         int(Qt.TextFlag.TextWordWrap|Qt.TextFlag.TextWrapAnywhere),text)
     return max(bounds.height()+2,size*1.25)
+
+
+def _emit_text(items,value,x,y,width,size,role='label',weight=400,align='left',display=None):
+    h=_text_height(display or value,width,size,role,weight)
+    items.append(TextItem(value,(x,y,width,h),size,weight,role,align,display))
+    return h
+
+
+def _header(items,request,x,y,width,company_size,route_height_limit,logo_side=64):
+    company=request.information.company_name+'·'+request.information.mode
+    company_width=width-logo_side-24
+    while company_size>14 and QFontMetricsF(_font(TextItem(company,(),company_size,600,'heading'))).horizontalAdvance(company)>company_width:
+        company_size-=1
+    if QFontMetricsF(_font(TextItem(company,(),company_size,600,'heading'))).horizontalAdvance(company)>company_width:
+        raise LayoutError('公司抬头无法完整排入当前信息区')
+    company_h=_emit_text(items,company,x,y,company_width,company_size,'heading',600)
+    logo=(x+width-logo_side,y,logo_side,logo_side)
+    y+=max(company_h,logo_side)+8
+    direction=request.information.direction if request.metrics.effective_direction!='whole' else ''
+    direction_size=20
+    direction_metrics=QFontMetricsF(_font(TextItem(direction,(),direction_size,400,'annotation')))
+    direction_width=direction_metrics.horizontalAdvance(direction)+4 if direction else 0
+    available=width-(direction_width+16 if direction else 0)
+    route_size=112
+    while route_size>36 and _text_height(request.information.route_name,available,route_size,'route',650)>route_height_limit:
+        route_size-=4
+    route_item=TextItem(request.information.route_name,(),route_size,650,'route')
+    route_metrics=QFontMetricsF(_font(route_item))
+    route_width=min(available,route_metrics.horizontalAdvance(route_item.text)+4)
+    route_h=_emit_text(items,route_item.text,x,y,route_width,route_size,'route',650)
+    if direction:
+        direction_h=_text_height(direction,direction_width,direction_size,'annotation')
+        direction_y=min(y+route_h-direction_h,y+route_metrics.ascent()-direction_metrics.ascent())
+        _emit_text(items,direction,x+route_width+16,direction_y,direction_width,direction_size,'annotation')
+    return y+route_h+14,logo
+
+
+def _number_line(items,value,x,y,width,size):
+    number=value.removesuffix(' 人次');unit_size=20
+    unit_width=QFontMetricsF(_font(TextItem('人次',(),unit_size,400,'unit'))).horizontalAdvance('人次')+4
+    available=width-unit_width-12
+    while size>28 and QFontMetricsF(_font(TextItem(number,(),size,600,'number'))).horizontalAdvance(number)+4>available:
+        size-=2
+    number_width=QFontMetricsF(_font(TextItem(number,(),size,600,'number'))).horizontalAdvance(number)+4
+    if number_width>available:raise LayoutError('客流数字无法完整排入当前信息区')
+    h=_emit_text(items,number,x,y,number_width,size,'number',600)
+    unit_h=_text_height('人次',unit_width,unit_size,'unit')
+    _emit_text(items,'人次',x+number_width+12,y+h-unit_h,unit_width,unit_size,'unit')
+    return h
+
+
+def _footer(request,right,width,height):
+    text='最后更新日期：'+request.simulated_date
+    h=_text_height(text,width,16,'footer')
+    return TextItem(text,(right-width,height-20-h,width,h),16,400,'footer','right')
 
 
 def _portrait_layout(request,width,height):
@@ -85,21 +140,8 @@ def _portrait_layout(request,width,height):
             h=_text_height(display or value,w,size,role,weight)
             items.append(TextItem(value,(x,y,w,h),size,weight,role,align,display))
             return h
-        company_h=emit(request.information.company_name,margin,y,content_width-88,32,'heading',600)
-        logo=(width-margin-64,y,64,64)
-        y+=max(company_h,64)+8
-        route_size=112
-        while route_size>44 and _text_height(request.information.route_name,content_width,route_size,'route',650)>160:
-            route_size-=4
-        route_width=content_width*.70
-        while route_size>44 and _text_height(request.information.route_name,route_width,route_size,'route',650)>160:
-            route_size-=4
-        route_h=emit(request.information.route_name,margin,y,route_width,route_size,'route',650)
-        mode=f'{request.information.mode} · {request.information.direction}'
-        header_x=margin+content_width*.74;header_w=content_width*.26
-        mode_h=emit(mode,header_x,y+12,header_w,32,'heading',600,align='right')
-        date_h=emit(request.simulated_date,header_x,y+mode_h+24,header_w,24,'muted',400,'right')
-        y+=max(route_h,mode_h+date_h+24)+12;rules.append((margin,y,content_width));y+=18
+        y,logo=_header(items,request,margin,y,content_width,32,160)
+        rules.append((margin,y,content_width));y+=18
         sections=request.information.sections;bottom=y
         # The map/information relationship is vertical. The two independent
         # data categories use the wide lower area without shrinking all text.
@@ -112,14 +154,14 @@ def _portrait_layout(request,width,height):
                 category_w=2*slot+32 if index==0 else slot
             else:x=margin;category_w=content_width
             column=(category_w-32)/2 if split else category_w
-            row_top=y+emit(title,x,y,category_w,26,'heading',600)+(6 if rows and rows[0][0]=='今日客流' else 10)
+            primary=next((key for key,_,_ in rows if key in ('今日客流','平均客流')),None) if section_id=='passenger_data' else None
+            row_top=y+emit(title,x,y,category_w,26,'heading',600)+(6 if primary else 10)
             section_bottom=row_top
             for group_index,group in enumerate(groups):
               column_x=x+group_index*(column+32);cursor=row_top
               for key,label,value in group:
-                if key=='今日客流':
-                    cursor+=emit(value.removesuffix(' 人次'),column_x,cursor,column,76,'number',600)
-                    cursor+=emit(label+' · 人次',column_x,cursor,column,body,'muted')+12
+                if key==primary:
+                    cursor+=_number_line(items,value,column_x,cursor,column,76)+12
                     continue
                 label_w=column*(.25 if key=='线路车库' else .40 if key in ('开线日期','最近改线日期') else .57)
                 value_w=column-label_w-16
@@ -129,12 +171,14 @@ def _portrait_layout(request,width,height):
                 cursor+=max(lh,vh)+4
               section_bottom=max(section_bottom,cursor)
             rules.append((x,section_bottom+6,category_w));bottom=max(bottom,section_bottom+18)
-        map_height=height-map_top-28-32-bottom
+        footer=_footer(request,width-margin,content_width,height)
+        information_height=bottom+footer.rect[3]+16
+        map_height=height-map_top-20-32-information_height
         if map_height>=height*.30:
             offset=map_top+map_height+32
             translated=tuple(replace(item,rect=(item.rect[0],item.rect[1]+offset,*item.rect[2:])) for item in items)
             return ExportLayout(width,height,(margin,map_top,content_width,map_height),
-                (margin,offset,content_width,bottom),translated,
+                (margin,offset,content_width,information_height),translated+(footer,),
                 tuple((x,y+offset,w) for x,y,w in rules),(logo[0],logo[1]+offset,*logo[2:]))
     raise LayoutError('文字无法完整排入纵向画幅，请缩短线路名称或减少字段')
 
@@ -156,29 +200,19 @@ def build_layout(request):
             items.append(TextItem(value,(x,y,w,h),size,weight,role,align))
             y+=h
             return h
-        company_w=column-80;company_top=y
-        text(request.information.company_name,20 if compact else 24 if dense else 28,'heading',600,company_w)
         logo_side=56 if body==14 else 64
-        logo=(right-logo_side,company_top,logo_side,logo_side)
-        y=max(y+8,logo[1]+logo_side+(4 if dense else -6))
-        route_size=112
-        # Preserve the entire route identity including a long Chinese suffix.
-        while route_size>36 and _text_height(request.information.route_name,column,route_size,'route',650)>height*(.09 if compact else .14 if dense else .21):
-            route_size-=4
-        text(request.information.route_name,route_size,'route',650)
-        y+=6
-        text(f'{request.information.mode} · {request.information.direction}',24 if compact else 26 if dense else 32,'heading',600)
-        y+=6;text(request.simulated_date,18 if compact else 20 if dense else 24,'muted');y+=8 if compact else 14 if dense else 24
+        try:y,logo=_header(items,request,x,y,column,20 if compact else 24 if dense else 28,
+            height*(.09 if compact else .14 if dense else .21),logo_side)
+        except LayoutError:continue
         rules.append((x,y,column));y+=16 if dense else 26
         for section_id,title,rows in request.information.sections:
+            primary=next((key for key,_,_ in rows if key in ('今日客流','平均客流')),None) if section_id=='passenger_data' else None
             text(title,20 if body==14 else 22 if compact else 24 if dense else 28,'heading',600)
-            y+=6 if rows and rows[0][0]=='今日客流' else 4 if body==14 else 8 if dense else 14
+            y+=6 if primary else 4 if body==14 else 8 if dense else 14
             for key,label,value in rows:
-                if key=='今日客流':
-                    number=value.removesuffix(' 人次')
-                    # Keep displayed unit and scope in a separate measured caption.
-                    h=text(number,52 if compact else 60 if dense else 76,'number',600)
-                    text(label+' · 人次',body,'muted');y+=8 if dense else 12
+                if key==primary:
+                    y+=_number_line(items,value,x,y,column,52 if compact else 60 if dense else 76)
+                    y+=8 if dense else 12
                     continue
                 # Dates and confirmed depot names need more room than their labels.
                 label_w=column*(.45 if key in ('开线日期','最近改线日期','线路车库') else .57)
@@ -195,11 +229,12 @@ def build_layout(request):
             rules.append((x,y,column));y+=4 if body==14 else 8 if compact else 16 if dense else 24
         # y includes trailing space after the final rule; visible content keeps
         # the same >=16 design-unit boundary as the compact header.
-        if y<=height-16:
-            offset=max(0.,(height-(y+12))/2)
+        footer=_footer(request,right,column,height)
+        if y<=footer.rect[1]-16:
+            offset=max(0.,(footer.rect[1]-16-(y+12))/2)
             translated=tuple(replace(item,rect=(item.rect[0],item.rect[1]+offset,*item.rect[2:])) for item in items)
             return ExportLayout(width,height,(36.,28.,map_width,map_height),(x,24.,column,height-48),
-                translated,tuple((rx,ry+offset,rw) for rx,ry,rw in rules),
+                translated+(footer,),tuple((rx,ry+offset,rw) for rx,ry,rw in rules),
                 (logo[0],logo[1]+offset,*logo[2:]))
     raise LayoutError('文字无法完整排入当前画幅，请使用纵向 A4 或缩短线路名称')
 
@@ -233,6 +268,7 @@ class _Scene:
     line: str
     logo: object
     logo_status: str
+    legend_rect: tuple = ()
 
 
 def _resolve_brand(request,background):
@@ -274,10 +310,13 @@ def _prepare_scene(request,cancel=None):
     zmin,zmax=min(p[2] for p in points),max(p[2] for p in points)
     cx,cz=(xmin+xmax)/2,(zmin+zmax)/2
     mx,my,map_width,map_height=layout.map_rect
-    scale=min((map_width-32)/max(xmax-xmin,1.),(map_height-32)/max(zmax-zmin,1.))
+    has_legend=(request.metrics.effective_direction=='whole' and request.route.direction.kind=='roundtrip'
+        and request.route.direction.terminal_index is not None and bool(request.route.leg_paths))
+    plot_height=map_height-60 if has_legend else map_height
+    scale=min((map_width-32)/max(xmax-xmin,1.),(plot_height-32)/max(zmax-zmin,1.))
     world_xmin,world_xmax=cx-map_width/scale/2,cx+map_width/scale/2
-    world_zmin,world_zmax=cz-map_height/scale/2,cz+map_height/scale/2
-    def project(p):return QPointF(mx+map_width/2+(p[0]-cx)*scale,my+map_height/2-(p[2]-cz)*scale)
+    world_zmin,world_zmax=cz-(map_height-plot_height/2)/scale,cz+plot_height/scale/2
+    def project(p):return QPointF(mx+map_width/2+(p[0]-cx)*scale,my+plot_height/2-(p[2]-cz)*scale)
     def path(saved,closed=False):
         _check(cancel)
         if not saved:return None
@@ -382,7 +421,8 @@ def _prepare_scene(request,cancel=None):
     stations=tuple(project(s.position) for s in request.stops) if request.options.show_stops else ()
     depots=tuple((d.name,project(d.position)) for d in request.depots) if request.options.show_depot_names else ()
     return _Scene(request,layout,tuple(shapes),stations,depots,bg,map_bg,fg,muted,
-        '#365168' if night else '#E0E0E0',brand or muted,line,logo,status)
+        '#365168' if night else '#E0E0E0',brand or muted,line,logo,status,
+        (mx+map_width-232,my+map_height-44,216,32) if has_legend else ())
 
 
 def _paint(painter,scene,cancel=None,visible=None):
@@ -408,14 +448,26 @@ def _paint(painter,scene,cancel=None,visible=None):
         x=max(mx+8,min(p.x()+8,mx+mw-metrics.horizontalAdvance(name)-8))
         y=max(my+metrics.ascent()+8,min(p.y()-8,my+mh-8))
         painter.drawText(QPointF(x,y),name)
+    if scene.legend_rect:
+        lx,ly,lw,lh=scene.legend_rect
+        painter.fillRect(QRectF(lx-4,ly-4,lw+8,lh+8),QColor(scene.map_background))
+        for index,(caption,dashed) in enumerate((('下行',False),('上行',True))):
+            x=lx+index*108
+            pen=QPen(QColor(scene.line),3,Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.FlatCap if dashed else Qt.PenCapStyle.RoundCap)
+            if dashed:pen.setDashPattern([14/3,8/3])
+            painter.setPen(pen);painter.drawLine(QPointF(x,ly+lh/2),QPointF(x+44,ly+lh/2))
+            painter.setFont(ui_font(16));painter.setPen(QColor(scene.muted))
+            painter.drawText(QRectF(x+52,ly,52,lh),int(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter),caption)
     painter.restore()
     for item in layout.text_items:
         _check(cancel)
         if visible is not None and not QRectF(*item.rect).intersects(visible):continue
         painter.setFont(_font(item))
-        painter.setPen(QColor(scene.muted if item.role in ('muted','label') else
+        painter.setPen(QColor(('#A8A8A8' if scene.request.options.theme=='night' else '#888888')
+            if item.role in ('annotation','footer','unit') else scene.muted if item.role in ('muted','label') else
             scene.line if item.role=='number' and scene.request.options.theme=='night' else scene.foreground))
-        if item.role=='number':
+        if item.role in ('number','unit'):
             metrics=QFontMetricsF(painter.font())
             if metrics.horizontalAdvance(item.text)<=item.rect[2]:
                 bounds=metrics.tightBoundingRect(item.text)

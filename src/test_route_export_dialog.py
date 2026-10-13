@@ -115,7 +115,7 @@ def test_field_picker_labels_do_not_claim_another_direction(dialog):
     assert dialog.field_checks['地图里程'].text() == '地图里程'
     assert dialog.field_checks['单程时间'].text() == '核定时间'
     rows = [row for _, _, fields in dialog._current_request().information.sections for row in fields]
-    assert next(row[1] for row in rows if row[0] == '地图里程') == '地图里程（上行）'
+    assert next(row[1] for row in rows if row[0] == '地图里程') == '地图里程'
 
 
 def test_closing_export_also_rejects_open_color_picker(dialog):

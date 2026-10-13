@@ -44,11 +44,13 @@ def test_request_freezes_true_direction_and_retains_full_line_operating_facts():
     session,snapshot=source()
     request=build_export_request(session,snapshot,42,ExportOptions(direction='up',selected_fields=ALL_FIELDS))
     rows={key:(label,value) for _,_,fields in request.information.sections for key,label,value in fields}
-    assert rows['地图里程']==('地图里程（上行）','4 km')
+    assert rows['地图里程']==('地图里程','4 km')
     assert rows['单程时间'][1]=='2 min'
     assert rows['核定速度'][1]=='120 km/h'
-    assert rows['今日客流']==('今日客流（全线）','0 人次')
-    assert rows['当日发班数']==('当日发班（全线）','70 班')
+    assert rows['今日客流']==('今日客流','0 人次')
+    assert rows['当日发班数']==('当日发班','70 班')
+    assert rows['站点数']==('上行站点数','2 站')
+    assert request.information.mode=='城市公交'
     assert {s.id for s in request.stops}=={2,3}
     assert request.paths==(snapshot.routes[0].leg_paths[1][0],)
     session['lines'][0]['今日客流']=999
@@ -101,3 +103,38 @@ def test_confirmed_unnamed_depot_reuses_the_existing_line_garage_display_name():
     assert req.depots[0].position==(10.,0.,-30.)
     unknown=build_export_request(session,snapshot,42,ExportOptions(show_depot_names=True))
     assert unknown.depots==()
+
+
+@pytest.mark.parametrize('direction,label,count',[('up','上行站点数','2 站'),('down','下行站点数','2 站'),('whole','站点数','3 站')])
+def test_station_count_uses_the_selected_business_stop_sequence_even_when_hidden(direction,label,count):
+    from route_export_model import ExportOptions,build_export_request
+    session,snapshot=source()
+    req=build_export_request(session,snapshot,42,ExportOptions(direction=direction,show_stops=False))
+    row=next(r for _,_,rows in req.information.sections for r in rows if r[0]=='站点数')
+    assert row==('站点数',label,count)
+
+
+def test_direction_station_count_keeps_repeated_business_calls_and_shared_terminal():
+    from route_export_model import ExportOptions,build_export_request
+    session,snapshot=source();a,b,c=(0.,0.,0.),(100.,0.,100.),(200.,0.,0.)
+    legs=(((a,b),),((b,c),),((c,b),),((b,b),),((b,a),))
+    route=replace(snapshot.routes[0],stop_ids=(1,2,3,2,2,1),direction=RouteDirection('roundtrip',2),
+        leg_paths=legs,paths=tuple(p for leg in legs for p in leg),leg_map_length_units=(1024000,2048000,2048000,0,1024000),
+        stop_arrival_offsets_ticks=(0,600000000,1200000000,1800000000,1800000000,2400000000))
+    for direction,count in (('down','3 站'),('up','4 站')):
+        req=build_export_request(session,replace(snapshot,routes=(route,)),42,ExportOptions(direction=direction))
+        value=next(value for _,_,rows in req.information.sections for key,_,value in rows if key=='站点数')
+        assert value==count
+
+
+def test_export_header_mode_is_resolved_from_the_actual_transport_type():
+    from route_export_model import ExportOptions,build_export_request
+    session,snapshot=source();session['lines'][0]['运输制式']='有轨电车'
+    assert build_export_request(session,snapshot,42,ExportOptions()).information.mode=='有轨电车'
+
+
+def test_today_ratio_selection_also_uses_the_requested_today_heading():
+    from route_export_model import ExportOptions,build_export_request
+    session,snapshot=source()
+    req=build_export_request(session,snapshot,42,ExportOptions(selected_fields=('今日平均单班人次',)))
+    assert req.information.sections[0][1]=='今日客流'

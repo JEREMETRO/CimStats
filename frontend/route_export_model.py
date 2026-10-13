@@ -165,22 +165,31 @@ def build_export_request(session,map_snapshot,route_id,options,*,branding=None):
     for section_id,title,rows in source['sections']:
         rows=list(rows)
         # The existing single panel adds direction length independently of line_information.
-        length=('地图里程',f'地图里程（{suffix}）',shown(metrics.length_km,'km'))
+        length=('地图里程','地图里程',shown(metrics.length_km,'km'))
         rows=[length if row[0]=='地图里程' else row for row in rows]
         if not any(row[0]=='地图里程' for row in rows) and section_id=='line_information':
             rows.insert(3,length)
         filtered=[]
         for key,label,value in rows:
             if key not in options.selected_fields:continue
-            if direction!='whole' and (section_id=='passenger_data' or key in
-                ('站点数','当日发班数','平均间隔','理论最大车辆需求数','平均车辆需求数','每周收入','每周支出')):
-                label+='（全线）'
+            label=label.replace(f'（{suffix}）','')
+            if key=='站点数' and direction!='whole':
+                label=suffix+'站点数'
+                terminal=route.direction.terminal_index
+                count=((len(route.stop_ids)-terminal if direction=='up' else terminal+1)
+                    if type(terminal) is int and 0<terminal<len(route.stop_ids)-1 else None)
+                value=shown(count,'站')
             filtered.append((key,label,value))
-        if filtered:sections.append((section_id,title,tuple(filtered)))
+        if filtered:
+            if section_id=='passenger_data':
+                title=next((key for key,_,_ in filtered if key in ('今日客流','平均客流')),'今日客流')
+            sections.append((section_id,title,tuple(filtered)))
     companies=tuple(c for c in session.get('companies',()) if str(c.get('公司标识'))==str(route.company_id))
     company=companies[0] if len(companies)==1 else {'公司标识':route.company_id,'公司名称':source['identity']['company_name']}
     company_name=display_company(company.get('公司名称') or source['identity']['company_name'])
-    information=ExportInformation(company_name,source['identity']['name'],source['identity']['mode'],suffix,tuple(sections))
+    mode=source['identity']['mode']
+    information=ExportInformation(company_name,source['identity']['name'],
+        '城市公交' if mode=='公交' else mode,suffix,tuple(sections))
     try:date=datetime.fromisoformat(session.get('simulation_time','')).date().isoformat()
     except (TypeError,ValueError):date='—'
     # A depot requires confirmed object identity; textual names alone cannot locate one.

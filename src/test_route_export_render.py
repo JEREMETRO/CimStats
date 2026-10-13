@@ -172,7 +172,7 @@ def test_widescreen_long_identity_with_all_fields_remains_complete(qt_applicatio
         route_name='503E 秋山城市跨区快速公交 · 东北枢纽—南岸综合交通中心'))
     layout=build_layout(req)
     assert req.information.route_name in [i.text for i in layout.text_items]
-    assert req.information.company_name in [i.text for i in layout.text_items]
+    assert any(req.information.company_name in i.text for i in layout.text_items)
     assert max(i.rect[1]+i.rect[3] for i in layout.text_items)<layout.height
 
 
@@ -206,7 +206,8 @@ def test_portrait_map_uses_the_same_horizontal_margins_as_information(qt_applica
 
 
 def test_whole_view_distinguishes_up_dashed_and_down_solid_in_actual_pixels(qt_application):
-    from route_export_render import preview,build_layout
+    from route_export_render import preview,build_layout,_prepare_scene
+    from PySide6.QtCore import Qt
     from map_model import MapStop
     req=request(show_stops=False)
     a,b,c=(0.,0.,0.),(100.,0.,0.),(200.,0.,0.)
@@ -216,10 +217,13 @@ def test_whole_view_distinguishes_up_dashed_and_down_solid_in_actual_pixels(qt_a
     session,_=source()
     selected=build_export_request(session,snapshot,42,req.options)
     image=preview(selected,(1536,1024));mx,my,mw,mh=build_layout(selected).map_rect
-    colors=[{image.pixelColor(x,round(my+mh/2)).name()
+    scene=_prepare_scene(selected)
+    y=next(s.path.elementAt(0).y for s in scene.shapes
+        if s.pen is not None and s.pen.color().name()==scene.line.lower() and s.pen.style()==Qt.PenStyle.SolidLine)
+    colors=[{image.pixelColor(x,round(y)).name()
         for x in range(round(mx+mw*left),round(mx+mw*right))}
         for left,right in ((.20,.40),(.60,.80))]
-    assert len(colors[0])==1
+    assert colors[0]=={scene.line.lower()}
     assert len(colors[1])>1
 
 
@@ -273,7 +277,7 @@ def test_passenger_heading_and_number_form_one_visually_close_group(qt_applicati
     initialize_theme(qt_application)
     req=request(theme='night',selected_fields=('今日客流',))
     layout=build_layout(req);image=preview(req,(1536,1024))
-    heading=next(i for i in layout.text_items if i.text=='客流数据')
+    heading=next(i for i in layout.text_items if i.text=='今日客流')
     number=next(i for i in layout.text_items if i.role=='number')
     x=int(heading.rect[0]);w=int(heading.rect[2]);top=int(heading.rect[1])
     white=[];cyan=[]
@@ -286,9 +290,49 @@ def test_passenger_heading_and_number_form_one_visually_close_group(qt_applicati
     assert min(cyan)-max(white)<=18
 
 
+@pytest.mark.parametrize('aspect,orientation',[('3:2','landscape'),('A4','portrait')])
+def test_user_header_footer_and_inline_passenger_unit(qt_application,aspect,orientation):
+    from route_export_render import build_layout
+    req=request(aspect=aspect,orientation=orientation,direction='up')
+    items=build_layout(req).text_items;layout=build_layout(req)
+    assert any(i.text==req.information.company_name+'·城市公交' for i in items)
+    route=next(i for i in items if i.role=='route')
+    direction=next(i for i in items if i.text=='上行')
+    assert direction.size<=20 and direction.weight==400
+    assert direction.rect[0]>=route.rect[0]+route.rect[2]
+    assert route.rect[1]<=direction.rect[1]<route.rect[1]+route.rect[3]
+    footer=next(i for i in items if i.text=='最后更新日期：2013-05-23')
+    assert footer.role=='footer' and footer.size<=16 and footer.align=='right'
+    assert footer.rect[1]>=layout.height-60
+    number=next(i for i in items if i.role=='number');unit=next(i for i in items if i.role=='unit')
+    assert unit.text=='人次' and unit.size<=20
+    assert unit.rect[0]>number.rect[0]+number.rect[2]
+    assert not any('全线' in i.text or '公交 · 上行' in i.text or '客流数据'==i.text for i in items)
+
+
+def test_average_passenger_selection_uses_its_own_heading_and_inline_unit(qt_application):
+    from route_export_render import build_layout
+    layout=build_layout(request(selected_fields=('平均客流',)))
+    assert any(i.text=='平均客流' and i.role=='heading' for i in layout.text_items)
+    assert any(i.role=='number' for i in layout.text_items)
+    assert any(i.role=='unit' and i.text=='人次' for i in layout.text_items)
+
+
+def test_whole_direction_legend_is_inside_map_and_clear_of_route_strokes(qt_application):
+    import route_export_render as renderer
+    req=request();scene=renderer._prepare_scene(req)
+    mx,my,mw,mh=scene.layout.map_rect;lx,ly,lw,lh=scene.legend_rect
+    assert mx<=lx and my<=ly and lx+lw<=mx+mw and ly+lh<=my+mh
+    assert all(s.path.boundingRect().bottom()<ly for s in scene.shapes
+        if s.pen is not None and s.pen.color().name()==scene.line.lower())
+    assert not any('全线' in i.text for i in scene.layout.text_items)
+    assert renderer._prepare_scene(request(direction='up')).legend_rect==()
+
+
 def test_up_dash_phase_continues_across_saved_path_fragments(qt_application):
     from route_export_model import build_export_request
-    from route_export_render import preview,build_layout
+    from route_export_render import preview,build_layout,_prepare_scene
+    from PySide6.QtCore import Qt
     req=request(show_stops=False);session,_=source()
     a,b,c,mid=(0.,0.,0.),(100.,0.,0.),(200.,0.,0.),(137.,0.,0.)
     images=[]
@@ -297,19 +341,29 @@ def test_up_dash_phase_continues_across_saved_path_fragments(qt_application):
         selected=build_export_request(session,replace(req.snapshot,routes=(route,)),42,req.options)
         images.append(preview(selected,(1536,1024)))
     mx,my,mw,mh=build_layout(selected).map_rect
+    scene=_prepare_scene(selected)
+    y=round(next(s.path.elementAt(0).y for s in scene.shapes
+        if s.pen is not None and s.pen.color().name()==scene.line.lower() and s.pen.style()==Qt.PenStyle.CustomDashLine))
     # Compare after the fragmentation point, away from its antialiased end.
     for x in range(round(mx+mw*.75),round(mx+mw*.90)):
-        assert images[0].pixelColor(x,round(my+mh/2))==images[1].pixelColor(x,round(my+mh/2))
+        assert images[0].pixelColor(x,y)==images[1].pixelColor(x,y)
+    assert any(images[0].pixelColor(x,y).name()==scene.line.lower()
+        for x in range(round(mx+mw*.75),round(mx+mw*.90)))
 
 
 def test_exactly_shared_direction_paths_both_remain_visible(qt_application):
     from route_export_model import build_export_request
-    from route_export_render import preview,build_layout
+    from route_export_render import preview,build_layout,_prepare_scene
+    from PySide6.QtCore import Qt
     req=request(show_stops=False);session,_=source()
     a,b=(0.,0.,0.),(100.,0.,0.)
     route=replace(req.route,paths=((a,b),(b,a)),leg_paths=(((a,b),),((b,a),)))
     selected=build_export_request(session,replace(req.snapshot,routes=(route,)),42,req.options)
     image=preview(selected,(1536,1024));mx,my,mw,mh=build_layout(selected).map_rect
-    colors=[{image.pixelColor(x,round(my+mh/2+offset)).name()
-        for x in range(round(mx+mw*.25),round(mx+mw*.75))} for offset in (-3,3)]
-    assert len(colors[0])==1 and len(colors[1])>1
+    scene=_prepare_scene(selected)
+    ys=[round(next(s.path.elementAt(0).y for s in scene.shapes
+        if s.pen is not None and s.pen.color().name()==scene.line.lower() and s.pen.style()==style))
+        for style in (Qt.PenStyle.SolidLine,Qt.PenStyle.CustomDashLine)]
+    colors=[{image.pixelColor(x,y).name()
+        for x in range(round(mx+mw*.25),round(mx+mw*.75))} for y in ys]
+    assert colors[0]=={scene.line.lower()} and len(colors[1])>1
