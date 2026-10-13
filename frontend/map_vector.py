@@ -20,7 +20,7 @@ from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter, QPainterPa
                            QPainterPathStroker, QPen, QPolygonF)
 
 import stats_tokens as tokens
-from map_scale import (bundle_offsets, detail_fraction, route_width,
+from map_scale import (detail_fraction, route_width,
                        stop_outline, stop_radius)
 from semantic_colors import canonical_key, is_non_social_building
 from map_visibility import visible_route_stop_ids
@@ -714,55 +714,24 @@ def _route_outline(surface, prepared, path, offset, width, dashed):
 
 
 def _route_plan(surface, prepared, routes, colors):
-    """Reuse unchanged route sharing and lateral offsets across pans."""
+    """Keep exact saved route geometry; overlapping lines have no lane shift."""
     if getattr(surface, '_vector_route_plan_owner', None) is not prepared:
         surface._vector_route_plan_owner = prepared
         surface._vector_route_plans = OrderedDict()
-        surface._vector_route_topologies = OrderedDict()
     cache = surface._vector_route_plans
-    topology_key = (tuple((route.id, colors[route.id].name()) for route in routes),
-           surface.options['direction'], surface.options['distinguish_directions'],
-           )
-    widths = {route.id:surface._route_width(route,route_width(surface.zoom)) for route in routes}
-    key = (topology_key, _zoom_key(surface.zoom), tuple(widths.items()))
+    key = (tuple(route.id for route in routes), surface.options['direction'],
+           surface.options['distinguish_directions'])
     value = cache.get(key)
-    if value is not None:
-        cache.move_to_end(key)
-        return value
-    topologies = surface._vector_route_topologies
-    topology = topologies.get(topology_key)
-    if topology is None:
+    if value is None:
         groups = {route.id: surface._route_path_groups(route) for route in routes}
-        shared = {}
-        for route in routes:
-            for paths, dashed in groups[route.id]:
-                for path in paths:
-                    choices = shared.setdefault(surface._path_key(path), {})
-                    choices.setdefault((colors[route.id].name(), dashed), set()).add(route.id)
-        topology = groups, shared
-        topologies[topology_key] = topology
-        if len(topologies) > 4:
-            topologies.popitem(last=False)
+        offsets = {(route.id, id(path), dashed): 0.
+                   for route in routes for paths, dashed in groups[route.id] for path in paths}
+        value = groups, offsets
+        cache[key] = value
+        if len(cache) > 4:
+            cache.popitem(last=False)
     else:
-        topologies.move_to_end(topology_key)
-    groups, shared = topology
-    variants = {path_key:bundle_offsets({identity:max(widths[rid] for rid in identities)
-                                         for identity,identities in choices.items()},surface.zoom)
-                for path_key,choices in shared.items()}
-    offsets = {}
-    for route in routes:
-        color_name = colors[route.id].name()
-        for paths, dashed in groups[route.id]:
-            for path in paths:
-                choices = variants[surface._path_key(path)]
-                offset = choices[(color_name,dashed)]
-                if tuple(path) > tuple(reversed(path)):
-                    offset *= -1
-                offsets[(route.id, id(path), dashed)] = offset
-    value = (groups, offsets)
-    cache[key] = value
-    if len(cache) > 4:
-        cache.popitem(last=False)
+        cache.move_to_end(key)
     return value
 
 
@@ -861,7 +830,6 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
     occupied.extend(rect.adjusted(-3, -3, 3, 3) for rect, _, _ in surface._legend_layout(painter))
     default_width = route_width(surface.zoom)
     number_limit = max(3, int(surface.width()*surface.height()/(48000-28000*detail_fraction(surface.zoom,.25))))
-    drawn_strokes = set()
     decorations = []
     transform = surface._transform()
     route_origin = QPointF(transform.m31(), transform.m32())
@@ -880,6 +848,9 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
         profile['route_deadhead_ms'] = 1000*(time.perf_counter()-started)
         started = time.perf_counter()
     for route in routes:
+        # Repeated source pieces within a route are redundant. Later routes
+        # must still paint in query order, including a repeated earlier colour.
+        drawn_strokes = set()
         color = colors[route.id]
         line_width = surface._route_width(route, default_width)
         drawings = []

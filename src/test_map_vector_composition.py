@@ -74,3 +74,27 @@ def test_native_parent_capture_matches_vector_framebuffer(qt_application, tmp_pa
     finally:
         window.close()
         qt_application.processEvents()
+
+
+def test_native_capture_accepts_saved_road_filling_maximum_zoom_view(qt_application,tmp_path):
+    if QApplication.platformName() != 'windows':
+        pytest.skip('Requires native OpenGL framebuffer capture')
+    from map_model import MapRoad
+    from package_smoke import _map_vector_capture
+    canvas=MapCanvas();canvas.resize(480,400)
+    path=((-100.,0.,0.),(100.,0.,0.))
+    canvas.set_snapshot(MapSnapshot(roads=(MapRoad(1,'road','asset',(path,),width=12.,
+                                   lanes_a=1,lanes_b=1,road_class='ordinary'),),
+                                   bounds=(-100.,-100.,100.,100.)))
+    canvas.set_options(routes=False,buildings=False,stops=False,line_numbers=False,stop_names=False)
+    canvas.show();qt_application.processEvents()
+    canvas.center=(0.,0.);canvas.zoom=100.;canvas._changed()
+    try:
+        deadline=time.monotonic()+15
+        while not canvas.can_export():
+            assert time.monotonic()<deadline
+            qt_application.processEvents();time.sleep(.002)
+        result=_map_vector_capture(canvas,tmp_path,'maximum-filled-road')
+        assert result['background_samples']==0 and result['geometry_samples']>0
+    finally:
+        canvas.close();qt_application.processEvents()

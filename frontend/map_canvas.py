@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QWidget, QApplication
 from shiboken6 import isValid
 
 import stats_tokens as tokens
-from map_scale import (bundle_offsets, detail_fraction, route_width,
+from map_scale import (detail_fraction, route_width,
                        stop_outline, stop_radius)
 from stats_typography import ui_font
 from map_model import MapSnapshot, road_display_level
@@ -328,32 +328,6 @@ class _MapDrawing:
         self._cooperate()
         world = self._world_polygon(path)
         polygon = self._transform().map(world)
-        if offset and len(polygon)>1:
-            points = list(polygon)
-            distances = [0.]
-            for a,b in zip(points,points[1:]):
-                distances.append(distances[-1]+math.hypot(b.x()-a.x(),b.y()-a.y()))
-            total = distances[-1]
-            # Interpolate only along already-known screen edges. The style
-            # tapers to the exact saved fragment endpoint, never a new bridge.
-            limits = sorted({min(12.,total/2),max(total-12.,total/2)})
-            expanded,positions = [],[]
-            for i,(a,b) in enumerate(zip(points,points[1:])):
-                expanded.append(a);positions.append(distances[i])
-                span = distances[i+1]-distances[i]
-                for limit in limits:
-                    if distances[i]<limit<distances[i+1] and span:
-                        expanded.append(a+(b-a)*((limit-distances[i])/span))
-                        positions.append(limit)
-            expanded.append(points[-1]);positions.append(total)
-            points = expanded
-            shifted = []
-            for i,p in enumerate(points):
-                tangent = points[min(i+1,len(points)-1)]-points[max(0,i-1)]
-                length = math.hypot(tangent.x(),tangent.y()) or 1
-                amount = offset*max(0.,min(1.,positions[i]/12,(total-positions[i])/12))
-                shifted.append(p+QPointF(-tangent.y()*amount/length,tangent.x()*amount/length))
-            return QPolygonF(shifted)
         return polygon
 
 
@@ -715,18 +689,7 @@ class _MapDrawing:
         visible_routes = [r for r in self._visible('routes')
                           if modes is None or canonical_key('mode',r.mode) in modes]
         routes = visible_routes if self.options['routes'] else []
-        # Offset only exact shared geometry, stable under route visibility/order changes.
-        shared = {}
         route_colors = {r.id:self._route_color(r) for r in routes}
-        widths = {r.id:self._route_width(r,route_width(self.zoom)) for r in routes}
-        for route in routes:
-            for paths,dashed in self._route_path_groups(route):
-                for path in paths:
-                    choices = shared.setdefault(self._path_key(path),{})
-                    identity = (route_colors[route.id].name(),dashed)
-                    choices[identity] = max(choices.get(identity,0.),widths[route.id])
-        shared_offsets = {key:bundle_offsets(choices,self.zoom) for key,choices in shared.items()}
-        drawn_strokes = set()
         number_count = 0
         number_limit = max(3,int(self.width()*self.height()/(48000 if self.zoom<.15 else 20000)))
         default_width = route_width(self.zoom)
@@ -740,6 +703,7 @@ class _MapDrawing:
                     if self._path_visible(path,viewport):
                         self._draw_path(painter,path,QPen(muted,self._route_width(route,2),Qt.PenStyle.DashLine))
         for route in routes:
+            drawn_strokes = set()
             color = route_colors[route.id]
             line_width = self._route_width(route,default_width)
             drawings = []
@@ -749,9 +713,7 @@ class _MapDrawing:
                     if len(path)<2 or not self._path_visible(path,viewport):
                         batches.append((None,[]))
                         continue
-                    offset = shared_offsets[self._path_key(path)][(color.name(),dashed)]
-                    if tuple(path) > tuple(reversed(path)):
-                        offset *= -1
+                    offset = 0.
                     # Labels retain source-curve identity and stable placement.
                     drawings.append(((self._path_key(path),color.name(),abs(offset),dashed),
                                      path,offset))

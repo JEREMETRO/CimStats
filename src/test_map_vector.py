@@ -195,7 +195,7 @@ def test_bridge_stays_above_ground_street_at_crossing(qt_application):
     assert image.pixelColor(200, 150).name() == '#f7e4ab'
 
 
-def test_reverse_shared_route_keeps_distinct_screen_side_and_dash(qt_application):
+def test_reverse_shared_route_overlaps_on_exact_saved_geometry(qt_application):
     path = ((10., 0., 50.), (90., 0., 50.))
     reverse = tuple(reversed(path))
     route = MapRoute(7, 'line', 7, 'company', 'company', 'bus', (),
@@ -207,9 +207,32 @@ def test_reverse_shared_route_keeps_distinct_screen_side_and_dash(qt_application
     surface.options.update(routes=True, distinguish_directions=True,
                            mode_widths={'bus': 5.}, route_colors={7: '#2266ff'})
     image = _image(surface, build_vector_map(surface))
-    colors = [image.pixelColor(x, 153) for x in range(175, 226)]
-    assert any(color.red() < 180 and color.blue() > 240 for color in colors)
-    assert any(color.name() == MAP_BACKGROUND.lower() for color in colors)
+    assert all(image.pixelColor(x,150).name() == '#2266ff' for x in range(175,226))
+    assert all(image.pixelColor(x,154).name() == MAP_BACKGROUND.lower() for x in range(175,226))
+
+
+def test_shared_route_colour_follows_last_painted_query_priority(qt_application):
+    path=((10.,0.,50.),(90.,0.,50.))
+    routes=tuple(MapRoute(i,str(i),i,'c','c','bus',(),(path,)) for i in range(3))
+    surface=_surface(qt_application,MapSnapshot(routes=routes,bounds=(0.,0.,100.,100.)),
+                     roads=False,buildings=False)
+    surface.options.update(routes=True,route_colors={0:'#ee3366',1:'#2266ff',2:'#ee3366'})
+    assert _image(surface,build_vector_map(surface)).pixelColor(200,150).name() == '#ee3366'
+
+
+def test_distinct_saved_up_leg_keeps_dash_pattern_without_artificial_offset(qt_application):
+    path=((10.,0.,50.),(90.,0.,50.))
+    up=((90.,0.,55.),(10.,0.,55.))
+    route=MapRoute(7,'line',7,'c','c','bus',(),(path,up),
+                   RouteDirection('roundtrip',1),((path,),(up,)))
+    surface=_surface(qt_application,MapSnapshot(routes=(route,),bounds=(0.,0.,100.,100.)),
+                     roads=False,buildings=False)
+    surface.options.update(routes=True,distinguish_directions=True,
+                           mode_widths={'bus':3.},route_colors={7:'#2266ff'})
+    image=_image(surface,build_vector_map(surface))
+    colours=[image.pixelColor(x,145).name() for x in range(175,226)]
+    assert '#2266ff' in colours and MAP_BACKGROUND.lower() in colours
+    assert all(image.pixelColor(x,150).name() == '#2266ff' for x in range(175,226))
 
 
 def test_cached_route_outline_keeps_reference_dash_and_offset_pixels(qt_application):

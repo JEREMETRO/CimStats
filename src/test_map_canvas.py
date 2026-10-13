@@ -394,11 +394,11 @@ def test_continuous_strokes_merge_only_existing_exact_three_dimensional_endpoint
     assert continuous_paths((P,Q,other_height,gap)) == ((P[0],P[1],Q[1]),other_height,gap)
     assert continuous_paths((P,(),Q)) == (P,Q)
 
-def test_fragment_screen_offset_converges_to_real_endpoint_without_connecting_gap(canvas):
-    polygon=canvas._polyline(P,2.)
+def test_fragment_follows_saved_centerline_without_style_bends(canvas):
+    polygon=canvas._polyline(P)
     assert polygon[0] == canvas.world_to_screen(P[0])
     assert polygon[-1] == canvas.world_to_screen(P[-1])
-    assert any(abs(p.y()-canvas.world_to_screen(P[0]).y())>1 for p in list(polygon)[1:-1])
+    assert all(p.y()==canvas.world_to_screen(P[0]).y() for p in polygon)
 
 
 @pytest.mark.parametrize('structure',['bridge','tunnel'])
@@ -445,7 +445,8 @@ def test_bus_routes_do_not_add_direction_arrows(canvas,monkeypatch):
     arrows=[]
     if hasattr(canvas,'_arrows'):
         monkeypatch.setattr(canvas,'_arrows',lambda *args:arrows.append(args))
-    canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False)
+    canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False,
+                       mode_widths={'bus':2.})
     image=canvas.grab().toImage()
     assert not arrows
     start,end=canvas.world_to_screen(P[0]).toPoint(),canvas.world_to_screen(P[-1]).toPoint()
@@ -475,6 +476,7 @@ def test_saved_lane_connection_surfaces_meet_full_road_edges_without_a_neck(canv
 
 
 def test_mode_width_changes_only_matching_route_symbol_in_actual_paint(canvas):
+    canvas.zoom=.5;canvas._changed()
     canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False,
                        mode_widths={'bus':8.},route_colors={7:'#2266ff'})
     p=canvas.world_to_screen((50.,0.)).toPoint()
@@ -513,7 +515,7 @@ def test_mixed_road_connection_color_transitions_from_actual_source_to_target(ca
     assert image.pixelColor(canvas.world_to_screen((60.,50.)).toPoint()).blue()>220
 
 
-def test_whole_direction_styles_remain_distinct_on_exact_reverse_shared_geometry(canvas):
+def test_whole_direction_exact_reverse_geometry_keeps_natural_overlap(canvas):
     reverse=tuple(reversed(P))
     route=replace(canvas.snapshot.routes[0],paths=(P,reverse),leg_paths=((P,),(reverse,)))
     canvas.set_snapshot(replace(canvas.snapshot,routes=(route,)))
@@ -521,7 +523,8 @@ def test_whole_direction_styles_remain_distinct_on_exact_reverse_shared_geometry
                        direction='whole',distinguish_directions=True,mode_widths={'bus':5.},route_colors={7:'#2266ff'})
     image=canvas.grab().toImage()
     start,end=canvas.world_to_screen(P[0]).toPoint(),canvas.world_to_screen(P[-1]).toPoint()
-    colors=[image.pixelColor(x,start.y()+3) for x in range(start.x()+20,end.x()-20)]
-    assert any(color.name()==MAP_BACKGROUND.lower() for color in colors)
-    assert any(color.blue()>240 and color.red()<180 for color in colors)
+    assert all(image.pixelColor(x,start.y()).name()=='#2266ff'
+               for x in range(start.x()+20,end.x()-20))
+    assert all(image.pixelColor(x,start.y()+4).name()==MAP_BACKGROUND.lower()
+               for x in range(start.x()+20,end.x()-20))
 

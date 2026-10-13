@@ -48,7 +48,8 @@ def test_automatic_line_stroke_grows_through_street_scales(qt_application):
                           for y in range(image.height())))
     assert all(a <= b+.05 for a, b in zip(widths, widths[1:])), widths
     assert widths[7] > widths[5]+1., widths
-    assert widths[-1] <= 6.1, widths
+    assert 20. < widths[-1] < 22., widths
+    assert widths[7] > 10., widths
 
 
 @pytest.mark.parametrize('threshold', [.15, .4])
@@ -59,20 +60,20 @@ def test_line_stroke_has_no_old_zoom_threshold_jump(qt_application, threshold):
 
 
 @pytest.mark.parametrize('zoom', [.05, .14999, .15, .25, 1., 4., 16., 100.])
-def test_five_shared_lines_keep_all_colours_and_clear_gaps(qt_application, zoom):
+def test_shared_lines_overlap_on_saved_centerline_at_every_zoom(qt_application, zoom):
     value = surface(qt_application, zoom, count=5)
     image, prepared = pixels(value)
     colours = {r.id: value._route_color(r) for r in prepared.routes}
     _, offsets = _route_plan(value, prepared, prepared.routes, colours)
-    locations = sorted(offsets[(r.id, id(r.paths[0]), False)] for r in prepared.routes)
-    assert len(set(locations)) == 5
-    # Sub-two-pixel AA strokes can cover a pixel only partially. Each colour
-    # must still have a nearly full coverage pixel rather than being overpainted.
-    column = [image.pixelColor(200,y) for y in range(image.height())]
-    for colour in colours.values():
-        distance = min(max(abs(a-b) for a,b in zip(pixel.getRgb()[:3],colour.getRgb()[:3]))
-                       for pixel in column)
-        assert distance <= 32, (zoom, colour.name(), locations, distance)
+    assert set(offsets.values()) == {0.}
+    actual=image.pixelColor(200,95).getRgb()[:3]
+    expected=colours[prepared.routes[-1].id].getRgb()[:3]
+    assert max(abs(a-b) for a,b in zip(actual,expected)) < 12
+    from map_scale import route_width
+    half_width = route_width(zoom)/2
+    for y in range(image.height()):
+        if abs(y+.5-95) > half_width+1:
+            assert image.pixelColor(200,y).name() == MAP_BACKGROUND.lower()
 
 
 @pytest.mark.parametrize('zoom', [.05, 1., 4., 100.])
@@ -89,17 +90,19 @@ def test_saved_physical_road_width_does_not_collapse_at_high_zoom():
 
 
 def test_automatic_curves_have_finite_smooth_derivatives_and_documented_anchors():
-    from map_scale import route_width, route_gap, stop_radius
-    for function in (route_width, route_gap, stop_radius):
+    from map_scale import route_width, stop_radius
+    for function in (route_width, stop_radius):
         for zoom in (.0001, .05, .1, .15, .25, .4, 1., 4., 100.):
             h = zoom*1e-5
             left = (function(zoom)-function(zoom-h))/h
             right = (function(zoom+h)-function(zoom))/h
             assert left == pytest.approx(right, rel=1e-3, abs=1e-6)
-    assert route_width(.05) == pytest.approx(1.6875)
-    assert route_width(1.) == pytest.approx(4.028571428571429)
-    assert route_width(4.) == pytest.approx(5.273684210526316)
-    assert route_width(100.) < 6.
+    assert route_width(.05) == pytest.approx(1.842357521361075)
+    assert route_width(1.) == pytest.approx(6.228571428571429)
+    assert route_width(4.) == pytest.approx(10.381926019278)
+    assert 20. < route_width(100.) < 22.
+    for zoom in (.05,1.,4.,16.,100.):
+        assert stop_radius(zoom) > route_width(zoom)/2
 
 
 def test_far_overview_checks_populated_tiles_instead_of_millions_of_empty_cells(qt_application,monkeypatch):
@@ -135,13 +138,13 @@ def test_high_zoom_road_edge_is_visible_when_its_centerline_is_outside_view(qt_a
     assert image.pixelColor(200,10).name() == '#ffffff'
 
 
-def test_large_shared_route_bundle_enters_view_before_its_centerline(qt_application):
+def test_thick_overlapping_route_enters_view_before_its_centerline(qt_application):
     path=((-1000.,0.,155.),(1000.,0.,155.))
     routes=tuple(MapRoute(i,str(i),i,'c','company','bus',(),(path,)) for i in range(12))
     canvas=MapCanvas();canvas.resize(400,190)
     canvas.set_snapshot(MapSnapshot(routes=routes,bounds=(-1000.,-1000.,1000.,1000.)))
     canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False,
-                       mode_widths={'bus':12.},route_colors={i:f'#{i+1:02x}44cc' for i in range(12)})
+                       mode_widths={'bus':150.},route_colors={i:f'#{i+1:02x}44cc' for i in range(12)})
     canvas.center=(0.,0.);canvas.zoom=1.
     value=_FrameSurface(canvas);canvas.close()
     image,prepared=pixels(value)
@@ -150,6 +153,28 @@ def test_large_shared_route_bundle_enters_view_before_its_centerline(qt_applicat
     value.center=(0.,20.)
     image2,prepared2=pixels(value)
     assert image2.pixelColor(200,30) == colour
+
+
+@pytest.mark.parametrize('zoom',[.25,1.,4.,16.,100.])
+def test_changing_shared_members_cannot_bend_a_saved_straight_road(qt_application,zoom):
+    from dataclasses import replace
+    value=surface(qt_application,zoom,widths={'bus':8.})
+    a=((-10000.,0.,0.),(-20.,0.,0.))
+    b=((-20.,0.,0.),(20.,0.,0.))
+    c=((20.,0.,0.),(10000.,0.,0.))
+    first=value.snapshot.routes[0]
+    routes=(replace(first,paths=(a,b,c)),)+tuple(replace(first,id=i,paths=(b,)) for i in range(1,12))
+    value.snapshot=replace(value.snapshot,routes=routes)
+    value.options['route_colors']={i:f'#{i+1:02x}44cc' for i in range(12)}
+    prepared=build_vector_map(value)
+    colours={r.id:value._route_color(r) for r in prepared.routes}
+    _,offsets=_route_plan(value,prepared,prepared.routes,colours)
+    assert set(offsets.values()) == {0.}
+    # Every source piece lies on the same saved road. Sharing cannot move it.
+    for route in prepared.routes:
+        for path in route.paths:
+            polygon=value._polyline(path,offsets[(route.id,id(path),False)])
+            assert all(p.y()==95. for p in polygon)
 
 
 def test_wide_connection_footprint_remains_visible_above_view(qt_application):

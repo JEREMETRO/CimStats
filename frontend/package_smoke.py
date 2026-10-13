@@ -212,9 +212,11 @@ def _map_vector_capture(canvas, output, name):
                 colour = image.pixelColor(x, y)
                 difference = max(abs(a - b) for a, b in zip(colour.getRgb()[:3], background.getRgb()[:3]))
                 near_background += difference <= 8
-                ink += colour.alpha() > 0 and difference > 16
-        assert near_background and ink, ('map capture has no visible geometry or background', name,
-                                         near_background, ink)
+                ink += colour.alpha() > 0 and difference > 8
+        # Close views can lie entirely inside an observed wide road. Its fill
+        # is valid geometry; the ancestor/reference comparison still rejects
+        # a wrong composition without requiring empty map background here.
+        assert ink, ('map capture has no visible geometry', name, near_background, ink)
         return dict(background_samples=near_background, geometry_samples=ink)
     if not fallback:
         assert valid and canvas._vector_context_ready, 'OpenGL viewport was not initialized'
@@ -494,7 +496,7 @@ def _exercise_map_inputs(win, page, settle, wait_until, capture):
 
 def _exercise_map_zoom_views(window,page,settle,wait,capture):
     """Keep full-window evidence at city, district and street symbol scales."""
-    from map_scale import route_width,route_gap,stop_radius
+    from map_scale import route_width,stop_radius
     canvas = page.canvas
     previous_preset = page.preset
     previous_state = page.panel_set.state()
@@ -517,13 +519,14 @@ def _exercise_map_zoom_views(window,page,settle,wait,capture):
         canvas.fit_to_map();wait(lambda:canvas.can_export(),120)
         fit_view = (*canvas.center,canvas.zoom)
         for name,zoom,position in (('city',fit_view[2],fit_view[:2]),
-                                   ('district',.25,center),('street',1.,center),('near',4.,center)):
+                                   ('district',.25,center),('street',1.,center),('near',4.,center),
+                                   ('close',16.,center),('maximum',100.,center)):
             canvas.center=position;canvas.zoom=zoom;canvas._changed(interactive=True)
             wait(lambda:canvas.can_export(),120);settle()
             capture(f'map-zoom-{name}-{width}x{height}')
             assert canvas._vector_prepared is prepared, 'Zoom rebuilt world geometry'
             rows.append(dict(name=name,zoom=zoom,center=list(position),
-                             automatic_line_width=route_width(zoom),shared_line_gap=route_gap(zoom),
+                             automatic_line_width=route_width(zoom),shared_line_offset=0.,
                              stop_radius=stop_radius(zoom),window=_window_workarea_evidence(window)))
     page.apply_state(previous_state)
     page.set_preset(previous_preset)
