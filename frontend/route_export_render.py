@@ -262,7 +262,7 @@ def _prepare_scene(request,cancel=None):
     layout=build_layout(request)
     night=request.options.theme=='night'
     bg='#0B2034' if night else '#FFFFFF'
-    map_bg='#0D2539' if night else '#F4F7F8'
+    map_bg='#0D2539' if night else '#FFFFFF'
     fg='#F3F7FC' if night else '#0A274B'
     muted='#B4CBDD' if night else '#65758A'
     brand,logo,status=_resolve_brand(request,bg)
@@ -382,7 +382,7 @@ def _prepare_scene(request,cancel=None):
     stations=tuple(project(s.position) for s in request.stops) if request.options.show_stops else ()
     depots=tuple((d.name,project(d.position)) for d in request.depots) if request.options.show_depot_names else ()
     return _Scene(request,layout,tuple(shapes),stations,depots,bg,map_bg,fg,muted,
-        '#365168' if night else '#DDE4EB',brand or muted,line,logo,status)
+        '#365168' if night else '#E0E0E0',brand or muted,line,logo,status)
 
 
 def _paint(painter,scene,cancel=None,visible=None):
