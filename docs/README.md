@@ -23,6 +23,7 @@
 | [图表需求](requirements/charts.md) | 色柱图例、圆柱、间距、字体、放大摘要与标签 |
 | [地图显示](requirements/map-display.md) | 地图数据、方向指标、目录排序、筛选确认与摘要、染色口径和面板停靠 |
 | [最新信息](requirements/latest-info.md) | 当日趋势、线路亮点、提醒与导出状态 |
+| [单线导出设计](design/single-route-export.md) | 导出设置、成品布局、公司品牌与日夜风格 |
 | [架构](design/architecture.md) | 数据流、模块职责、布局与输出边界 |
 | [控件契约](design/controls.md) | 共享接口、筛选、菜单、状态和动效 |
 | [视觉设计](design/visual-design.md) | 样式来源、图形规格和布局预算 |
