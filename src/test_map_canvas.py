@@ -370,7 +370,8 @@ def test_direction_hides_other_leg_station_in_actual_paint_and_keeps_terminal(ca
     assert image.pixelColor(canvas.world_to_screen(stop.position).toPoint()).name()==MAP_BACKGROUND.lower()
     assert image.pixelColor(canvas.world_to_screen(terminal.position).toPoint()).name()=='#ffffff'
 
-def test_junction_lane_symbol_scales_with_observed_road_width_and_zoom(canvas):
+@pytest.mark.parametrize('zoom',[1.,3.,6.])
+def test_junction_lane_symbol_scales_with_observed_road_width_and_zoom(canvas,zoom):
     road=replace(canvas.snapshot.roads[0],road_class='ordinary',lanes_a=2,lanes_b=2,width=20.,
                  paths=(((0.,0.,50.),(40.,0.,50.)),))
     other=replace(road,id=2,paths=(((60.,0.,50.),(100.,0.,50.)),))
@@ -378,10 +379,13 @@ def test_junction_lane_symbol_scales_with_observed_road_width_and_zoom(canvas):
     junction=MapJunction(10,(50.,0.,50.),(1,2),(MapJunctionConnection(100,1,2,0,0,1,(curve,)),))
     canvas.set_snapshot(replace(canvas.snapshot,roads=(road,other),junctions=(junction,)))
     canvas.set_options(routes=False,buildings=False,stops=False,stop_names=False,line_numbers=False)
+    canvas.zoom=zoom;canvas._changed()
     p=canvas.world_to_screen((50.,55.)).toPoint()
     image=canvas.grab().toImage()
-    assert image.pixelColor(p.x(),p.y()+4).red()>245
-    assert image.pixelColor(p.x(),p.y()+9).name()==MAP_BACKGROUND.lower()  # Individual lane, not full road.
+    half_lane=road.width*zoom/4/2
+    assert image.pixelColor(p.x(),p.y()+int(half_lane)-1).red()>245
+    # Sample above the saved curve, away from neighbouring road end caps.
+    assert image.pixelColor(p.x(),p.y()-round(half_lane)-3).name()==MAP_BACKGROUND.lower()
 
 def test_continuous_strokes_merge_only_existing_exact_three_dimensional_endpoints():
     from map_canvas import continuous_paths

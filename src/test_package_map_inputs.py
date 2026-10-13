@@ -78,6 +78,7 @@ def test_smoke_map_real_interactions_and_stable_captures(map_page,tmp_path):
     assert evidence['building']['candidate_ids']==[70,170]
     assert evidence['building']['selected_ids']==[70,170]
     assert evidence['navigation']['dragged'] and evidence['navigation']['zoomed']
+    assert evidence['navigation']['vector_prepared_reused']
     assert evidence['navigation']['window_size']==[map_page.width(),map_page.height()]
     assert {item['mode'] for item in evidence['metrics']}=={'daytime','peak','all_day','passengers'}
     assert 'map-native-passenger-confirmed' in captures
