@@ -184,8 +184,14 @@ def build_export_request(session,map_snapshot,route_id,options,*,branding=None):
     try:date=datetime.fromisoformat(session.get('simulation_time','')).date().isoformat()
     except (TypeError,ValueError):date='—'
     # A depot requires confirmed object identity; textual names alone cannot locate one.
-    depots=((ExportDepot(route.depot_name,route.depot_position),)
-        if route.depot_id is not None and route.depot_name and route.depot_position is not None else ())
+    depot_name=route.depot_name
+    if not depot_name:
+        label=line_display_value(line,'线路车库',session.get('lines',()))
+        # The report already formats an unnamed depot from its saved number.
+        # Reuse that stable route's display name only with confirmed location.
+        depot_name=label if isinstance(label,str) and label.strip() not in ('','—') else ''
+    depots=((ExportDepot(depot_name,route.depot_position),)
+        if route.depot_id is not None and depot_name and route.depot_position is not None else ())
     frozen_company=tuple((key,company.get(key)) for key in
         ('公司标识','公司名称','公司标志','颜色1','颜色2'))
     return RouteExportRequest(str(map_snapshot.source_hash or session.get('save_path','')),

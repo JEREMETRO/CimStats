@@ -7,6 +7,7 @@ import os
 import struct
 import tempfile
 import zlib
+from math import hypot
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, QMarginsF, Qt
 from PySide6.QtGui import (QColor,QFont,QFontMetricsF,QImage,QImageWriter,QPageLayout,
@@ -17,6 +18,7 @@ from stats_typography import emphasis_font, ui_font
 from semantic_colors import color_for, building_function_fill
 from map_model import building_function_values
 from map_canvas import road_style
+from map_visibility import operating_paths
 
 MAX_IMAGE_BYTES=160*1024*1024  # Includes A4 at 600 ppi; larger JPG requests fail before allocation.
 STRIP_BYTES=16*1024*1024
@@ -65,18 +67,20 @@ def _font(item):
 
 def _text_height(text,width,size,role='label',weight=400):
     item=TextItem(text,(0,0,width,10000),size,weight,role)
-    bounds=QFontMetricsF(_font(item)).boundingRect(QRectF(0,0,width,10000),
+    metrics=QFontMetricsF(_font(item))
+    if role=='number' and metrics.horizontalAdvance(text)<=width:
+        return metrics.tightBoundingRect(text).height()+4
+    bounds=metrics.boundingRect(QRectF(0,0,width,10000),
         int(Qt.TextFlag.TextWordWrap|Qt.TextFlag.TextWrapAnywhere),text)
     return max(bounds.height()+2,size*1.25)
 
 
 def _portrait_layout(request,width,height):
-    """Portrait pages stack the square map over the complete information area."""
+    """Measure information first; give the remaining rectangle to the map."""
     margin=48.;content_width=width-2*margin
-    for map_fraction,body in ((.54,22),(.50,22),(.46,22),(.46,20),(.42,18)):
-        side=min(content_width,height*map_fraction)
-        map_top=28.;info_top=map_top+side+32
-        items=[];rules=[];y=info_top
+    for body in (22,20,18,16):
+        map_top=28.
+        items=[];rules=[];y=0.
         def emit(value,x,y,w,size,role='label',weight=400,align='left',display=None):
             h=_text_height(display or value,w,size,role,weight)
             items.append(TextItem(value,(x,y,w,h),size,weight,role,align,display))
@@ -87,38 +91,50 @@ def _portrait_layout(request,width,height):
         route_size=112
         while route_size>44 and _text_height(request.information.route_name,content_width,route_size,'route',650)>160:
             route_size-=4
-        y+=emit(request.information.route_name,margin,y,content_width,route_size,'route',650)+6
+        route_width=content_width*.70
+        while route_size>44 and _text_height(request.information.route_name,route_width,route_size,'route',650)>160:
+            route_size-=4
+        route_h=emit(request.information.route_name,margin,y,route_width,route_size,'route',650)
         mode=f'{request.information.mode} · {request.information.direction}'
-        mode_h=emit(mode,margin,y,content_width*.65,32,'heading',600)
-        date_h=emit(request.simulated_date,margin+content_width*.70,y,content_width*.30,24,'muted',400,'right')
-        y+=max(mode_h,date_h)+18;rules.append((margin,y,content_width));y+=24
+        header_x=margin+content_width*.74;header_w=content_width*.26
+        mode_h=emit(mode,header_x,y+12,header_w,32,'heading',600,align='right')
+        date_h=emit(request.simulated_date,header_x,y+mode_h+24,header_w,24,'muted',400,'right')
+        y+=max(route_h,mode_h+date_h+24)+12;rules.append((margin,y,content_width));y+=18
         sections=request.information.sections;bottom=y
         # The map/information relationship is vertical. The two independent
         # data categories use the wide lower area without shrinking all text.
         for index,(section_id,title,rows) in enumerate(sections):
+            split=section_id=='line_information' and len(rows)>7
+            groups=(rows[:(len(rows)+1)//2],rows[(len(rows)+1)//2:]) if split else (rows,)
             if len(sections)==2:
-                left_width=(content_width-40)*.58
-                x=margin if index==0 else margin+left_width+40
-                column=left_width if index==0 else content_width-left_width-40
-            else:x=margin;column=content_width
-            cursor=y+emit(title,x,y,column,28,'heading',600)+12
-            for key,label,value in rows:
+                slot=(content_width-64)/3
+                x=margin if index==0 else margin+2*(slot+32)
+                category_w=2*slot+32 if index==0 else slot
+            else:x=margin;category_w=content_width
+            column=(category_w-32)/2 if split else category_w
+            row_top=y+emit(title,x,y,category_w,26,'heading',600)+(6 if rows and rows[0][0]=='今日客流' else 10)
+            section_bottom=row_top
+            for group_index,group in enumerate(groups):
+              column_x=x+group_index*(column+32);cursor=row_top
+              for key,label,value in group:
                 if key=='今日客流':
-                    cursor+=emit(value.removesuffix(' 人次'),x,cursor,column,76,'number',600)
-                    cursor+=emit(label+' · 人次',x,cursor,column,body,'muted')+14
+                    cursor+=emit(value.removesuffix(' 人次'),column_x,cursor,column,76,'number',600)
+                    cursor+=emit(label+' · 人次',column_x,cursor,column,body,'muted')+12
                     continue
-                label_w=column*(.40 if key in ('开线日期','最近改线日期','线路车库') else .57)
+                label_w=column*(.25 if key=='线路车库' else .40 if key in ('开线日期','最近改线日期') else .57)
                 value_w=column-label_w-16
                 display=(value.replace(' ','\n',1) if key in ('开线日期','最近改线日期') and ' ' in value else value)
-                lh=emit(label,x,cursor,label_w,body)
-                vh=emit(value,x+label_w+16,cursor,value_w,body+2,'value',500,'right',display)
-                cursor+=max(lh,vh)+8
-            rules.append((x,cursor+6,column));bottom=max(bottom,cursor+18)
-        if bottom<=height-28:
-            offset=max(0.,(height-(bottom+28))/2)
+                lh=emit(label,column_x,cursor,label_w,body)
+                vh=emit(value,column_x+label_w+16,cursor,value_w,body+2,'value',500,'right',display)
+                cursor+=max(lh,vh)+4
+              section_bottom=max(section_bottom,cursor)
+            rules.append((x,section_bottom+6,category_w));bottom=max(bottom,section_bottom+18)
+        map_height=height-map_top-28-32-bottom
+        if map_height>=height*.30:
+            offset=map_top+map_height+32
             translated=tuple(replace(item,rect=(item.rect[0],item.rect[1]+offset,*item.rect[2:])) for item in items)
-            return ExportLayout(width,height,((width-side)/2,map_top+offset,side,side),
-                (margin,info_top+offset,content_width,bottom-info_top),translated,
+            return ExportLayout(width,height,(margin,map_top,content_width,map_height),
+                (margin,offset,content_width,bottom),translated,
                 tuple((x,y+offset,w) for x,y,w in rules),(logo[0],logo[1]+offset,*logo[2:]))
     raise LayoutError('文字无法完整排入纵向画幅，请缩短线路名称或减少字段')
 
@@ -130,8 +146,8 @@ def build_layout(request):
     if size.height_mm>size.width_mm:return _portrait_layout(request,width,height)
     attempts=tuple((2/3,body) for body in (22,20,18,16,14))+((.52,16),(.52,14),(.45,14))
     for fraction,body in attempts:
-        side=min(height,width*fraction)
-        x=side+40;right=width-36;column=right-x
+        map_width=(width-72-40)*fraction;map_height=height-56
+        x=36+map_width+40;right=width-36;column=right-x
         items=[];rules=[];y=16. if body==14 else 28.;dense=body<=18;compact=body<=16
         def text(value,size,role='label',weight=400,rect_width=None,align='left'):
             nonlocal y
@@ -156,7 +172,7 @@ def build_layout(request):
         rules.append((x,y,column));y+=16 if dense else 26
         for section_id,title,rows in request.information.sections:
             text(title,20 if body==14 else 22 if compact else 24 if dense else 28,'heading',600)
-            y+=4 if body==14 else 8 if dense else 14
+            y+=6 if rows and rows[0][0]=='今日客流' else 4 if body==14 else 8 if dense else 14
             for key,label,value in rows:
                 if key=='今日客流':
                     number=value.removesuffix(' 人次')
@@ -180,11 +196,9 @@ def build_layout(request):
         # y includes trailing space after the final rule; visible content keeps
         # the same >=16 design-unit boundary as the compact header.
         if y<=height-16:
-            block_height=max(side,y+12)
-            offset=max(0.,(height-block_height)/2)
-            map_y=offset+(block_height-side)/2
+            offset=max(0.,(height-(y+12))/2)
             translated=tuple(replace(item,rect=(item.rect[0],item.rect[1]+offset,*item.rect[2:])) for item in items)
-            return ExportLayout(width,height,(0.,map_y,side,side),(x,24.,column,height-48),
+            return ExportLayout(width,height,(36.,28.,map_width,map_height),(x,24.,column,height-48),
                 translated,tuple((rx,ry+offset,rw) for rx,ry,rw in rules),
                 (logo[0],logo[1]+offset,*logo[2:]))
     raise LayoutError('文字无法完整排入当前画幅，请使用纵向 A4 或缩短线路名称')
@@ -254,20 +268,22 @@ def _prepare_scene(request,cancel=None):
     brand,logo,status=_resolve_brand(request,bg)
     line='#20DFF5' if night else color_for('mode',request.route.mode)
     points=[p for path in request.paths for p in path]
+    if request.options.show_stops:points.extend(s.position for s in request.stops)
     if request.options.show_depot_names:points.extend(d.position for d in request.depots)
     xmin,xmax=min(p[0] for p in points),max(p[0] for p in points)
     zmin,zmax=min(p[2] for p in points),max(p[2] for p in points)
-    span=max(xmax-xmin,zmax-zmin,1.)*1.15
     cx,cz=(xmin+xmax)/2,(zmin+zmax)/2
-    mx,my,side,_=layout.map_rect
-    scale=side/span
-    def project(p):return QPointF(mx+side/2+(p[0]-cx)*scale,my+side/2-(p[2]-cz)*scale)
+    mx,my,map_width,map_height=layout.map_rect
+    scale=min((map_width-32)/max(xmax-xmin,1.),(map_height-32)/max(zmax-zmin,1.))
+    world_xmin,world_xmax=cx-map_width/scale/2,cx+map_width/scale/2
+    world_zmin,world_zmax=cz-map_height/scale/2,cz+map_height/scale/2
+    def project(p):return QPointF(mx+map_width/2+(p[0]-cx)*scale,my+map_height/2-(p[2]-cz)*scale)
     def path(saved,closed=False):
         _check(cancel)
         if not saved:return None
         # Reject only features entirely outside; never rewrite their coordinates.
-        if (max(p[0] for p in saved)<cx-span/2 or min(p[0] for p in saved)>cx+span/2 or
-            max(p[2] for p in saved)<cz-span/2 or min(p[2] for p in saved)>cz+span/2):return None
+        if (max(p[0] for p in saved)<world_xmin or min(p[0] for p in saved)>world_xmax or
+            max(p[2] for p in saved)<world_zmin or min(p[2] for p in saved)>world_zmax):return None
         result=QPainterPath(project(saved[0]))
         for i,p in enumerate(saved[1:]):
             if i%128==0:_check(cancel)
@@ -320,12 +336,49 @@ def _prepare_scene(request,cancel=None):
                     Qt.PenStyle.SolidLine,Qt.PenCapStyle.FlatCap if casing else Qt.PenCapStyle.RoundCap,
                     Qt.PenJoinStyle.RoundJoin)
                 shapes.append(_Shape(p,pen))
-    route_paths=tuple(p for saved in request.paths if (p:=path(saved)) is not None)
+    effective=request.metrics.effective_direction
+    operating=operating_paths(request.route,effective)
+    distinguish=(effective=='whole' and request.route.direction.kind=='roundtrip'
+        and request.route.direction.terminal_index is not None and request.route.leg_paths)
+    groups=([(operating_paths(request.route,'down'),False,False),
+             (operating_paths(request.route,'up'),True,False)] if distinguish else [(operating,False,False)])
+    if request.options.include_deadhead:
+        groups.append((request.paths[len(operating):],True,True))
+    def key(saved):return min(tuple(saved),tuple(reversed(saved)))
+    shared=(set(map(key,groups[0][0]))&set(map(key,groups[1][0]))) if distinguish else set()
+    route_paths=[]
+    for saved_paths,dashed,deadhead in groups:
+        phase=0.
+        for saved in saved_paths:
+            p=path(saved)
+            if p is None:continue
+            length=p.length()
+            if not deadhead and key(saved) in shared:
+                # Offset the display strokes of an identical saved path, as in
+                # the main map. Stored geometry remains untouched.
+                offset=3. if dashed else -3.
+                if tuple(saved)!=key(saved):offset=-offset
+                points=[project(point) for point in saved];shifted=QPainterPath()
+                for i,point in enumerate(points):
+                    a,b=points[max(0,i-1)],points[min(len(points)-1,i+1)]
+                    dx,dy=b.x()-a.x(),b.y()-a.y();norm=hypot(dx,dy)
+                    point=point+QPointF(-dy/norm*offset,dx/norm*offset) if norm else point
+                    if i:shifted.lineTo(point)
+                    else:shifted.moveTo(point)
+                p=shifted
+            route_paths.append((p,dashed,deadhead,phase))
+            phase+=length
     # Complete all casings before route bodies, so saved segment joints remain continuous.
     for color,w in ((bg,8),(line,5)):
-        for p in route_paths:
-            shapes.append(_Shape(p,QPen(QColor(color),w,Qt.PenStyle.SolidLine,
-                Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin)))
+        for p,dashed,deadhead,phase in route_paths:
+            width=w*.65 if deadhead else w
+            stroke=_mix(line,map_bg,.45) if deadhead and w==5 else color
+            pen=QPen(QColor(stroke),width,Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.FlatCap if dashed else Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin)
+            if dashed:
+                dash,gap=(6.,5.) if deadhead else (14.,8.)
+                pen.setDashPattern([dash/width,gap/width]);pen.setDashOffset(phase/width)
+            shapes.append(_Shape(p,pen))
     stations=tuple(project(s.position) for s in request.stops) if request.options.show_stops else ()
     depots=tuple((d.name,project(d.position)) for d in request.depots) if request.options.show_depot_names else ()
     return _Scene(request,layout,tuple(shapes),stations,depots,bg,map_bg,fg,muted,
@@ -350,7 +403,11 @@ def _paint(painter,scene,cancel=None,visible=None):
     painter.setPen(QPen(QColor(scene.line),2));painter.setBrush(QColor(scene.background))
     for p in scene.station_points:painter.drawEllipse(p,4.2,4.2)
     painter.setFont(ui_font(16));painter.setPen(QColor(scene.foreground))
-    for name,p in scene.depot_points:painter.drawText(p+QPointF(8,-8),name)
+    metrics=QFontMetricsF(painter.font());mx,my,mw,mh=layout.map_rect
+    for name,p in scene.depot_points:
+        x=max(mx+8,min(p.x()+8,mx+mw-metrics.horizontalAdvance(name)-8))
+        y=max(my+metrics.ascent()+8,min(p.y()-8,my+mh-8))
+        painter.drawText(QPointF(x,y),name)
     painter.restore()
     for item in layout.text_items:
         _check(cancel)
@@ -358,6 +415,14 @@ def _paint(painter,scene,cancel=None,visible=None):
         painter.setFont(_font(item))
         painter.setPen(QColor(scene.muted if item.role in ('muted','label') else
             scene.line if item.role=='number' and scene.request.options.theme=='night' else scene.foreground))
+        if item.role=='number':
+            metrics=QFontMetricsF(painter.font())
+            if metrics.horizontalAdvance(item.text)<=item.rect[2]:
+                bounds=metrics.tightBoundingRect(item.text)
+                # Align the visible digits, rather than their large font
+                # ascent/descent box, with the passenger heading above them.
+                painter.drawText(QPointF(item.rect[0]-bounds.left(),item.rect[1]-bounds.top()+2),item.text)
+                continue
         align=Qt.AlignmentFlag.AlignRight if item.align=='right' else Qt.AlignmentFlag.AlignLeft
         painter.drawText(QRectF(*item.rect),int(align|Qt.AlignmentFlag.AlignTop|
             Qt.TextFlag.TextWordWrap|Qt.TextFlag.TextWrapAnywhere),item.display_text or item.text)

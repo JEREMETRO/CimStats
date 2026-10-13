@@ -90,3 +90,14 @@ def test_legacy_flat_depot_paths_are_not_guessed_into_directions():
     route=replace(snapshot.routes[0],depot_paths=(((0.,0.,-20.),(0.,0.,0.)),((200.,0.,0.),(200.,0.,-20.))))
     with pytest.raises(ExportError):build_export_request(session,replace(snapshot,routes=(route,)),42,
         ExportOptions(direction='up',include_deadhead=True))
+
+
+def test_confirmed_unnamed_depot_reuses_the_existing_line_garage_display_name():
+    from route_export_model import ExportOptions,build_export_request
+    session,snapshot=source();session['lines'][0]['线路车库']='八连交通集团公交车库12'
+    route=replace(snapshot.routes[0],depot_id=123,depot_name='',depot_position=(10.,0.,-30.))
+    req=build_export_request(session,replace(snapshot,routes=(route,)),42,ExportOptions(show_depot_names=True))
+    assert req.depots[0].name=='八连交通集团公交车库12'
+    assert req.depots[0].position==(10.,0.,-30.)
+    unknown=build_export_request(session,snapshot,42,ExportOptions(show_depot_names=True))
+    assert unknown.depots==()

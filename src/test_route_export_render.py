@@ -1,4 +1,4 @@
-"""Actual output: square geography, complete text, pixels and vector PDF."""
+"""Actual output: fitted geography, complete text, pixels and vector PDF."""
 from dataclasses import replace
 from pathlib import Path
 import pytest
@@ -21,7 +21,7 @@ def test_complete_layout_never_overlaps_map_or_silently_drops_fields(qt_applicat
         company_name='长公司名称交通集团及城市综合公共交通运营有限公司',route_name='503E 城市跨区快速公交线路'))
     layout=build_layout(req)
     x,y,w,h=layout.map_rect
-    assert w==h
+    assert w>0 and h>0
     if orientation=='portrait':assert y+h<=layout.info_rect[1]
     else:assert x+w<=layout.info_rect[0]
     drawn=' '.join(item.text for item in layout.text_items)
@@ -96,7 +96,7 @@ def test_extreme_raster_rejected_before_full_image_allocation(qt_application,tmp
 
 
 def test_route_segment_joints_do_not_turn_white_in_actual_map(qt_application):
-    from route_export_render import preview
+    from route_export_render import preview,build_layout
     from map_model import MapRoute,MapSnapshot
     from route_export_model import ExportOptions,build_export_request
     a,b,c=(0.,0.,0.),(100.,0.,0.),(200.,0.,0.)
@@ -106,7 +106,9 @@ def test_route_segment_joints_do_not_turn_white_in_actual_map(qt_application):
     image=preview(req,(1536,1024))
     # At the seam, line interior must match the adjacent interior. White caps
     # from separately cased segments otherwise punch a hole in the route.
-    assert image.pixelColor(510,510)==image.pixelColor(505,510)
+    mx,my,mw,mh=build_layout(req).map_rect
+    center_x,center_y=round(mx+mw/2),round(my+mh/2)
+    assert image.pixelColor(center_x,center_y)==image.pixelColor(center_x-5,center_y)
 
 
 def test_streamed_png_tiles_match_the_unsegmented_preview(qt_application,tmp_path,monkeypatch):
@@ -139,7 +141,7 @@ def test_saved_logo_selection_does_not_reuse_an_already_resolved_custom_image(qt
     assert image.text('logo_status')=='missing_asset'
 
 
-def test_portrait_places_square_map_above_information_and_preserves_datetime_tokens(qt_application):
+def test_portrait_places_map_above_information_and_preserves_datetime_tokens(qt_application):
     from route_export_model import ALL_FIELDS,ExportOptions,build_export_request
     from route_export_render import build_layout
     session,snapshot=source()
@@ -177,7 +179,7 @@ def test_widescreen_long_identity_with_all_fields_remains_complete(qt_applicatio
 @pytest.mark.parametrize('bridge',[False,True])
 def test_same_level_road_segment_casings_do_not_cut_across_saved_joints(qt_application,bridge):
     from map_model import MapRoad
-    from route_export_render import preview
+    from route_export_render import preview,_prepare_scene
     req=request(show_stops=False)
     # Roads are split at an identical saved point. Sample the upper road
     # interior, away from the operating route, at and beside that joint.
@@ -186,4 +188,128 @@ def test_same_level_road_segment_casings_do_not_cut_across_saved_joints(qt_appli
         bridge=bridge and i==2) for i,path in enumerate(paths,1))
     req=replace(req,snapshot=replace(req.snapshot,roads=roads))
     image=preview(req,(1536,1024))
-    assert image.pixelColor(500,356)==image.pixelColor(490,356)
+    scene=_prepare_scene(req)
+    road_shape=next(s for s in scene.shapes if s.path.boundingRect().height()==0)
+    y=round(road_shape.path.boundingRect().top())
+    x=round(scene.layout.map_rect[0]+scene.layout.map_rect[2]/2)
+    assert image.pixelColor(x,y)==image.pixelColor(x-8,y)
+
+
+def test_portrait_map_uses_the_same_horizontal_margins_as_information(qt_application):
+    from route_export_model import ALL_FIELDS
+    from route_export_render import build_layout
+    layout=build_layout(request(aspect='A4',orientation='portrait',selected_fields=ALL_FIELDS))
+    mx,my,mw,mh=layout.map_rect;ix,iy,iw,ih=layout.info_rect
+    assert mx==ix and mw==iw
+    assert my+mh<iy
+    assert max(i.rect[1]+i.rect[3] for i in layout.text_items)<layout.height
+
+
+def test_whole_view_distinguishes_up_dashed_and_down_solid_in_actual_pixels(qt_application):
+    from route_export_render import preview,build_layout
+    from map_model import MapStop
+    req=request(show_stops=False)
+    a,b,c=(0.,0.,0.),(100.,0.,0.),(200.,0.,0.)
+    route=replace(req.route,paths=((a,b),(b,c)),leg_paths=(((a,b),),((b,c),)))
+    snapshot=replace(req.snapshot,routes=(route,),stops=tuple(MapStop(i,'',p) for i,p in enumerate((a,b,c),1)))
+    from route_export_model import build_export_request
+    session,_=source()
+    selected=build_export_request(session,snapshot,42,req.options)
+    image=preview(selected,(1536,1024));mx,my,mw,mh=build_layout(selected).map_rect
+    colors=[{image.pixelColor(x,round(my+mh/2)).name()
+        for x in range(round(mx+mw*left),round(mx+mw*right))}
+        for left,right in ((.20,.40),(.60,.80))]
+    assert len(colors[0])==1
+    assert len(colors[1])>1
+
+
+def test_selected_route_fills_map_with_safe_stroke_margin_without_clipping(qt_application):
+    import route_export_render as renderer
+    req=request(show_stops=False)
+    scene=renderer._prepare_scene(req)
+    mx,my,mw,mh=scene.layout.map_rect
+    from PySide6.QtCore import QRectF
+    extent=QRectF()
+    for shape in scene.shapes:
+        if shape.pen is not None and shape.pen.color().name()==scene.line.lower():
+            extent=extent.united(shape.path.boundingRect())
+    assert extent.left()>=mx+12 and extent.right()<=mx+mw-12
+    assert extent.top()>=my+12 and extent.bottom()<=my+mh-12
+    assert abs(max(extent.width()/(mw-32),extent.height()/(mh-32))-1)<1e-6
+
+
+def test_portrait_map_height_adapts_to_information_space(qt_application):
+    from route_export_model import ALL_FIELDS
+    from route_export_render import build_layout
+    layouts=[build_layout(request(aspect='A4',orientation='portrait',selected_fields=fields))
+        for fields in (('今日客流',),ALL_FIELDS)]
+    assert layouts[0].map_rect[2]==layouts[1].map_rect[2]
+    assert layouts[0].map_rect[3]>layouts[1].map_rect[3]
+    assert any(l.map_rect[2]!=l.map_rect[3] for l in layouts)
+
+
+def test_rectangular_map_keeps_equal_horizontal_and_vertical_geometry_scale(qt_application):
+    import route_export_render as renderer
+    scene=renderer._prepare_scene(request(aspect='16:9',show_stops=False))
+    mx,my,mw,mh=scene.layout.map_rect
+    assert mw!=mh
+    route_shape=next(s for s in scene.shapes if s.pen is not None and s.pen.color().name()==scene.line.lower())
+    a,b=route_shape.path.elementAt(0),route_shape.path.elementAt(1)
+    assert abs(abs(b.x-a.x)-abs(b.y-a.y))<1e-6
+
+
+def test_fit_includes_visible_station_markers_with_safe_margin(qt_application):
+    import route_export_render as renderer
+    req=request()
+    stops=tuple(replace(s,position=(s.position[0]-20,s.position[1],s.position[2]+30)) for s in req.stops)
+    scene=renderer._prepare_scene(replace(req,stops=stops))
+    mx,my,mw,mh=scene.layout.map_rect
+    assert all(mx+12<=p.x()<=mx+mw-12 and my+12<=p.y()<=my+mh-12 for p in scene.station_points)
+
+
+def test_passenger_heading_and_number_form_one_visually_close_group(qt_application):
+    from route_export_render import preview,build_layout
+    from stats_style import initialize_theme
+    initialize_theme(qt_application)
+    req=request(theme='night',selected_fields=('今日客流',))
+    layout=build_layout(req);image=preview(req,(1536,1024))
+    heading=next(i for i in layout.text_items if i.text=='客流数据')
+    number=next(i for i in layout.text_items if i.role=='number')
+    x=int(heading.rect[0]);w=int(heading.rect[2]);top=int(heading.rect[1])
+    white=[];cyan=[]
+    for y in range(top,round(number.rect[1]+number.rect[3])):
+        for px in range(x,x+w):
+            c=image.pixelColor(px,y)
+            if y<heading.rect[1]+heading.rect[3] and min(c.red(),c.green(),c.blue())>220:white.append(y)
+            if c.red()<80 and c.green()>200 and c.blue()>200:cyan.append(y)
+    assert white and cyan
+    assert min(cyan)-max(white)<=18
+
+
+def test_up_dash_phase_continues_across_saved_path_fragments(qt_application):
+    from route_export_model import build_export_request
+    from route_export_render import preview,build_layout
+    req=request(show_stops=False);session,_=source()
+    a,b,c,mid=(0.,0.,0.),(100.,0.,0.),(200.,0.,0.),(137.,0.,0.)
+    images=[]
+    for up in (((b,c),),((b,mid),(mid,c))):
+        route=replace(req.route,paths=((a,b),)+up,leg_paths=(((a,b),),up))
+        selected=build_export_request(session,replace(req.snapshot,routes=(route,)),42,req.options)
+        images.append(preview(selected,(1536,1024)))
+    mx,my,mw,mh=build_layout(selected).map_rect
+    # Compare after the fragmentation point, away from its antialiased end.
+    for x in range(round(mx+mw*.75),round(mx+mw*.90)):
+        assert images[0].pixelColor(x,round(my+mh/2))==images[1].pixelColor(x,round(my+mh/2))
+
+
+def test_exactly_shared_direction_paths_both_remain_visible(qt_application):
+    from route_export_model import build_export_request
+    from route_export_render import preview,build_layout
+    req=request(show_stops=False);session,_=source()
+    a,b=(0.,0.,0.),(100.,0.,0.)
+    route=replace(req.route,paths=((a,b),(b,a)),leg_paths=(((a,b),),((b,a),)))
+    selected=build_export_request(session,replace(req.snapshot,routes=(route,)),42,req.options)
+    image=preview(selected,(1536,1024));mx,my,mw,mh=build_layout(selected).map_rect
+    colors=[{image.pixelColor(x,round(my+mh/2+offset)).name()
+        for x in range(round(mx+mw*.25),round(mx+mw*.75))} for offset in (-3,3)]
+    assert len(colors[0])==1 and len(colors[1])>1
