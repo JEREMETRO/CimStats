@@ -547,11 +547,13 @@ def company_rows(root):
             continue
         company_id = str(field(player, "m_id") or "")
         company_name = field(company, "m_name") or field(player, "m_companyName") or ""
+        color1, color2 = field(company, "m_color1"), field(company, "m_color2")
         companies.append({
             "公司序号": player_index, "玩家ID": company_id,
             "玩家名": field(player, "m_name") or "",
             "公司名称": company_name, "公司标志": field(company, "m_logo") or field(player, "m_companyLogo") or "",
-            "颜色1": int(field(company, "m_color1") or 0), "颜色2": int(field(company, "m_color2") or 0),
+            "颜色1": int(color1) if color1 is not None else None,
+            "颜色2": int(color2) if color2 is not None else None,
             "资金": int(field(company, "m_money") or 0), "基础设施价值": int(field(company, "m_infraValue") or 0),
             "车辆价值": int(field(company, "m_vehicleValue") or 0), "业务价值": int(field(company, "m_businessValue") or 0),
             "公司价值": int(field(company, "m_companyValue") or 0),

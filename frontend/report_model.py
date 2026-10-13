@@ -407,6 +407,9 @@ def load_session(export_dir: Path, tag: str, catalog_dir: Path | None = None) ->
         company = {
             "公司名称": name, "公司标识": raw["公司标识"],
             "原始公司名称": raw["原始公司名称"],
+            "公司标志": str(raw.get("公司标志") or ""),
+            "颜色1": optional_integer(raw.get("颜色1")),
+            "颜色2": optional_integer(raw.get("颜色2")),
             "公司序号": integer(raw.get("公司序号"), company_index),
             "资金": round(number(raw.get("资金")) / 100, 2),
             "公司价值": round(number(raw.get("公司价值")) / 100, 2),
