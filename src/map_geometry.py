@@ -505,7 +505,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
                                      j.get('bridge',False),j.get('tunnel',False),';'.join(issues) or None))
     stops={int(s['id']):MapStop(int(s['id']),s.get('name',''),tuple(s['position']))
            for s in data.get('stops',{}).values() if s.get('position') is not None}
-    depots={b['id'] for b in data.get('buildings',()) if b.get('kind')=='DepotData'}
+    depots={b['id']:b for b in data.get('buildings',()) if b.get('kind')=='DepotData'}
     routes=[]; direction_jobs=[]
     for line in data.get('lines',()):
         _check(cancelled)
@@ -515,7 +515,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         for s in operational:
             if s.get('position') is not None:
                 stops[s['id']]=MapStop(s['id'],s.get('name',''),tuple(s['position']))
-        issues=[]; legs=[]; analysis_legs=[]; depot_paths=[]
+        issues=[]; legs=[]; analysis_legs=[]; depot_paths=[];depot_leg_paths=[]
         raw_legs=line.get('legs',())
         # Solve all operating legs together. The same saved road at a stop
         # must retain the same allowed lane; independent per-leg choices can
@@ -546,6 +546,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
                 if raw_legs:
                     p,di=route_leg(raw_legs[i].get('roads',()),raw_roads,connections=connection_lookup if 'junctions' in data else None,mode=line.get('mode'))
                     depot_paths.extend(p)
+                    depot_leg_paths.append(tuple(p))
                     diagnostics.extend(f"route:{line['id']}:depot:{d}" for d in di)
         else:
             issues.append('missing_depot_identity')
@@ -573,6 +574,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         if not issues and len(points)==len(operational):
             direction_jobs.append((len(routes),points,tuple(analysis_legs),
                                    [s.get('name','') for s in operational]))
+        depot=depots.get(records[0]['id']) if has_depot else None
         routes.append(MapRoute(line['id'],format_line_name(line.get('number',0),line.get('name','')),line.get('number',0),line.get('company_id',''),
                                line.get('company',''),line.get('mode',''),tuple(s['id'] for s in operational),
                                tuple(p for leg in legs for p in leg),RouteDirection(),tuple(legs),tuple(depot_paths),
@@ -583,7 +585,10 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
                                tuple(leg.get('map_length_units') for leg in raw_legs[1:-1]) if has_depot else (),
                                tuple(raw_legs[i].get('map_length_units') for i in (0,len(raw_legs)-1))
                                if has_depot and raw_legs else (),
-                               tuple(s.get('arrival_offset_ticks') for s in operational)))
+                               tuple(s.get('arrival_offset_ticks') for s in operational),
+                               depot_leg_paths=tuple(depot_leg_paths),depot_id=depot['id'] if depot else None,
+                               depot_name=depot.get('name','') if depot else '',
+                               depot_position=tuple(depot['position']) if depot and depot.get('position') is not None else None))
     if direction_jobs:
         if direction_worker_dir is None:
             directions={index:infer_direction(points,legs,names,lambda:_check(cancelled))
@@ -625,7 +630,9 @@ def _decode_snapshot(d):
                                       'direction':direction, 'service':_route_service(r.get('service')),
                                       'leg_map_length_units':tuple(r.get('leg_map_length_units',())),
                                       'depot_map_length_units':tuple(r.get('depot_map_length_units',())),
-                                      'stop_arrival_offsets_ticks':tuple(r.get('stop_arrival_offsets_ticks',()))})))
+                                      'stop_arrival_offsets_ticks':tuple(r.get('stop_arrival_offsets_ticks',())),
+                                      'depot_leg_paths':tuple(paths(p) for p in r.get('depot_leg_paths',())),
+                                      'depot_position':tuple(r['depot_position']) if r.get('depot_position') is not None else None})))
     return MapSnapshot(**(d|{'roads':roads,'buildings':buildings,'stops':stops,'routes':tuple(routes),
                             'diagnostics':tuple(d['diagnostics']),'bounds':tuple(d['bounds']),'junctions':junctions}))
 

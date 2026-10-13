@@ -184,6 +184,12 @@ class MapRoute:
     leg_map_length_units: tuple[int | None, ...] = ()
     depot_map_length_units: tuple[int | None, ...] = ()
     stop_arrival_offsets_ticks: tuple[int | None, ...] = ()
+    # Confirmed depot record and the two serialized legs: depot->first, last->depot.
+    # Missing legacy values stay unknown; never infer an object position from a path.
+    depot_leg_paths: tuple[tuple[Path, ...], ...] = ()
+    depot_id: int | None = None
+    depot_name: str = ''
+    depot_position: Point | None = None
 
 @dataclass(frozen=True, slots=True)
 class MapSnapshot:
