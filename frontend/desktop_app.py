@@ -732,8 +732,9 @@ class MainWindow(FluentMainWindow):
                       ('latest-png', '首页图片 PNG', FluentIcon.PHOTO, ready),
                       ('latest-copy', '复制当前摘要', FluentIcon.COPY, ready), (None, '', None, False)]
         elif index == 1:
-            ready = self.map_page.result is not None and self.map_page.canvas.can_export()
-            items += [('map-png', '地图图片 PNG', FluentIcon.PHOTO, ready), (None, '', None, False)]
+            ready = self.map_page.can_export()
+            label = '单线线路图' if self.map_page.preset == 'single' else '地图图片 PNG'
+            items += [('map-png', label, FluentIcon.PHOTO, ready), (None, '', None, False)]
         elif index == 3:
             items += [('stats-report', '统计报表（PNG + XLSX）', FluentIcon.DOCUMENT,
                        self.statistics_page.export_button.isEnabled()), (None, '', None, False)]
@@ -749,7 +750,10 @@ class MainWindow(FluentMainWindow):
         controller = self.latest_info_controller
         if key == 'map-png':
             page = self.map_page
-            if page.result is None or not page.canvas.can_export():return
+            if not page.can_export():return
+            if page.preset == 'single':
+                page.open_route_export(self)
+                return
             result, token = page.result, page.save_token
             path, _ = QFileDialog.getSaveFileName(self, '导出地图', '地图.png', 'PNG 图片 (*.png)')
             if page.result is not result or page.save_token != token or not page.canvas.can_export():return
@@ -830,6 +834,7 @@ class MainWindow(FluentMainWindow):
         self._mount_header_tabs(self.map_page,self.map_tabs)
         self.map_page.failed.connect(lambda message: self._notify('地图读取失败', message, error=True))
         self.map_page.ready.connect(self._refresh_exports)
+        self.map_page.export_context_changed.connect(self._refresh_exports)
         self.map_page.canvas.export_availability_changed.connect(lambda _:self._refresh_exports())
         self.pages.addWidget(self.map_page)
 

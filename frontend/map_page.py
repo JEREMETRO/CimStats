@@ -339,6 +339,7 @@ class MapPage(QWidget):
     failed = Signal(str)
     statistics_preparation_started=Signal()
     statistics_preparation_finished=Signal(object)
+    export_context_changed=Signal()
 
     def __init__(self, settings, parent=None, cache_dir=None):
         super().__init__(parent)
@@ -365,6 +366,7 @@ class MapPage(QWidget):
         self._prefetch_snapshot=None
         self._prefetch_error=None
         self.workers=[]
+        self._route_export_dialog=None
         self._stats_worker=None
         self._requested=False
         self.setMinimumWidth(0)
@@ -493,6 +495,7 @@ class MapPage(QWidget):
                 self._apply_current()
                 self._restore_view()
         finally:self._switching=False
+        self.export_context_changed.emit()
 
     def _restore_view(self):
         view=valid_view(self.presets.state(self.preset)['view'])
@@ -664,6 +667,8 @@ class MapPage(QWidget):
             self.planning_panel.building_menu.hide()
 
     def set_session(self, session):
+        if self._route_export_dialog is not None:
+            self._route_export_dialog.reject()
         self._close_building_menu()
         if self._stats_worker is not None:self._stats_worker.requestInterruption()
         self._stats_worker=None
@@ -937,6 +942,7 @@ class MapPage(QWidget):
         modes=state.get('layer_modes')
         visible=sum(1 for route in self.result.routes if state.get('routes',True) and (modes is None or route.mode in modes))
         self.status.setText('   ·   '.join(str(v) for v in (city,day,f'显示 {visible} 条线路',f'已选 {len(self.result.routes)} 条') if v))
+        self.export_context_changed.emit()
 
     def showEvent(self,event):
         super().showEvent(event)
@@ -945,8 +951,51 @@ class MapPage(QWidget):
         self.ensure_loaded()
 
     def stop_workers(self):
+        if self._route_export_dialog is not None:
+            self._route_export_dialog.reject()
         for worker in self.workers:worker.requestInterruption()
         return not any(worker.isRunning() for worker in self.workers)
+
+    def can_export(self):
+        if self.result is None or not self.canvas.can_export():return False
+        if self.preset!='single':return True
+        from map_service_time import session_line
+        from map_visibility import usable_paths,operating_paths
+        state=self.presets.state('single')['query']
+        identity=state['route_id']
+        if identity is None or self.query is None or session_line(self.session,identity) is None:return False
+        matches=tuple(route for route in self.query.snapshot.routes if route.id==identity)
+        return len(matches)==1 and usable_paths(operating_paths(matches[0],state['direction']))
+
+    def route_export_request(self,options=None):
+        from route_export_model import ExportOptions,build_export_request,ExportError
+        if self.preset!='single' or not self.can_export():
+            raise ExportError('请选择已加载的单条线路')
+        state=self.presets.state('single')['query']
+        options=options or ExportOptions(direction=state['direction'],include_deadhead=state['deadhead'],
+                                        show_stops=bool(self.canvas.options.get('stops',True)))
+        return build_export_request(self.session,self.query.snapshot,state['route_id'],options)
+
+    def open_route_export(self,parent=None):
+        if not self.can_export() or self.preset!='single':return None
+        from route_export_dialog import RouteExportDialog
+        from route_export_model import build_export_request
+        request=self.route_export_request()
+        # The dialog keeps this save's immutable map and source model; new saves
+        # invalidate the dialog before replacing the page's session.
+        session,snapshot,identity=self.session,self.query.snapshot,request.route_id
+        dialog=RouteExportDialog(request,parent or self.window(),
+            request_builder=lambda options:build_export_request(session,snapshot,identity,options))
+        if self._route_export_dialog is not None:self._route_export_dialog.reject()
+        self._route_export_dialog=dialog
+        dialog.exported.connect(lambda result:self.status.setText(f'已导出：{result.path}'))
+        def closed(_):
+            if self._route_export_dialog is dialog:self._route_export_dialog=None
+            dialog.deleteLater()
+        dialog.finished.connect(closed)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.show()
+        return dialog
 
     def export_image(self,path):
         return self.canvas.export_image(path)
