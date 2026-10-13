@@ -4,7 +4,7 @@ from stats_typography import emphasis_css, apply_emphasis_font
 from stats_icons import colored_icon
 from decimal import Decimal
 from hashlib import sha256
-from PySide6.QtCore import Qt, QSize, QEvent
+from PySide6.QtCore import Qt, QSize, QEvent, QTimer
 from PySide6.QtGui import QColor, QFontMetricsF
 from PySide6.QtWidgets import QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, IconWidget
@@ -17,6 +17,9 @@ from stats_motion import SurfaceMotion, CollapseMotion
 from stats_elevation import attach_card_elevation
 from card_comparison_label import ComparisonLabel
 from semantic_colors import SOCIAL, stable_color
+from stats_text import label
+from filter_summary import summary_window
+from statistics_model import summarize_buckets
 
 MODE_COLORS = {'步行': '#1677FF', '公共交通': '#159A79', '私家车': '#F5A653'}
 SERIES_COLORS = {**MODE_COLORS, '平均': '#1677FF', **{item.key: item.color for item in SOCIAL}, '经济增长率': '#1677FF',
@@ -181,8 +184,68 @@ class CityChartPanel(ChartPanel):
         return dict(area=False, width=2.8 if group == '平均' else 2.0)
 
     def _donut_center(self, total, unit):
-        # No unproven trip total or normalized price is written into the ring.
+        if self.city_key == 'city-mode-share' and self.result is not None:
+            return self._mode_share_center(self.result.series)
         return '', ''
+
+    def _mode_share_center(self, source):
+        value = summarize_buckets(source.get(('', '公共交通'), []), self.result.metric)
+        return (f'{number(value)} %' if value is not None else label('missing'), '公共交通分担率')
+
+    def _donut_data(self, company, categories):
+        data = super()._donut_data(company, categories)
+        if self.city_key == 'city-mode-share':
+            data.center_key = '公共交通'
+            data.donut_value_labels = True
+        return data
+
+    def _chart_specs(self):
+        if self.mode != 'pie' or self.result is None or not self.result.comparison:
+            return super()._chart_specs()
+        output = []
+        for previous, source, window in (
+            (False, self.result.series, self.result.current_window),
+            (True, self.result.comparison, self.result.comparison_window)):
+            data = self._donut_data('', {group: buckets for (_, group), buckets in source.items()})
+            if self.city_key == 'city-mode-share':
+                data.center_text, data.center_caption = self._mode_share_center(source)
+            data.donut_legend = False
+            data.series[0].faded = previous
+            title = self._comparison_name() if previous else label('current')
+            data.series[0].name = f'{title} · {summary_window(window)}'
+            output.append((f'{title}\n{summary_window(window)}', data))
+        return output
+
+    def _place_specs(self, specs):
+        super()._place_specs(specs)
+        if self.mode == 'pie' and len(specs) == 2:
+            self._layout_pies()
+
+    def _layout_pies(self):
+        if self.mode != 'pie' or len(self.chart_views) != 2:
+            return False
+        columns = 2 if self.chart_host.width() >= 360 else 1
+        changed = columns != getattr(self, '_pie_columns', None)
+        self._pie_columns = columns
+        for index, canvas in enumerate(self.chart_views):
+            compact = self._compact_height is not None and self._compact_height <= 190
+            canvas.setMinimumHeight(0 if compact else 170)
+            cell = canvas.parentWidget()
+            cell._chart_heading.setWordWrap(True)
+            self.chart_layout.removeWidget(cell)
+            self.chart_layout.addWidget(cell, index // columns, index % columns)
+        width = max(1, (self.chart_host.width() - self.chart_layout.horizontalSpacing() * (columns - 1)) // columns)
+        headings = [canvas.parentWidget()._chart_heading for canvas in self.chart_views]
+        heading_height = max(max(heading.fontMetrics().height() * 2, heading.heightForWidth(width))
+                             for heading in headings)
+        for heading in headings:
+            heading.setMinimumHeight(heading_height)
+        return changed
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._layout_pies() and self.city_controller and not self._detailed:
+            QTimer.singleShot(0, self.city_controller, self.city_controller._summary_reflow)
 
     def _point_note(self, company, group, bucket, previous):
         parts = []
@@ -333,8 +396,10 @@ class CityDashboard(QWidget):
         self._sync_mode_control(panel)
         panel.motion.reveal()
 
-    def set_snapshot(self, snapshot):
+    def set_snapshot(self, snapshot, comparison_label='对比期'):
         self.snapshot = snapshot
+        for panel in self.panels.values():
+            panel.set_comparison_label(comparison_label)
         for key, tile in self.tiles.items():
             tile.set_value(snapshot.kpis[key])
         for key, panel in self.panels.items():
@@ -385,7 +450,8 @@ class CityDashboard(QWidget):
                 for col in range(5):
                     grid.setColumnStretch(col, 1 if col < count else 0)
                 for index, widget in enumerate(widgets):
-                    grid.addWidget(widget, index // count, index % count)
+                    grid.addWidget(widget, index // count, index % count,
+                                   Qt.AlignmentFlag.AlignTop if grid is self.chart_grid else Qt.AlignmentFlag(0))
             self.summary.layout().invalidate()
         if self.summary_motion.animation is not None:
             summary_height = self.summary.height()
@@ -395,13 +461,21 @@ class CityDashboard(QWidget):
         minimum = 245 if columns == 3 else 285
         chart_height = max(minimum, (height - summary_height - 10 - (rows - 1) * 10) // rows)
         for panel in self.panels.values():
+            if panel.mode == 'pie' and panel.result and panel.result.comparison:
+                panel._layout_pies()
+                chart_height = max(chart_height, panel.layout().minimumSize().height())
+        for panel in self.panels.values():
+            paired = panel.mode == 'pie' and panel.result and bool(panel.result.comparison)
+            if paired:
+                panel._layout_pies()
+            panel_height = chart_height
             if panel._compact_height is None:
-                panel.set_compact_height(chart_height)
-            elif panel._compact_height != chart_height or panel.minimumHeight() != chart_height:
-                panel._compact_height = chart_height
-                panel.setFixedHeight(chart_height)
+                panel.set_compact_height(panel_height)
+            elif panel._compact_height != panel_height or panel.minimumHeight() != panel_height:
+                panel._compact_height = panel_height
+                panel.setFixedHeight(panel_height)
                 for view in panel.chart_views:
-                    view.setMinimumHeight(min(view.minimumHeight(), max(90, chart_height - 112)))
+                    view.setMinimumHeight(170 if paired else min(view.minimumHeight(), max(90, panel_height - 112)))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

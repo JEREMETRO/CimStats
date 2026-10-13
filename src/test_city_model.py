@@ -10,7 +10,7 @@ def build(rows, grain='hour', companies=('a',)):
     from city_model import build_city_snapshot
     return build_city_snapshot(HistoryStore(rows, D(2024, 1, 4)),
         FilterState(companies, D(2024, 1, 2), D(2024, 1, 2, 3), grain,
-                    (D(2024, 1, 1), D(2024, 1, 1, 3))))
+                    None))
 
 
 def r(metric, group, hour, n, d=0, owner=''):

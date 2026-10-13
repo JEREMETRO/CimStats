@@ -33,6 +33,8 @@ def test_map_search_surface_is_opaque_in_each_state(app,state):
         surface.resize(440,240);surface.show();app.processEvents()
         try:
             surface._activate_search()
+            if surface._search_animation is not None:
+                surface._search_animation.setCurrentTime(surface._search_animation.duration())
             surface.search.clearFocus();QTest.mouseMove(surface,QPoint(430,200))
             if state=='hover':QTest.mouseMove(surface.search,QPoint(140,20))
             if state=='loading':surface.set_loading(True)

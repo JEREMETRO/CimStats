@@ -61,11 +61,12 @@ class DashboardTask(QThread):
     failed = Signal(int, str)
 
     def __init__(self, token, store, filters, thresholds, parent=None,
-                 network_options=None, companies=None, lines=None):
+                 network_options=None, companies=None, lines=None, city_filters=None):
         super().__init__(parent)
         self.token, self.store, self.filters, self.thresholds = token, store, filters, thresholds
         self.network_options, self.companies = network_options, companies or {}
         self.lines = lines
+        self.city_filters = city_filters or replace(filters, companies=(), comparison=None)
 
     def run(self):
         try:
@@ -74,7 +75,7 @@ class DashboardTask(QThread):
             if self.network_options is not None:
                 network = build_network_snapshot(snapshot, self.network_options,
                                                  self.companies, self.isInterruptionRequested, lines=self.lines)
-                payload = (snapshot, network, build_city_snapshot(self.store, self.filters, self.isInterruptionRequested))
+                payload = (snapshot, network, build_city_snapshot(self.store, self.city_filters, self.isInterruptionRequested))
             else:
                 payload = snapshot
             if not self.isInterruptionRequested():
@@ -280,6 +281,12 @@ class StatisticsPage(QWidget):
         self.analysis_mode = 'default'
         self.range_preset = 'previous_full_week'
         self.comparison_preset = 'previous'
+        self.city_analysis_mode = str(settings.value('city/analysis-mode', 'default')) if settings else 'default'
+        if self.city_analysis_mode not in ('default', 'period'):
+            self.city_analysis_mode = 'default'
+        self.city_comparison_preset = str(settings.value('city/comparison', 'previous')) if settings else 'previous'
+        if self.city_comparison_preset not in ('previous', 'previous_week', 'previous_month'):
+            self.city_comparison_preset = 'previous'
         network_mode = str(settings.value('network/mode', 'overall')) if settings else 'overall'
         self.network_options = NetworkOptions(mode=network_mode if network_mode in
                                               ('overall', 'companies', 'period') else 'overall')
@@ -295,6 +302,7 @@ class StatisticsPage(QWidget):
         self._custom_window = None
         self._custom_comparison = None
         self._network_custom_comparison = None
+        self._city_custom_comparison = None
         self._range_window = None
         self._company_palette = {}
         self.metric_slots = DEFAULT_SLOTS
@@ -425,6 +433,12 @@ class StatisticsPage(QWidget):
             self.network_mode_control.addItem(key, title, icon)
         self.network_mode_control.setCurrentKey(self.network_options.mode)
         self.network_mode_control.currentKeyChanged.connect(self._network_mode_changed)
+        self.city_mode_control = FluentSegmentedControl(self.filter_card)
+        for title, key, icon in (('默认模式', 'default', FluentIcon.PIE_SINGLE),
+                                 ('同期对比', 'period', FluentIcon.CALENDAR)):
+            self.city_mode_control.addItem(key, title, icon)
+        self.city_mode_control.setCurrentKey(self.city_analysis_mode)
+        self.city_mode_control.currentKeyChanged.connect(self._city_mode_changed)
         self.mode_host = QWidget(self.filter_card)
         self.mode_host.setFixedHeight(CONTROL_HEIGHT)
         mode_row = QHBoxLayout(self.mode_host)
@@ -432,8 +446,10 @@ class StatisticsPage(QWidget):
         mode_row.setSpacing(0)
         mode_row.addWidget(self.analysis_mode_control)
         mode_row.addWidget(self.network_mode_control)
+        mode_row.addWidget(self.city_mode_control)
         mode_row.addStretch()
         self.network_mode_control.hide()
+        self.city_mode_control.hide()
         # Both tabs reserve the same mode width so their preceding columns stay aligned.
         mode_width = max(self.analysis_mode_control.sizeHint().width(),
                          self.network_mode_control.sizeHint().width())
@@ -652,19 +668,18 @@ class StatisticsPage(QWidget):
                              if action.isChecked()) or '未选择公司'
         time = f'统计时间：{summary_window(self._range_window)}'
         grain = f'按{self.grain_combo.currentText()}'
-        if self.tab_bar.currentRouteKey() == 'city':
-            self.compact_filter_summary.set_summary('', [time, grain])
-            return
-        is_network = self.tab_bar.currentRouteKey() == 'network'
-        control = self.network_mode_control if is_network else self.analysis_mode_control
+        route = self.tab_bar.currentRouteKey()
+        is_city = route == 'city'
+        control = {'network': self.network_mode_control, 'city': self.city_mode_control}.get(
+            route, self.analysis_mode_control)
         parts = [f'图表模式：{control.currentText()}', time, grain]
         if control.currentKey() == 'period':
             try:
-                comparison = self._route_comparison('network' if is_network else 'company')
+                comparison = self._route_comparison(route)
             except ValueError:
                 comparison = None
             parts.append(f'对比时间：{summary_window(comparison)}' if comparison else '对比时间：未设置')
-        self.compact_filter_summary.set_summary(f'公司：{companies}', parts)
+        self.compact_filter_summary.set_summary('' if is_city else f'公司：{companies}', parts)
 
     def _filter_padding(self, width: int, collapsed: bool) -> int:
         if self.tab_bar.currentRouteKey() == 'city':
@@ -770,13 +785,15 @@ class StatisticsPage(QWidget):
             is_network = route == 'network'
             is_city = route == 'city'
             self._fields[0].setVisible(not is_city)
-            self._fields[3].setVisible(not is_city)
+            self._fields[3].show()
             self.analysis_mode_control.setVisible(not is_network and not is_city)
             self.network_mode_control.setVisible(is_network)
-            self.compare_field.setVisible(not is_city and (self.network_options.mode if is_network else
-                                           self.analysis_mode) == 'period')
-            self._restore_combo(self.compare_combo, self.network_comparison_preset
-                                if is_network else self.comparison_preset)
+            self.city_mode_control.setVisible(is_city)
+            self.mode_host.setFixedWidth(self.city_mode_control.sizeHint().width() if is_city else max(
+                self.analysis_mode_control.sizeHint().width(), self.network_mode_control.sizeHint().width()))
+            mode, preset, _ = self._comparison_state(route)
+            self.compare_field.setVisible(mode == 'period')
+            self._restore_combo(self.compare_combo, preset)
             self._update_compact_filter_summary()
             self._layout_signature = None
             self.reflow(self.width())
@@ -787,9 +804,12 @@ class StatisticsPage(QWidget):
                     expected = self._route_comparison('company')
                     if self.snapshot.filters.comparison != expected:
                         self.schedule_query()
-                elif route == 'city' and self.city_snapshot is not None:
-                    self.city_dashboard.set_snapshot(self.city_snapshot)
-                    self.city_dashboard.motion.reveal(float_in=True)
+                elif route == 'city':
+                    if self.city_snapshot is None or self.city_snapshot.filters.comparison != self._route_comparison('city'):
+                        self.schedule_query()
+                    else:
+                        self.city_dashboard.set_snapshot(self.city_snapshot, label(self.city_comparison_preset))
+                        self.city_dashboard.motion.reveal(float_in=True)
             self._reflow_city()
 
     def _mode_changed(self, *_):
@@ -820,6 +840,17 @@ class StatisticsPage(QWidget):
     def _network_options_changed(self, options):
         self.network_options = options
         self._refresh_network_model()
+
+    def _city_mode_changed(self, *_):
+        self.city_analysis_mode = self.city_mode_control.currentKey()
+        if self.settings:
+            self.settings.setValue('city/analysis-mode', self.city_analysis_mode)
+        self.compare_field.setVisible(self.city_analysis_mode == 'period' and
+                                      self.tab_bar.currentRouteKey() == 'city')
+        self._update_compact_filter_summary()
+        self._layout_signature = None
+        self.reflow(self.width())
+        self.schedule_query()
 
     def _refresh_network_model(self):
         if self.store is None:
@@ -862,14 +893,18 @@ class StatisticsPage(QWidget):
         return replace(self.network_options,
                        comparison_label=label_map[self.network_comparison_preset])
 
+    def _comparison_state(self, route):
+        if route == 'network':
+            return self.network_options.mode, self.network_comparison_preset, self._network_custom_comparison
+        if route == 'city':
+            return self.city_analysis_mode, self.city_comparison_preset, self._city_custom_comparison
+        return self.analysis_mode, self.comparison_preset, self._custom_comparison
+
     def _route_comparison(self, route):
-        mode = self.network_options.mode if route == 'network' else self.analysis_mode
+        mode, preset, custom = self._comparison_state(route)
         if mode != 'period' or self._range_window is None:
             return None
-        return resolve_comparison(
-            *self._range_window,
-            self.network_comparison_preset if route == 'network' else self.comparison_preset,
-            self._network_custom_comparison if route == 'network' else self._custom_comparison)
+        return resolve_comparison(*self._range_window, preset, custom)
 
     def _receive_network_model(self, token, source, network):
         if token != self.network_model_token or source is not self.snapshot or self._closing:
@@ -909,30 +944,35 @@ class StatisticsPage(QWidget):
         self.schedule_query()
 
     def _compare_changed(self, *_):
-        is_network = self.tab_bar.currentRouteKey() == 'network'
+        route = self.tab_bar.currentRouteKey()
+        _, preset, custom = self._comparison_state(route)
         choice = self.compare_combo.currentData()
         if choice == 'custom':
             if self._range_window is None:
-                self._restore_combo(self.compare_combo, self.network_comparison_preset
-                                    if is_network else self.comparison_preset)
+                self._restore_combo(self.compare_combo, preset)
                 return
             start, end = self._range_window
-            previous = (self._network_custom_comparison if is_network else self._custom_comparison) or (start - (end - start), start)
+            previous = custom or (start - (end - start), start)
             timed = any(value.hour or value.minute or value.second for value in previous)
             picker = RangePicker(previous[0], previous[1] if timed else previous[1] - timedelta(days=1),
                                  title='自定义对比周期', parent=self)
             if picker.exec() != QDialog.DialogCode.Accepted:
-                self._restore_combo(self.compare_combo, self.network_comparison_preset
-                                    if is_network else self.comparison_preset)
+                self._restore_combo(self.compare_combo, preset)
                 return
-            if is_network:
+            if route == 'network':
                 self._network_custom_comparison = picker.selected_range()
+            elif route == 'city':
+                self._city_custom_comparison = picker.selected_range()
             else:
                 self._custom_comparison = picker.selected_range()
-        if is_network:
+        if route == 'network':
             self.network_comparison_preset = choice
             if self.settings:
                 self.settings.setValue('network/comparison', choice)
+        elif route == 'city':
+            self.city_comparison_preset = choice
+            if self.settings:
+                self.settings.setValue('city/comparison', choice)
         else:
             self.comparison_preset = choice
         self.schedule_query()
@@ -1007,13 +1047,15 @@ class StatisticsPage(QWidget):
         self._custom_window = None
         self._custom_comparison = None
         self._network_custom_comparison = None
+        self._city_custom_comparison = None
         if self.network_comparison_preset == 'custom':
             self.network_comparison_preset = 'previous'
+        if self.city_comparison_preset == 'custom':
+            self.city_comparison_preset = 'previous'
         self.range_preset = 'previous_full_week'
         self.comparison_preset = 'previous'
         self._restore_combo(self.range_combo, self.range_preset)
-        self._restore_combo(self.compare_combo, self.network_comparison_preset
-                            if self.tab_bar.currentRouteKey() == 'network' else self.comparison_preset)
+        self._restore_combo(self.compare_combo, self._comparison_state(self.tab_bar.currentRouteKey())[1])
         self._refresh_range_summary()
         self.company_menu.clear()
         self._refresh_company_tags()
@@ -1097,11 +1139,13 @@ class StatisticsPage(QWidget):
             start, end = self._range_window or preset_window(self.simulation_time, self.range_preset)
             route = self.tab_bar.currentRouteKey()
             try:
-                comparison = self._route_comparison(route) if route != 'city' else None
+                comparison = self._route_comparison(route)
+                city_comparison = self._route_comparison('city')
             except ValueError:
                 comparison = ('invalid',)
+                city_comparison = ('invalid',)
             key = (id(self.store), self.selected_companies(), start, end,
-                   self.grain_combo.currentData(), comparison, self.thresholds)
+                   self.grain_combo.currentData(), comparison, city_comparison, self.thresholds)
             if key == self._requested_query_key:
                 if self.snapshot is not None:
                     self._render_snapshot()
@@ -1120,22 +1164,16 @@ class StatisticsPage(QWidget):
             self.snapshot = None
             self._clear_views(preserve_controls=True)
             return
-        comparison = None
-        is_network = self.tab_bar.currentRouteKey() == 'network'
-        period_mode = (self.network_options.mode == 'period' if is_network else
-                       self.tab_bar.currentRouteKey() != 'city' and self.analysis_mode == 'period')
-        if period_mode:
-            try:
-                comparison = resolve_comparison(
-                    start, end,
-                    self.network_comparison_preset if is_network else self.comparison_preset,
-                    self._network_custom_comparison if is_network else self._custom_comparison)
-            except ValueError:
-                return
+        try:
+            comparison = self._route_comparison(self.tab_bar.currentRouteKey())
+            city_comparison = self._route_comparison('city')
+        except ValueError:
+            return
         filters = FilterState(companies=self.selected_companies(), start=start, end=end,
             grain=self.grain_combo.currentData(), comparison=comparison)
         worker = DashboardTask(self.token, self.store, filters, self.thresholds, self,
-                               self._effective_network_options(), self._names(), self._network_lines)
+                               self._effective_network_options(), self._names(), self._network_lines,
+                               city_filters=replace(filters, companies=(), comparison=city_comparison))
         worker.ready.connect(self._receive)
         worker.failed.connect(self._failed)
         worker.finished.connect(lambda w=worker: self._worker_finished(w))
@@ -1220,7 +1258,7 @@ class StatisticsPage(QWidget):
             else:
                 self._tile_value(tile, results.get(key), names)
         if self.city_snapshot is not None:
-            self.city_dashboard.set_snapshot(self.city_snapshot)
+            self.city_dashboard.set_snapshot(self.city_snapshot, label(self.city_comparison_preset))
             self._reflow_city()
         self._tile_value(self.transfer_tile, results.get('transfer-coefficient'), names, coefficient=True)
         self.line_panel.set_result(results.get('linecount'), names)

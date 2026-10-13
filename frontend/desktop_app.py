@@ -606,7 +606,7 @@ class MainWindow(FluentMainWindow):
         self.body = QStackedWidget(self.content_host)
         page_host = QWidget(self.body)
         page_layout = QVBoxLayout(page_host)
-        page_layout.setContentsMargins(PAGE_GUTTER, 8, PAGE_GUTTER, 0)
+        page_layout.setContentsMargins(PAGE_GUTTER, 8, PAGE_GUTTER, PAGE_GUTTER)
         page_layout.setSpacing(0)
         self.pages = QStackedWidget(page_host)
         page_layout.addWidget(self.pages)

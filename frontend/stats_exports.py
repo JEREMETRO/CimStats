@@ -125,6 +125,9 @@ def export_city_xlsx(snapshot, path, state):
     info.append(['粒度', snapshot.filters.grain])
     info.append(['来源', snapshot.source])
     info.append(['能源换算', '游戏显示值 = 原始值 / 100；物理单位未确认'])
+    info.append(['分析模式', '同期对比' if snapshot.filters.comparison else '默认模式'])
+    info.append(['对比开始', snapshot.filters.comparison[0] if snapshot.filters.comparison else None])
+    info.append(['对比结束（不含）', snapshot.filters.comparison[1] if snapshot.filters.comparison else None])
     display = workbook.create_sheet('显示状态')
     display.append(['方式图形', state.get('mode')])
     display.append(['显示曲线', json.dumps(state.get('curves', []), ensure_ascii=False)])
@@ -138,22 +141,23 @@ def export_city_xlsx(snapshot, path, state):
                 detail.unit, detail.observed, detail.complete, detail.reason or model.reason,
                 detail.comparison.text, detail.comparison.tooltip])
     charts = workbook.create_sheet('城市图表')
-    charts.append(['图表', '系列', '开始', '结束', '观测时间', '值', '单位', '完整', '显示'])
+    charts.append(['图表', '系列', '开始', '结束', '观测时间', '值', '单位', '完整', '显示', '周期'])
     raw_sheet = workbook.create_sheet('原始观测')
     raw_sheet.append(['指标', '分组', '时间', '原值', '原分母', '当前槽位', '来源'])
     seen = set()
     for key, result in snapshot.charts.items():
-        for (_, group), buckets in result.series.items():
-            shown = (key != 'trip-time' or group in state.get('curves', [])) and group not in state.get('hidden', {}).get(key, [])
-            for bucket in buckets:
-                charts.append([result.metric.label, group, bucket.start, bucket.end, bucket.observed,
-                    _number(bucket.value), result.metric.unit, bucket.complete, shown])
-                for row in bucket.raw:
-                    identity = (row.metric, row.group, row.time, row.value, row.divider)
-                    if identity not in seen:
-                        seen.add(identity)
-                        raw_sheet.append([row.metric, row.group, row.time, _number(row.value), _number(row.divider), row.current,
-                                          row.raw.get('分组来源', '原始城市分类')])
+        for period, source in (('本期', result.series), ('对比期', result.comparison)):
+            for (_, group), buckets in source.items():
+                shown = (key != 'trip-time' or group in state.get('curves', [])) and group not in state.get('hidden', {}).get(key, [])
+                for bucket in buckets:
+                    charts.append([result.metric.label, group, bucket.start, bucket.end, bucket.observed,
+                        _number(bucket.value), result.metric.unit, bucket.complete, shown, period])
+                    for row in bucket.raw:
+                        identity = (row.metric, row.group, row.time, row.value, row.divider)
+                        if identity not in seen:
+                            seen.add(identity)
+                            raw_sheet.append([row.metric, row.group, row.time, _number(row.value), _number(row.divider), row.current,
+                                              row.raw.get('分组来源', '原始城市分类')])
     for sheet in workbook:
         sheet.freeze_panes = 'A2'
         sheet.auto_filter.ref = sheet.dimensions

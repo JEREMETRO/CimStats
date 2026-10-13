@@ -63,6 +63,9 @@ class ChartData:
     center_caption: str = ''
     empty_text: str = '暂无可用数据'
     decimal_places: int = 2
+    donut_legend: bool = True        # paired charts can share their host's category legend
+    center_key: str = ''            # optional category whose visibility also controls the center
+    donut_value_labels: bool = False
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -948,15 +951,29 @@ class ChartCanvas(QWidget):
         line = metrics.height() + 6
         side = rect.width() >= rect.height() * 1.25
         legend_height = len(entries) * line
-        if side:
-            diameter = min(rect.height() - 8, rect.width() * .46)
-            ring = QRectF(rect.left() + 8, rect.center().y() - diameter / 2, diameter, diameter)
-            legend = QRectF(ring.right() + 20, rect.center().y() - min(legend_height, rect.height()) / 2,
-                            rect.right() - ring.right() - 20, min(legend_height, rect.height()))
+        small = [value for _, _, value, _ in entries if 360 * value / total < 20]
+        margin = 0
+        if self.detailed and data.donut_value_labels and small:
+            value_font = QFont(self._strong)
+            value_font.setPixelSize(13)
+            value_metrics = QFontMetricsF(value_font)
+            margin = max(value_metrics.horizontalAdvance(
+                f'{format_value(value if data.unit == "%" else 100 * value / total, data.decimal_places)} %')
+                for value in small) + 24
+        if not data.donut_legend:
+            diameter = max(1., min(rect.width() - margin * 2, rect.height()) - 8)
+            ring = QRectF(rect.center().x() - diameter / 2, rect.center().y() - diameter / 2,
+                          diameter, diameter)
+            legend = QRectF()
+        elif side:
+            diameter = max(1., min(rect.height() - 8, rect.width() * .46 - margin * 2))
+            ring = QRectF(rect.left() + 8 + margin, rect.center().y() - diameter / 2, diameter, diameter)
+            legend = QRectF(ring.right() + margin + 20, rect.center().y() - min(legend_height, rect.height()) / 2,
+                            rect.right() - ring.right() - margin - 20, min(legend_height, rect.height()))
         else:
             columns = 2 if rect.width() >= 320 and len(entries) > 3 else 1
             rows = ceil(len(entries) / columns)
-            diameter = max(60., min(rect.width() * .7, rect.height() - rows * line - 12))
+            diameter = max(60., min(rect.width() * .7 - margin * 2, rect.height() - rows * line - 12))
             ring = QRectF(rect.center().x() - diameter / 2, rect.top() + 4, diameter, diameter)
             legend = QRectF(rect.left() + 4, ring.bottom() + 10, rect.width() - 8, rows * line)
         center = ring.center()
@@ -984,7 +1001,9 @@ class ChartCanvas(QWidget):
             painter.setPen(QPen(QColor(tokens.CARD_BG), 1.5))
             painter.setBrush(part['color'])
             painter.drawPath(path)
-        if self.detailed and data.center_text:
+        if self.detailed and data.donut_value_labels:
+            self._paint_donut_value_labels(painter, rect)
+        if self.detailed and data.center_text and data.center_key not in self.hidden:
             font = QFont(self._strong)
             font.setPixelSize(max(12, min(22, int(inner * .42))))
             painter.setFont(font)
@@ -1000,7 +1019,7 @@ class ChartCanvas(QWidget):
         columns = 1 if side else (2 if rect.width() >= 320 and len(entries) > 3 else 1)
         column_width = legend.width() / columns
         rows = ceil(len(entries) / columns)
-        for number, part in enumerate(self._slices):
+        for number, part in enumerate(self._slices if data.donut_legend else ()):
             column, row = divmod(number, rows) if columns > 1 else (0, number)
             y = legend.top() + row * line
             if y + line > rect.bottom() + 2:
@@ -1037,6 +1056,51 @@ class ChartCanvas(QWidget):
             self._paint_tooltip(painter, hovered['name'], [(
                 hovered['color'], item.name if data.unit == '%' else format_number(hovered['percent'], 1, fixed=True) + '%',
                 f"{format_value(hovered['value'], data.decimal_places)} {data.unit}".strip(), '')])
+
+    def _paint_donut_value_labels(self, painter, rect):
+        font = QFont(self._strong)
+        font.setPixelSize(13)
+        metrics = QFontMetricsF(font)
+        painter.setFont(font)
+        occupied = []
+        for part in self._slices:
+            if part['key'] in self.hidden:
+                continue
+            value = part['value'] if self.data.unit == '%' else part['percent']
+            text = f'{format_value(value, self.data.decimal_places)} %'
+            width, height = metrics.horizontalAdvance(text) + 12, metrics.height() + 4
+            angle = radians(part['start'] + part['span'] / 2)
+            center, inner, outer = part['center'], part['inner'], part['outer']
+            anchor = QPointF(center.x() + cos(angle) * (inner + outer) / 2,
+                            center.y() - sin(angle) * (inner + outer) / 2)
+            candidates = []
+            for radius in ((inner + outer) / 2, outer - height / 2 - 3, inner + height / 2 + 3):
+                point = QPointF(center.x() + cos(angle) * radius, center.y() - sin(angle) * radius)
+                candidates.append(QRectF(point.x() - width / 2, point.y() - height / 2, width, height))
+            outside = part['span'] < 20
+            if outside:
+                right = cos(angle) >= 0
+                x = center.x() + (1 if right else -1) * (outer + 12 + width / 2)
+                y = min(rect.bottom() - height / 2, max(rect.top() + height / 2, anchor.y()))
+                step = height + 4
+                candidates = [QRectF(x - width / 2, y + offset * step - height / 2, width, height)
+                              for offset in (0, 1, -1, 2, -2)]
+            box = next((candidate for candidate in candidates
+                        if rect.contains(candidate) and not any(candidate.intersects(other) for other in occupied)),
+                       candidates[0])
+            if outside or box != candidates[0]:
+                painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY), 1))
+                origin = QPointF(center.x() + cos(angle) * outer, center.y() - sin(angle) * outer) if outside else anchor
+                end = QPointF(box.left() if right else box.right(), box.center().y()) if outside else box.center()
+                painter.drawLine(origin, end)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens.CARD_BG))
+            painter.drawRoundedRect(box, tokens.TOOLTIP_RADIUS, tokens.TOOLTIP_RADIUS)
+            painter.setPen(QColor(tokens.TEXT_PRIMARY))
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+            part['value_label'], part['value_label_box'] = text, box
+            occupied.append(box.adjusted(-2, -2, 2, 2))
+        painter.setFont(self._font)
 
     # ------------------------------------------------------------- pointer
     def touch_pan(self, global_start, global_point):

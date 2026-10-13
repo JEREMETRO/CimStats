@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from copy import deepcopy
 from dataclasses import dataclass
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QTimer, QRectF
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QEvent, QTimer, QRectF, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidgetItem, QStackedWidget
 from qfluentwidgets import SearchLineEdit, TransparentToolButton, PushButton, FluentIcon, ListWidget, setCustomStyleSheet, IndeterminateProgressBar, Pivot
@@ -100,6 +100,9 @@ class _MapSurface(QWidget):
         self._focus_provider = focus or canvas.focus_result
         self._defer_search = defer_search
         self._compact_search = True
+        self._search_animation = None
+        self._search_progress = 0.
+        self._search_target_expanded = False
         self._search_leave_timer = QTimer(self)
         self._search_leave_timer.setSingleShot(True)
         self._search_leave_timer.setInterval(120)
@@ -161,6 +164,11 @@ class _MapSurface(QWidget):
         super().resizeEvent(event)
         self.relayout()
 
+    def hideEvent(self,event):
+        self._search_leave_timer.stop()
+        self._finish_search_transition()
+        super().hideEvent(event)
+
     def event(self,event):
         result=super().event(event)
         if (event.type() in (QEvent.Type.DevicePixelRatioChange,QEvent.Type.FontChange,QEvent.Type.StyleChange)
@@ -179,10 +187,60 @@ class _MapSurface(QWidget):
         self.legend_strip.setVisible(strip_height>0)
         self.loading.setGeometry(0,0,self.width(),min(4,plot_height))
         self.loading.raise_()
-        self.search.setGeometry(14,14,min(320,max(150,self.width()-75)),36)
-        self.search_button.setGeometry(14,14,36,36)
-        self.results.setGeometry(14,54,self.search.width(),min(250,max(0,plot_height-130)))
+        self._layout_search()
+        self.results.setGeometry(14,54,min(320,max(150,self.width()-75)),min(250,max(0,plot_height-130)))
         self.controls.setGeometry(max(0,self.width()-48),max(0,plot_height-130),34,min(106,plot_height))
+
+    def _layout_search(self):
+        # Only the input changes size during motion. The map and result list
+        # retain their geometry, avoiding map frame preparation on every tick.
+        full_width=min(320,max(150,self.width()-75))
+        width=round(36+(full_width-36)*self._search_progress)
+        self.search.setGeometry(14,14,width,36)
+        self.search_button.setGeometry(14,14,36,36)
+
+    def _finish_search_transition(self):
+        animation=self._search_animation
+        self._search_animation=None
+        if animation is not None:
+            animation.stop()
+            animation.deleteLater()
+        self._search_progress=1. if self._search_target_expanded else 0.
+        self._layout_search()
+        self.search.setVisible(self._search_target_expanded)
+        self.search_button.setVisible(not self._search_target_expanded)
+        (self.search if self._search_target_expanded else self.search_button).raise_()
+
+    def _set_search_expanded(self,expanded,*,animate=True):
+        from stats_motion import animations_enabled
+        expanded=bool(expanded)
+        if expanded==self._search_target_expanded and animate and self._search_animation is not None:
+            return
+        self._search_target_expanded=expanded
+        if self._search_animation is not None:
+            self._search_animation.stop()
+            self._search_animation.deleteLater()
+            self._search_animation=None
+        target=1. if expanded else 0.
+        if not animate or not self.isVisible() or not animations_enabled() or self._search_progress==target:
+            self._finish_search_transition()
+            return
+        self.search_button.hide()
+        self.search.show()
+        self.search.raise_()
+        animation=QVariantAnimation(self)
+        self._search_animation=animation
+        animation.setStartValue(self._search_progress)
+        animation.setEndValue(target)
+        animation.setDuration(250 if expanded else 167)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic if expanded else QEasingCurve.Type.InCubic)
+        animation.valueChanged.connect(self._search_motion_step)
+        animation.finished.connect(self._finish_search_transition)
+        animation.start()
+
+    def _search_motion_step(self,value):
+        self._search_progress=float(value)
+        self._layout_search()
 
     def set_compact_search(self, active):
         active=bool(active)
@@ -193,30 +251,26 @@ class _MapSurface(QWidget):
 
     def _expand_search(self):
         self._search_leave_timer.stop()
-        self.search_button.hide()
-        self.search.show()
-        self.search.raise_()
+        self._set_search_expanded(True)
 
     def _activate_search(self):
         self._expand_search()
         self.search.setFocus()
 
-    def _collapse_search(self):
+    def _collapse_search(self,*,animate=False):
         if not self._compact_search:return
         self._search_leave_timer.stop()
         self.search.clearFocus()
         self.results.clearFocus()
         self.results.hide()
-        self.search.hide()
-        self.search_button.show()
-        self.search_button.raise_()
+        self._set_search_expanded(False,animate=animate)
 
     def _collapse_search_if_idle(self):
         focus=QApplication.focusWidget()
         if any(widget.isVisible() and (widget is focus or widget.isAncestorOf(focus) or widget.underMouse())
                for widget in self._search_widgets):
             return
-        self._collapse_search()
+        self._collapse_search(animate=True)
 
     def eventFilter(self, watched, event):
         if watched in getattr(self,'_search_widgets',()):

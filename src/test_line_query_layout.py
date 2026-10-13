@@ -323,7 +323,8 @@ def test_main_pages_do_not_show_bottom_status_area(lines_window, qt_application)
         assert not any(bar.isVisible() for bar in window.findChildren(QStatusBar))
         page = window.pages.currentWidget()
         from PySide6.QtCore import QPoint
-        assert page.mapTo(window.content_host, QPoint(0, page.height())).y() == window.content_host.height(), \
+        from app_shell import PAGE_GUTTER
+        assert page.mapTo(window.content_host, QPoint(0, page.height())).y() == window.content_host.height() - PAGE_GUTTER, \
             f'page {page_index} lost content height to a bottom status area'
     window.navigate(2)
     qt_application.processEvents()

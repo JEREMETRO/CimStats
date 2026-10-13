@@ -637,7 +637,8 @@ class ChartPanel(QFrame):
             return
         keys = (list(groups) if self._combined_totals else
                 list(dict.fromkeys(group for entries in groups.values() for group in entries)))
-        show_categories = self.mode != 'pie' and (len(keys) > 1 or keys[0] in self._hidden_groups or keys[0] in self._category_choices)
+        embedded_legend = self.mode == 'pie' and all(canvas.data.donut_legend for canvas in self.chart_views)
+        show_categories = not embedded_legend and (len(keys) > 1 or keys[0] in self._hidden_groups or keys[0] in self._category_choices)
         for key in keys if show_categories else []:
             if self._combined_totals:
                 entry = self._add_series_legend(key, self._legend_text(key), [self._legend_color(key)])

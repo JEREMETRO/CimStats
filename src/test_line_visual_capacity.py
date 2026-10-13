@@ -1,6 +1,7 @@
 """Whole-shell capacity contracts; component tests alone cannot prove this budget."""
 import copy
 import os
+from time import monotonic
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtCore import QPoint
 
 import desktop_app
+from app_shell import PAGE_GUTTER
 from report_model import load_session
 
 
@@ -32,7 +34,8 @@ def visual_window(qt_application,monkeypatch,tmp_path):
     QTest.qWait(200)
     # The custom 32px title bar is inside this client size; native rendering
     # checks the same content budget, rather than old external DWM margins.
-    w.resize(1436,900)
+    # Keep the original data viewport budget while reserving the shared outer gutter.
+    w.resize(1436,900 + PAGE_GUTTER)
     QTest.qWait(100)
     assert hasattr(w,'lines_page')
     assert data['lines']
@@ -46,7 +49,7 @@ def test_actual_whole_shell_has_capacity_without_scroll(visual_window,count,qt_a
     if count > 140:
         # Fifteen readable rows need more vertical room than fourteen; use
         # a real larger viewport rather than expecting rows to shrink.
-        w.resize(1436,940)
+        w.resize(1436,940 + PAGE_GUTTER)
     line=copy.deepcopy(w.data['lines'][0]);line.pop('时刻表',None)
     line['班次']={'周一至周四':entries(count)}
     line['日组']=tuple(line['班次'])
@@ -63,7 +66,7 @@ def test_actual_whole_shell_has_capacity_without_scroll(visual_window,count,qt_a
     assert w.header.title.text() == '线路查询' and w.header.title.font().pixelSize() == 22
     assert w.header.export_button.isVisible()
     assert {'line_workbook', 'company_workbook'} <= w.header.export_actions.keys()
-    assert p.mapTo(w.content_host, QPoint(0, p.height())).y() == w.content_host.height()
+    assert p.mapTo(w.content_host, QPoint(0, p.height())).y() == w.content_host.height() - PAGE_GUTTER
     assert w.line_table.font().pixelSize()==14
     from window_chrome import TITLE_BAR_HEIGHT
     margins = w.pages.parentWidget().layout().contentsMargins()
@@ -238,7 +241,14 @@ def test_hover_elevation_keeps_whole_shell_geometry_and_opacity(visual_window):
     controller=getattr(card,'_card_elevation',None)
     assert controller is not None
     before=[c.geometry() for c in w.fact_cards];effect=p.graphicsEffect()
-    QTest.mouseMove(card,card.rect().center());QTest.qWait(250)
+    # Start outside the card so repeated/native cursor positions still deliver Enter.
+    QTest.mouseMove(w,QPoint(10,w.height()-10));QTest.qWait(20)
+    QTest.mouseMove(card,card.rect().center())
+    # Wait for the delivered Enter's animation, rather than assuming the shared
+    # Qt animation clock advances before a fixed short offscreen wait expires.
+    deadline=monotonic()+2
+    while controller.level<=.9 and monotonic()<deadline:
+        QTest.qWait(20)
     assert controller.level>.9
     assert before==[c.geometry() for c in w.fact_cards]
     assert p.graphicsEffect() is effect

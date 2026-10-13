@@ -145,7 +145,7 @@ def city_summary(buckets, metric):
 
 def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=None, *, _comparisons=True):
     _check(cancelled)
-    filters = replace(filters, companies=(), comparison=None)
+    filters = replace(filters, companies=())
     charts, kpis = {}, {}
     groups = {key: _groups(store, key, filters, cancelled) for key in
               ('population', 'trip-number', 'trip-time', 'economy', 'energy-prices',
@@ -235,14 +235,29 @@ def build_city_snapshot(store: HistoryStore, filters: FilterState, cancelled=Non
             '' if peak else '缺少有效观测'))
     kpis['traffic-density'] = CityValue('最大交通密度', details=tuple(peaks), reason='统计时间内最高小时交通密度')
     if _comparisons:
-        start, end = baseline_window(filters.start, filters.end)
+        start, end = filters.comparison or baseline_window(filters.start, filters.end)
         previous = build_city_snapshot(store, replace(filters, start=start, end=end, comparison=None),
                                        cancelled, _comparisons=False)
+        if filters.comparison:
+            def with_comparison(current, before):
+                identities = dict.fromkeys((*current.series, *before.series))
+                return replace(current,
+                    query=replace(current.query, comparison=filters.comparison),
+                    series={identity: current.series.get(identity) or _buckets(
+                        [], current.metric, filters, store.simulation_time, cancelled)
+                        for identity in identities},
+                    comparison={identity: before.series.get(identity) or _buckets(
+                        [], before.metric, previous.filters, store.simulation_time, cancelled)
+                        for identity in identities},
+                    comparison_window=filters.comparison)
+            charts = {key: with_comparison(result, previous.charts[key])
+                      for key, result in charts.items()}
+            pie_result = with_comparison(pie_result, previous.pie_result)
         for key, model in tuple(kpis.items()):
             before = previous.kpis[key]
             def compare(current, baseline):
                 return change(current.value, baseline.value, current.unit,
-                    baseline_label(filters.start, filters.end),
+                    '较同比区间' if filters.comparison else baseline_label(filters.start, filters.end),
                     current_window=(filters.start, filters.end), previous_window=(start, end),
                     partial=not current.complete or not baseline.complete)
             details = tuple(replace(detail, comparison=compare(detail, prior))

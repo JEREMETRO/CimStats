@@ -100,11 +100,11 @@ def test_mode_share_card_shows_only_public_transport_comparison():
     widget.close()
 
 
-def test_city_route_hides_company_and_comparison_filters_and_rejects_stale_city():
+def test_city_route_hides_company_filter_and_rejects_stale_city():
     QApplication.instance() or QApplication([])
     page = StatisticsPage()
     page.tab_bar.setCurrentItem('city')
-    assert page._fields[0].isHidden() and page._fields[3].isHidden() and page.compare_field.isHidden()
+    assert page._fields[0].isHidden() and not page._fields[3].isHidden() and page.compare_field.isHidden()
     page._receive(page.token - 1, (None, None, build([])))
     assert page.city_snapshot is None
     page.tab_bar.setCurrentItem('company')
@@ -121,10 +121,10 @@ def test_city_filters_use_compact_row_and_restore_company_layout():
     page.tab_bar.setCurrentItem('city')
     QTest.qWait(30)
     # Every tab shares one filter layout: captioned fields in one row, the
-    # actual date range on a caption line below. City hides company and mode.
+    # actual date range on a caption line below. City hides the company filter.
     grid = page.toolbar_grid
     row_of = lambda widget: grid.getItemPosition(grid.indexOf(widget))[0]
-    assert page._fields[0].isHidden() and page._fields[3].isHidden()
+    assert page._fields[0].isHidden() and not page._fields[3].isHidden()
     assert page._fields[1].layout().direction() == QBoxLayout.Direction.TopToBottom
     assert row_of(page._fields[1]) == row_of(page._fields[2]) == 0
     assert row_of(page.filter_detail_host) == 1

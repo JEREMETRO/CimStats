@@ -32,13 +32,14 @@ def test_selected_route_search_expands_on_hover_and_keeps_input_focus(tmp_path):
     surface._expand_search()
     assert surface.search.text() == '17'
     app.sendEvent(surface.search,QEvent(QEvent.Type.Leave))
-    QTest.qWait(160)
+    QTest.qWait(350)
     assert surface.search.isHidden()
     surface.search_button.click(); app.processEvents()
     assert surface.search.hasFocus()
     assert not surface.search.isHidden()
     page.set_preset('network')
     surface.search.clearFocus();surface._collapse_search_if_idle()
+    QTest.qWait(180)
     assert surface.search.isHidden()
     assert not surface.search_button.isHidden()
     page.close()
@@ -103,8 +104,67 @@ def test_search_descendant_focus_and_result_focus_keep_the_input_open(tmp_path):
         surface.results.setFocus();app.processEvents();assert surface.results.hasFocus()
         surface._collapse_search_if_idle()
         assert not surface.search.isHidden() and not surface.results.isHidden()
-        page.canvas.setFocus();app.sendEvent(surface.results,QEvent(QEvent.Type.Leave));QTest.qWait(160)
+        page.canvas.setFocus();app.sendEvent(surface.results,QEvent(QEvent.Type.Leave));QTest.qWait(350)
         assert surface.search.isHidden() and surface.results.isHidden() and surface.search.text()=='7'
+    finally:page.close()
+
+
+def test_hover_search_animates_width_without_relayout_of_map_and_can_reverse(tmp_path, monkeypatch):
+    monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
+    app = QApplication.instance() or QApplication([])
+    page = MapPage(QSettings(str(tmp_path/'search-motion.ini'), QSettings.Format.IniFormat))
+    page.resize(960,680);page.show();app.processEvents()
+    try:
+        surface = page.surface
+        plot = page.canvas.geometry()
+        full_layouts = []
+        original_layout = surface.relayout
+        def layout():
+            full_layouts.append(True)
+            original_layout()
+        monkeypatch.setattr(surface, 'relayout', layout)
+        app.sendEvent(surface.search_button,QEvent(QEvent.Type.Enter))
+        assert surface._search_animation is not None
+        surface._search_animation.setCurrentTime(100)
+        middle = surface.search.width()
+        assert 36 < middle < 320
+        surface.search.setFocus();surface.search.setText('17')
+        surface._collapse_search_if_idle()
+        assert surface._search_target_expanded
+        surface._collapse_search(animate=True)
+        assert surface.search.width() == middle
+        surface._search_animation.setCurrentTime(80)
+        assert 36 < surface.search.width() < middle
+        surface._expand_search()
+        surface._search_animation.setCurrentTime(250)
+        app.processEvents()
+        assert surface.search.width() == 320 and surface.search.text() == '17'
+        assert page.canvas.geometry() == plot and not full_layouts
+        surface._collapse_search(animate=True)
+        surface._search_animation.setCurrentTime(167)
+        app.processEvents()
+        assert surface.search.isHidden() and not surface.search_button.isHidden()
+    finally:page.close()
+
+
+def test_search_reduced_motion_and_new_source_finish_immediately(tmp_path, monkeypatch):
+    monkeypatch.setattr('stats_motion.animations_enabled', lambda: False)
+    app = QApplication.instance() or QApplication([])
+    page = MapPage(QSettings(str(tmp_path/'search-reduced.ini'), QSettings.Format.IniFormat))
+    page.resize(960,680);page.show();app.processEvents()
+    try:
+        surface = page.surface
+        surface._expand_search()
+        assert surface._search_animation is None and surface.search.width() == 320
+        surface.search.setText('17')
+        surface._collapse_search(animate=True)
+        assert surface.search.isHidden() and surface._search_animation is None
+        monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
+        surface._expand_search()
+        assert surface._search_animation is not None
+        page.set_session({'save_key':'B'})
+        assert surface.search.isHidden() and surface._search_animation is None
+        assert surface.search.text() == '17'
     finally:page.close()
 
 
