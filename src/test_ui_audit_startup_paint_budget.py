@@ -42,6 +42,7 @@ def test_welcome_frames_only_dirty_the_moving_composition(qt_application, monkey
     drain(qt_application)
     recorder = PaintAreas(welcome)
     welcome.begin_transition()
+    welcome.animation.pause()
     for time in (30, 80, 160, 250, 320):
         welcome.animation.setCurrentTime(time)
         drain(qt_application)
@@ -60,6 +61,8 @@ def test_partial_welcome_backing_store_matches_fresh_render(qt_application, monk
     host.show()
     drain(qt_application)
     welcome.begin_transition()
+    # Manual samples must share one clock for the backing store and grab().
+    welcome.animation.pause()
     for time in (30, 80, 160, 250, 320, 333):
         if welcome.animation is not None:
             welcome.animation.setCurrentTime(time)
