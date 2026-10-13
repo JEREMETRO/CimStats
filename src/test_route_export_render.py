@@ -149,7 +149,8 @@ def test_portrait_places_map_above_information_and_preserves_datetime_tokens(qt_
     req=build_export_request(session,snapshot,42,ExportOptions(aspect='A4',orientation='portrait',selected_fields=ALL_FIELDS))
     layout=build_layout(req)
     values=[item for item in layout.text_items if item.text in ('2013-04-10 05:47','2013-04-21 05:48')]
-    assert [item.display_text for item in values]==['2013-04-10\n05:47','2013-04-21\n05:48']
+    assert [item.display_text for item in values]==['2013-04-10 05:47','2013-04-21 05:48']
+    assert all(item.rect[3]<item.size*2 for item in values)
     assert layout.map_rect[1]+layout.map_rect[3]<=layout.info_rect[1]
     top=min(item.rect[1] for item in layout.text_items)
     bottom=max(item.rect[1]+item.rect[3] for item in layout.text_items)

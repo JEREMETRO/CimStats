@@ -165,7 +165,10 @@ def _portrait_layout(request,width,height):
                     continue
                 label_w=column*(.25 if key=='线路车库' else .40 if key in ('开线日期','最近改线日期') else .57)
                 value_w=column-label_w-16
-                display=(value.replace(' ','\n',1) if key in ('开线日期','最近改线日期') and ' ' in value else value)
+                display=value
+                if (key in ('开线日期','最近改线日期') and ' ' in value and
+                    QFontMetricsF(_font(TextItem(value,(),body+2,500,'value'))).horizontalAdvance(value)>value_w):
+                    display=value.replace(' ','\n',1)
                 lh=emit(label,column_x,cursor,label_w,body)
                 vh=emit(value,column_x+label_w+16,cursor,value_w,body+2,'value',500,'right',display)
                 cursor+=max(lh,vh)+4
