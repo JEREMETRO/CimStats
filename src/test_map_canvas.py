@@ -370,7 +370,8 @@ def test_direction_hides_other_leg_station_in_actual_paint_and_keeps_terminal(ca
     assert image.pixelColor(canvas.world_to_screen(stop.position).toPoint()).name()==MAP_BACKGROUND.lower()
     assert image.pixelColor(canvas.world_to_screen(terminal.position).toPoint()).name()=='#ffffff'
 
-def test_junction_lane_symbol_scales_with_observed_road_width_and_zoom(canvas):
+@pytest.mark.parametrize('zoom',[1.,3.,6.])
+def test_junction_lane_symbol_scales_with_observed_road_width_and_zoom(canvas,zoom):
     road=replace(canvas.snapshot.roads[0],road_class='ordinary',lanes_a=2,lanes_b=2,width=20.,
                  paths=(((0.,0.,50.),(40.,0.,50.)),))
     other=replace(road,id=2,paths=(((60.,0.,50.),(100.,0.,50.)),))
@@ -378,10 +379,13 @@ def test_junction_lane_symbol_scales_with_observed_road_width_and_zoom(canvas):
     junction=MapJunction(10,(50.,0.,50.),(1,2),(MapJunctionConnection(100,1,2,0,0,1,(curve,)),))
     canvas.set_snapshot(replace(canvas.snapshot,roads=(road,other),junctions=(junction,)))
     canvas.set_options(routes=False,buildings=False,stops=False,stop_names=False,line_numbers=False)
+    canvas.zoom=zoom;canvas._changed()
     p=canvas.world_to_screen((50.,55.)).toPoint()
     image=canvas.grab().toImage()
-    assert image.pixelColor(p.x(),p.y()+4).red()>245
-    assert image.pixelColor(p.x(),p.y()+9).name()==MAP_BACKGROUND.lower()  # Individual lane, not full road.
+    half_lane=road.width*zoom/4/2
+    assert image.pixelColor(p.x(),p.y()+int(half_lane)-1).red()>245
+    # Sample above the saved curve, away from neighbouring road end caps.
+    assert image.pixelColor(p.x(),p.y()-round(half_lane)-3).name()==MAP_BACKGROUND.lower()
 
 def test_continuous_strokes_merge_only_existing_exact_three_dimensional_endpoints():
     from map_canvas import continuous_paths
@@ -390,11 +394,11 @@ def test_continuous_strokes_merge_only_existing_exact_three_dimensional_endpoint
     assert continuous_paths((P,Q,other_height,gap)) == ((P[0],P[1],Q[1]),other_height,gap)
     assert continuous_paths((P,(),Q)) == (P,Q)
 
-def test_fragment_screen_offset_converges_to_real_endpoint_without_connecting_gap(canvas):
-    polygon=canvas._polyline(P,2.)
+def test_fragment_follows_saved_centerline_without_style_bends(canvas):
+    polygon=canvas._polyline(P)
     assert polygon[0] == canvas.world_to_screen(P[0])
     assert polygon[-1] == canvas.world_to_screen(P[-1])
-    assert any(abs(p.y()-canvas.world_to_screen(P[0]).y())>1 for p in list(polygon)[1:-1])
+    assert all(p.y()==canvas.world_to_screen(P[0]).y() for p in polygon)
 
 
 @pytest.mark.parametrize('structure',['bridge','tunnel'])
@@ -441,7 +445,8 @@ def test_bus_routes_do_not_add_direction_arrows(canvas,monkeypatch):
     arrows=[]
     if hasattr(canvas,'_arrows'):
         monkeypatch.setattr(canvas,'_arrows',lambda *args:arrows.append(args))
-    canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False)
+    canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False,
+                       mode_widths={'bus':2.})
     image=canvas.grab().toImage()
     assert not arrows
     start,end=canvas.world_to_screen(P[0]).toPoint(),canvas.world_to_screen(P[-1]).toPoint()
@@ -471,6 +476,7 @@ def test_saved_lane_connection_surfaces_meet_full_road_edges_without_a_neck(canv
 
 
 def test_mode_width_changes_only_matching_route_symbol_in_actual_paint(canvas):
+    canvas.zoom=.5;canvas._changed()
     canvas.set_options(roads=False,buildings=False,stops=False,stop_names=False,line_numbers=False,
                        mode_widths={'bus':8.},route_colors={7:'#2266ff'})
     p=canvas.world_to_screen((50.,0.)).toPoint()
@@ -509,7 +515,7 @@ def test_mixed_road_connection_color_transitions_from_actual_source_to_target(ca
     assert image.pixelColor(canvas.world_to_screen((60.,50.)).toPoint()).blue()>220
 
 
-def test_whole_direction_styles_remain_distinct_on_exact_reverse_shared_geometry(canvas):
+def test_whole_direction_exact_reverse_geometry_keeps_natural_overlap(canvas):
     reverse=tuple(reversed(P))
     route=replace(canvas.snapshot.routes[0],paths=(P,reverse),leg_paths=((P,),(reverse,)))
     canvas.set_snapshot(replace(canvas.snapshot,routes=(route,)))
@@ -517,7 +523,8 @@ def test_whole_direction_styles_remain_distinct_on_exact_reverse_shared_geometry
                        direction='whole',distinguish_directions=True,mode_widths={'bus':5.},route_colors={7:'#2266ff'})
     image=canvas.grab().toImage()
     start,end=canvas.world_to_screen(P[0]).toPoint(),canvas.world_to_screen(P[-1]).toPoint()
-    colors=[image.pixelColor(x,start.y()+3) for x in range(start.x()+20,end.x()-20)]
-    assert any(color.name()==MAP_BACKGROUND.lower() for color in colors)
-    assert any(color.blue()>240 and color.red()<180 for color in colors)
+    assert all(image.pixelColor(x,start.y()).name()=='#2266ff'
+               for x in range(start.x()+20,end.x()-20))
+    assert all(image.pixelColor(x,start.y()+4).name()==MAP_BACKGROUND.lower()
+               for x in range(start.x()+20,end.x()-20))
 

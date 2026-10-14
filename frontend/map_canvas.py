@@ -13,9 +13,12 @@ from PySide6.QtWidgets import QWidget, QApplication
 from shiboken6 import isValid
 
 import stats_tokens as tokens
+from map_scale import (detail_fraction, route_width,
+                       stop_outline, stop_radius)
 from stats_typography import ui_font
 from map_model import MapSnapshot, road_display_level
-from map_visibility import operating_paths, visible_route_stop_ids
+from map_visibility import (operating_paths, visible_route_stop_ids,
+                            operating_leg_indices, route_stop_symbols)
 from display_rules import format_line_name
 from semantic_colors import MetricLegend, is_non_social_building
 from background_work import CooperativeCancellation
@@ -51,11 +54,14 @@ def road_style(road,zoom):
     width = overview+(detail-overview)*transition
     if zoom>.45:
         width = detail*min(2.2,math.sqrt(zoom/.45))
-    if road.width is not None and road.width>0 and zoom>=.25 and level!='track':
-        width = max(1.,min(48.,road.width*zoom))
-    casing = .65 if zoom<.15 else 1.1 if zoom<.5 else 1.6
-    if level in ('local','unknown','pedestrian') and zoom<.15:
-        casing = .25
+    if road.width is not None and road.width>0 and level!='track':
+        physical_width = road.width*zoom
+        blend = max(0.,min(1.,(zoom-.10)/.15))
+        blend = blend*blend*(3-2*blend)
+        width = width*(1-blend)+physical_width*blend
+    casing = .65+.95*detail_fraction(zoom, .25)
+    if level in ('local','unknown','pedestrian'):
+        casing = .25+1.35*detail_fraction(zoom, .25)
     return RoadStyle(level,fill,shell,width,casing)
 
 
@@ -164,6 +170,7 @@ class _IndexState:
     stops: dict
     roads: dict
     connection_boxes: dict
+    stop_symbols: dict
 
 
 def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_only=False):
@@ -176,6 +183,13 @@ def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_
              else {stop.id:stop for stop in snapshot.stops})
     roads = (previous.roads if previous is not None and snapshot.roads is old.roads
              else {road.id:road for road in snapshot.roads})
+    if previous is not None and snapshot.routes is old.routes and snapshot.stops is old.stops:
+        stop_symbols=previous.stop_symbols
+    else:
+        stop_symbols={}
+        for route in snapshot.routes:
+            _index_check(cancelled)
+            stop_symbols[route.id]=route_stop_symbols(route,stops)
     if previous is not None and snapshot.junctions is old.junctions:
         connection_boxes = previous.connection_boxes
     else:
@@ -216,7 +230,7 @@ def _prepare_indexes(snapshot, caches, previous=None, cancelled=None, *, cached_
         cache[key] = (items, stop_dependency, indexes[name], boxes[name])
         if len(cache) > 4:
             cache.popitem(last=False)
-    return _IndexState(snapshot, caches, indexes, boxes, stops, roads, connection_boxes)
+    return _IndexState(snapshot, caches, indexes, boxes, stops, roads, connection_boxes,stop_symbols)
 
 
 class _IndexSignals(QObject):
@@ -277,6 +291,32 @@ class _MapDrawing:
         return operating_paths(route,self.options['direction'])
 
 
+    def _display_stops(self,routes,*,clip=True):
+        """One symbol per station on the last painted associated visible leg."""
+        selected={}
+        viewport=self._viewport_bounds(40.) if clip else None
+        direction=self.options['direction']
+        for route in routes:
+            legs=set(operating_leg_indices(route,direction))
+            stop_ids=visible_route_stop_ids(route,direction)
+            for leg,sid,position in self._stop_symbols.get(route.id,()):
+                if sid not in stop_ids or (leg!=-1 and leg not in legs):
+                    continue
+                if viewport and not (viewport[0]<=position[0]<=viewport[2] and
+                                     viewport[1]<=position[2]<=viewport[3]):
+                    continue
+                selected[sid]=position
+        return tuple((self._stops[sid],position) for sid,position in selected.items())
+
+
+    def _draw_stop_highlight(self,painter,position):
+        point=self.world_to_screen(position)
+        radius=stop_radius(self.zoom)+4
+        painter.setPen(QPen(QColor(tokens.ACCENT),2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(point,radius,radius)
+
+
     def _route_path_groups(self,route):
         if (self.options['distinguish_directions'] and self.options['direction']=='whole'
                 and route.direction.kind=='roundtrip' and route.direction.terminal_index is not None
@@ -306,16 +346,16 @@ class _MapDrawing:
         return format_line_name(route.number,route.name)
 
 
-    def _visible(self,name):
+    def _visible(self,name,viewport=None):
         if name in self._indexes:
-            for item in self._indexes[name].query(self._viewport_bounds()):
+            for item in self._indexes[name].query(viewport or self._viewport_bounds()):
                 self._cooperate()
                 yield item
 
 
-    def _viewport_bounds(self):
-        tl = self.screen_to_world(QPointF(-40,-40))
-        br = self.screen_to_world(QPointF(self.width()+40,self.height()+40))
+    def _viewport_bounds(self,padding=40.):
+        tl = self.screen_to_world(QPointF(-padding,-padding))
+        br = self.screen_to_world(QPointF(self.width()+padding,self.height()+padding))
         return tl[0],br[1],br[0],tl[1]
 
 
@@ -323,32 +363,6 @@ class _MapDrawing:
         self._cooperate()
         world = self._world_polygon(path)
         polygon = self._transform().map(world)
-        if offset and len(polygon)>1:
-            points = list(polygon)
-            distances = [0.]
-            for a,b in zip(points,points[1:]):
-                distances.append(distances[-1]+math.hypot(b.x()-a.x(),b.y()-a.y()))
-            total = distances[-1]
-            # Interpolate only along already-known screen edges. The style
-            # tapers to the exact saved fragment endpoint, never a new bridge.
-            limits = sorted({min(12.,total/2),max(total-12.,total/2)})
-            expanded,positions = [],[]
-            for i,(a,b) in enumerate(zip(points,points[1:])):
-                expanded.append(a);positions.append(distances[i])
-                span = distances[i+1]-distances[i]
-                for limit in limits:
-                    if distances[i]<limit<distances[i+1] and span:
-                        expanded.append(a+(b-a)*((limit-distances[i])/span))
-                        positions.append(limit)
-            expanded.append(points[-1]);positions.append(total)
-            points = expanded
-            shifted = []
-            for i,p in enumerate(points):
-                tangent = points[min(i+1,len(points)-1)]-points[max(0,i-1)]
-                length = math.hypot(tangent.x(),tangent.y()) or 1
-                amount = offset*max(0.,min(1.,positions[i]/12,(total-positions[i])/12))
-                shifted.append(p+QPointF(-tangent.y()*amount/length,tangent.x()*amount/length))
-            return QPolygonF(shifted)
         return polygon
 
 
@@ -710,17 +724,10 @@ class _MapDrawing:
         visible_routes = [r for r in self._visible('routes')
                           if modes is None or canonical_key('mode',r.mode) in modes]
         routes = visible_routes if self.options['routes'] else []
-        # Offset only exact shared geometry, stable under route visibility/order changes.
-        shared = {}
         route_colors = {r.id:self._route_color(r) for r in routes}
-        for route in routes:
-            for paths,dashed in self._route_path_groups(route):
-                for path in paths:
-                    shared.setdefault(self._path_key(path),set()).add((route_colors[route.id].name(),dashed))
-        drawn_strokes = set()
         number_count = 0
         number_limit = max(3,int(self.width()*self.height()/(48000 if self.zoom<.15 else 20000)))
-        default_width = 1.8 if self.zoom<.15 else 2.3 if self.zoom<.4 else 2.8
+        default_width = route_width(self.zoom)
         decorations = []
         viewport = self._viewport_bounds()
         if self.options['deadhead']:
@@ -731,6 +738,7 @@ class _MapDrawing:
                     if self._path_visible(path,viewport):
                         self._draw_path(painter,path,QPen(muted,self._route_width(route,2),Qt.PenStyle.DashLine))
         for route in routes:
+            drawn_strokes = set()
             color = route_colors[route.id]
             line_width = self._route_width(route,default_width)
             drawings = []
@@ -740,10 +748,7 @@ class _MapDrawing:
                     if len(path)<2 or not self._path_visible(path,viewport):
                         batches.append((None,[]))
                         continue
-                    colors = sorted(shared[self._path_key(path)])
-                    offset = max(-2.,min(2.,(colors.index((color.name(),dashed))-(len(colors)-1)/2)*(1.4 if self.zoom<.15 else 2.2)))
-                    if tuple(path) > tuple(reversed(path)):
-                        offset *= -1
+                    offset = 0.
                     # Labels retain source-curve identity and stable placement.
                     drawings.append(((self._path_key(path),color.name(),abs(offset),dashed),
                                      path,offset))
@@ -786,25 +791,27 @@ class _MapDrawing:
                             number_placed = True
                             number_count += 1
                             break
-        stop_ids = {sid for route in routes
-                    for sid in visible_route_stop_ids(route,self.options['direction'])}
         stop_cells = set()
-        for stop in self._visible('stops'):
-            if stop.id not in stop_ids:
-                continue
-            point = self.world_to_screen(stop.position)
+        displayed_stops=self._display_stops(routes)
+        for stop,position in displayed_stops:
+            point = self.world_to_screen(position)
             if self.options['stops']:
                 cell = (int(point.x()/6),int(point.y()/6))
                 if self.zoom>=.15 or cell not in stop_cells:
                     stop_cells.add(cell)
-                    painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY),.8 if self.zoom<.15 else 1.2))
+                    painter.setPen(QPen(QColor(tokens.TEXT_SECONDARY),stop_outline(self.zoom)))
                     painter.setBrush(QColor(tokens.CARD_BG))
-                    radius = 1.2 if self.zoom<.15 else max(2.,min(3.5,self.zoom*12))
+                    radius = stop_radius(self.zoom)
                     painter.drawEllipse(point,radius,radius)
             if self.options['stops'] and self.options['stop_names'] and self.zoom>=.15:
                 self._label(painter,point,stop.name,occupied)
         if self._highlight and self._highlight[0] != 'route':
             kind,identity = self._highlight
+            if kind=='stop':
+                position=next((p for s,p in displayed_stops if s.id==identity),None)
+                if position is not None:
+                    self._draw_stop_highlight(painter,position)
+                kind='displayed_stop'
             index = self._indexes.get(kind+'s')
             if index:
                 for item,box in index.entries:
@@ -938,7 +945,11 @@ class _FrameSurface(_MapDrawing):
         self._font=canvas.font()
         self.ratio=canvas.ratio if isinstance(canvas,_FrameSurface) else canvas.devicePixelRatioF()
         self._base_cache=canvas._base_cache
-        for name in ('snapshot','center','zoom','_indexes','_stops','_roads',
+        self._vector_prepared = getattr(canvas, '_vector_prepared', None)
+        if (hasattr(canvas, '_revision')
+                and getattr(canvas, '_vector_key', None) != canvas._revision):
+            self._vector_prepared = None
+        for name in ('snapshot','center','zoom','_indexes','_stops','_roads','_stop_symbols',
                      '_connection_boxes','_boxes','_highlight'):
             setattr(self,name,getattr(canvas,name))
         self.options=dict(canvas.options)
@@ -953,6 +964,12 @@ class _FrameSurface(_MapDrawing):
     def _cooperate(self):
         if threading.get_ident() != self._ui_thread:
             self._cpu_budget()
+
+    def _paint(self, painter, overlays=True):
+        if self._vector_prepared is not None:
+            from map_vector import paint_vector_map
+            return paint_vector_map(painter, self, self._vector_prepared, overlays)
+        return super()._paint(painter, overlays)
 
 
 class _FrameSignals(QObject):
@@ -990,6 +1007,41 @@ class _FrameJob(QRunnable):
         self._emit('completed',self.key,self.view,image,surface)
 
 
+class _VectorSignals(QObject):
+    completed = Signal(object, object, object)
+    failed = Signal(object, str)
+
+
+class _VectorJob(QRunnable):
+    def __init__(self, surface, key):
+        super().__init__()
+        self.surface, self.key = surface, key
+        self.signals = _VectorSignals()
+        self.cancelled = threading.Event()
+
+    def cancel(self):
+        self.cancelled.set()
+
+    def _emit(self, name, *values):
+        try:
+            getattr(self.signals, name).emit(*values)
+        except RuntimeError:
+            if isValid(self.signals):
+                raise
+
+    def run(self):
+        from map_vector import VectorMapCancelled, build_vector_map
+        try:
+            prepared = build_vector_map(
+                self.surface, CooperativeCancellation(self.cancelled.is_set))
+            self._emit('completed', self.key,
+                       None if self.cancelled.is_set() else prepared, self.surface)
+        except (InterruptedError, VectorMapCancelled):
+            self._emit('completed', self.key, None, self.surface)
+        except Exception as error:
+            self._emit('failed', self.key, str(error))
+
+
 class MapCanvas(_MapDrawing, QWidget):
     """View changes emit ``(center_x, center_z, pixels_per_metre)``.
 
@@ -1020,6 +1072,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._index_closed = False
         self._pending_focus = None
         self._stops = {}
+        self._stop_symbols = {}
         self._highlight = None
         self._world_polygons = {}
         self._continuous_cache = {}
@@ -1038,6 +1091,16 @@ class MapCanvas(_MapDrawing, QWidget):
         self._failed_frame_key = None
         self._failed_frame_view = None
         self._export_available = False
+        self._vector_prepared = None
+        self._vector_key = None
+        self._vector_job = None
+        self._vector_failed_key = None
+        self._vector_surface = None
+        self._vector_presented_key = None
+        self._vector_presented_view = None
+        self._vector_context_ready = False
+        self._vector_gl_failed = False
+        self._vector_viewport = None
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self.update)
@@ -1049,7 +1112,14 @@ class MapCanvas(_MapDrawing, QWidget):
         self.setFont(ui_font(tokens.FONT_SIZE_CAPTION))
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        # The native GL child paints the map. This QWidget deliberately does
+        # not cover every pixel itself, so its background must be initialized
+        # when Qt composes or captures the surrounding widget tree.
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        if QApplication.platformName() not in ('offscreen', 'minimal'):
+            from map_vector_canvas import VectorMapViewport
+            self._vector_viewport = VectorMapViewport(self)
+            self._vector_viewport.setGeometry(self.rect())
 
     def set_snapshot(self, snapshot):
         previous=self.snapshot
@@ -1059,6 +1129,7 @@ class MapCanvas(_MapDrawing, QWidget):
                 or not any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops,snapshot.junctions))):
             self._index_cache.clear()
         self._revision += 1
+        self._invalidate_vectors()
         self._notify_export_availability()
         self._async_render=sum(len(getattr(snapshot,name)) for name in ('roads','buildings','routes','junctions'))>1000
         if snapshot.roads is not previous.roads:
@@ -1092,6 +1163,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._indexes, self._boxes = state.indexes, state.boxes
         self._stops, self._roads = state.stops, state.roads
         self._connection_boxes = state.connection_boxes
+        self._stop_symbols = state.stop_symbols
         self._indexes_ready = True
 
     def _start_index_job(self):
@@ -1136,6 +1208,8 @@ class MapCanvas(_MapDrawing, QWidget):
         self._notify_export_availability()
         if self._index_job is not None:
             self._index_job.cancel()
+        if self._vector_job is not None:
+            self._vector_job.cancel()
         super().closeEvent(event)
 
     def showEvent(self, event):
@@ -1143,6 +1217,8 @@ class MapCanvas(_MapDrawing, QWidget):
         self._start_index_job()
         super().showEvent(event)
         self._notify_export_availability()
+        if self._vector_viewport is not None and not self._vector_gl_failed:
+            QTimer.singleShot(250, self._check_vector_context)
 
     def set_options(self, **options):
         unknown = set(options) - self.options.keys()
@@ -1154,6 +1230,7 @@ class MapCanvas(_MapDrawing, QWidget):
                            for key in ('legend_items','legend_external'))
         self.options.update(options)
         self._revision += 1
+        self._invalidate_vectors()
         self._notify_export_availability()
         if legend_changed:self.legend_changed.emit()
         self.update()
@@ -1166,6 +1243,8 @@ class MapCanvas(_MapDrawing, QWidget):
         else:
             self._render_timer.stop()
         self.view_changed.emit(*self.center,self.zoom)
+        if self._vector_viewport is not None:
+            self._vector_viewport.update()
         self.update()
 
     def _fit_bounds(self, bounds):
@@ -1255,6 +1334,8 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
+        if self._vector_viewport is not None:
+            self._vector_viewport.setGeometry(self.rect())
         if self._fit_pending:
             self.fit_to_map()
         self._notify_export_availability()
@@ -1284,6 +1365,15 @@ class MapCanvas(_MapDrawing, QWidget):
         for item,box in self._indexes.get(result.kind+'s',_SpatialIndex([],self.snapshot.bounds)).entries:
             if item.id == result.id:
                 self._highlight = (result.kind,result.id)
+                if result.kind=='stop':
+                    from semantic_colors import canonical_key
+                    modes=self.options['layer_modes']
+                    routes=(r for r in self.snapshot.routes if self.options['routes'] and
+                            (modes is None or canonical_key('mode',r.mode) in modes))
+                    position=next((p for s,p in self._display_stops(tuple(routes),clip=False)
+                                   if s.id==result.id),None)
+                    if position is not None:
+                        box=(position[0],position[2],position[0],position[2])
                 if result.kind == 'route':
                     self._fit_bounds(box)
                 else:
@@ -1315,6 +1405,108 @@ class MapCanvas(_MapDrawing, QWidget):
     def _render_key(self):
         return (self._revision,self.width(),self.height(),self.devicePixelRatioF(),self.font().toString(),self._highlight)
 
+    def _invalidate_vectors(self):
+        self._vector_failed_key = None
+        self._vector_presented_key = None
+        self._vector_presented_view = None
+        if self._vector_job is not None:
+            self._vector_job.cancel()
+
+    def _prepare_vectors(self):
+        if self._vector_key == self._revision and self._vector_prepared is not None:
+            return True
+        if self._index_closed or self._vector_failed_key == self._revision:
+            return False
+        if self._vector_job is not None:
+            return False
+        surface = _FrameSurface(self)
+        surface._vector_prepared = None
+        if not self._async_render:
+            from map_vector import build_vector_map
+            try:
+                prepared = build_vector_map(surface)
+            except Exception as error:
+                self._vectors_failed(self._revision, str(error))
+                return False
+            self._vector_key = self._revision
+            self._vector_prepared = prepared
+            self._vector_surface = surface
+            return True
+        job = _VectorJob(surface, self._revision)
+        job.signals.completed.connect(self._vectors_completed)
+        job.signals.failed.connect(self._vectors_failed)
+        self._vector_job = job
+        QThreadPool.globalInstance().start(job)
+        return False
+
+    @Slot(object, object, object)
+    def _vectors_completed(self, key, prepared, surface):
+        if self._vector_job is not None and self._vector_job.key == key:
+            self._vector_job = None
+        if self._index_closed:
+            return
+        if key != self._revision or prepared is None:
+            if self._vector_job is None:
+                self.prepare_frame()
+            return
+        self._vector_key, self._vector_prepared = key, prepared
+        self._vector_surface = surface
+        self.prepare_frame()
+        self.update()
+
+    @Slot(object, str)
+    def _vectors_failed(self, key, message):
+        if self._vector_job is not None and self._vector_job.key == key:
+            self._vector_job = None
+        if self._index_closed:
+            return
+        if key != self._revision:
+            self.prepare_frame()
+            return
+        self._vector_failed_key = key
+        self._notify_export_availability()
+        self.render_failed.emit(message)
+
+    def _paint_vectors(self, painter, *, overlays):
+        from map_vector import paint_vector_map
+        surface = self._vector_surface
+        surface._size = QSize(self.width(), self.height())
+        surface._font = self.font()
+        surface.ratio = self.devicePixelRatioF()
+        surface.center, surface.zoom = self.center, self.zoom
+        surface._highlight = self._highlight
+        paint_vector_map(painter, surface, self._vector_prepared, overlays)
+
+    def _vector_presented(self, key, view):
+        if self._index_closed or key != self._render_key() or view != (*self.center, self.zoom):
+            return
+        changed = (self._vector_presented_key, self._vector_presented_view) != (key, view)
+        self._vector_presented_key, self._vector_presented_view = key, view
+        self._frame_key, self._frame_view = key, view
+        self._failed_frame_key = self._failed_frame_view = None
+        self._notify_export_availability()
+        if changed:
+            self.frame_ready.emit()
+
+    def _vector_paint_failed(self, key, view, message):
+        if self._index_closed or key != self._render_key() or view != (*self.center, self.zoom):
+            return
+        # A missing GL context changes the device, never the map data or the
+        # vector scaling rules. The parent can replay the same world paths.
+        self._vector_gl_failed = True
+        self._vector_presented_key = self._vector_presented_view = None
+        if self._vector_viewport is not None:
+            self._vector_viewport.hide()
+        self._notify_export_availability()
+        self.update()
+
+    def _check_vector_context(self):
+        viewport = self._vector_viewport
+        if (not self._index_closed and self.isVisible() and self.width()>0 and self.height()>0
+                and viewport is not None and not viewport.isValid()):
+            self._vector_paint_failed(self._render_key(), (*self.center,self.zoom),
+                                      'OpenGL context unavailable')
+
     def prepare_frame(self):
         """Prewarm hidden map pages using their current layout, without blocking."""
         self._notify_export_availability()
@@ -1322,6 +1514,14 @@ class MapCanvas(_MapDrawing, QWidget):
             self._start_index_job()
             return
         if self.width()<=0 or self.height()<=0:
+            return
+        if not self._prepare_vectors():
+            return
+        if (self._vector_viewport is not None and not self._vector_gl_failed
+                and self.isVisible()):
+            if (self._vector_presented_key != self._render_key()
+                    or self._vector_presented_view != (*self.center,self.zoom)):
+                self._vector_viewport.update()
             return
         key=self._render_key()
         view = (*self.center,self.zoom)
@@ -1341,6 +1541,30 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def paintEvent(self,event):
         self.prepare_frame()
+        if self._vector_viewport is not None:
+            if not self._vector_gl_failed:
+                # The opaque GL child owns the map pixels. Fluent controls and
+                # the independent legend remain siblings in MapSurface.
+                return
+            if self._vector_key == self._revision and self._vector_prepared is not None:
+                painter = QPainter(self)
+                key, view = self._render_key(), (*self.center, self.zoom)
+                if (self._failed_frame_key,self._failed_frame_view) == (key,view):
+                    painter.fillRect(self.rect(),QColor(MAP_BACKGROUND))
+                    painter.end()
+                    return
+                try:
+                    self._paint_vectors(painter, overlays=True)
+                except Exception as error:
+                    # This is the current synchronous device paint, not a
+                    # late hidden preview; its failure invalidates readiness.
+                    self._vector_presented_key = self._vector_presented_view = None
+                    self._frame_failed(key, view, str(error))
+                    return
+                finally:
+                    painter.end()
+                self._vector_presented(key, view)
+                return
         painter = QPainter(self)
         key=self._render_key()
         painter.fillRect(self.rect(),QColor(MAP_BACKGROUND))
@@ -1361,6 +1585,10 @@ class MapCanvas(_MapDrawing, QWidget):
     @Slot(object,object,object,object)
     def _frame_completed(self,key,view,frame,surface):
         self._frame_job=None
+        if (self._vector_viewport is not None and self.isVisible()
+                and self._vector_presented_key == self._render_key()
+                and self._vector_presented_view == (*self.center, self.zoom)):
+            return
         if key==self._render_key():
             self._frame,self._frame_key,self._frame_view=frame,key,view
             self._base_cache=surface._base_cache
@@ -1380,6 +1608,9 @@ class MapCanvas(_MapDrawing, QWidget):
         self._frame_job=None
         if self._index_closed:
             return
+        if (self._vector_presented_key == self._render_key()
+                and self._vector_presented_view == (*self.center,self.zoom)):
+            return
         if key==self._render_key() and view==(*self.center,self.zoom):
             self._failed_frame_key=key
             self._failed_frame_view=view
@@ -1393,7 +1624,7 @@ class MapCanvas(_MapDrawing, QWidget):
         frame = QImage(round(self.width()*ratio),round(self.height()*ratio),QImage.Format.Format_ARGB32_Premultiplied)
         frame.setDevicePixelRatio(ratio)
         painter = QPainter(frame)
-        self._paint(painter,overlays=False)
+        _FrameSurface(self)._paint(painter,overlays=False)
         painter.end()
         self._frame,self._frame_key,self._frame_view = frame,key,view
         self._notify_export_availability()
@@ -1405,6 +1636,18 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def can_export(self):
         """Whether a complete frame exists for the exact current viewport."""
+        if self._vector_viewport is not None and self.isVisible():
+            key, view = self._render_key(), (*self.center, self.zoom)
+            return (not self._index_closed and self._indexes_ready
+                    and self.width()>0 and self.height()>0
+                    and self._vector_key == self._revision
+                    and self._vector_prepared is not None
+                    and self._vector_presented_key == key
+                    and self._vector_presented_view == view
+                    and (self._failed_frame_key, self._failed_frame_view) != (key, view)
+                    and self._index_failed_key != _index_key(self.snapshot)
+                    and any((self.snapshot.roads,self.snapshot.buildings,self.snapshot.routes,
+                             self.snapshot.stops,self.snapshot.junctions)))
         if (self._index_closed or not self._indexes_ready or self._frame is None
                 or self._frame.isNull() or self.width()<=0 or self.height()<=0
                 or self._frame_job is not None
@@ -1452,7 +1695,10 @@ class MapCanvas(_MapDrawing, QWidget):
             return False
         image = QImage(self.export_size(),QImage.Format.Format_ARGB32_Premultiplied)
         painter = QPainter(image)
-        self._paint(painter)
+        if self._vector_prepared is not None and self._vector_key == self._revision:
+            _FrameSurface(self)._paint(painter)
+        else:
+            self._paint(painter)
         if self.options['legend_external']:
             height=self.legend_strip_height()
             self.paint_legend_strip(painter,QRectF(0,self.height(),self.width(),height))

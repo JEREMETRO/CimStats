@@ -32,12 +32,27 @@ def _window_workarea_evidence(widget):
     visible = QRect(window.mapToGlobal(QPoint(0, 0)), window.size()) if window.isMaximized() else frame
     inside = available.contains(visible)
     assert inside, ('window exceeds available workarea', rectangle(visible), rectangle(available))
+    native = {}
+    if hasattr(window,'_vector_surface_anchor'):
+        import ctypes
+        from ctypes import wintypes
+        import win32con, win32gui
+        handle = int(window.winId())
+        style = win32gui.GetWindowLong(handle,win32con.GWL_STYLE)
+        dwm = ctypes.windll.dwmapi.DwmGetWindowAttribute
+        dwm.argtypes = [wintypes.HWND,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD]
+        enabled = ctypes.c_int()
+        result = dwm(handle,1,ctypes.byref(enabled),ctypes.sizeof(enabled))
+        assert style&win32con.WS_CAPTION and style&win32con.WS_THICKFRAME, 'Native window border was lost'
+        assert result==0 and enabled.value==1, 'DWM window decoration was lost'
+        native = dict(native_handle=handle,native_style=hex(style),native_caption=True,
+                      native_resize_border=True,dwm_nonclient_rendering=True)
     return dict(requested_size=getattr(window, '_smoke_requested_size', None),
                 actual_window_size=[window.width(), window.height()],
                 available_geometry=rectangle(available), screen_geometry=rectangle(full),
                 frame_geometry=rectangle(frame), visible_geometry=rectangle(visible),
                 within_available_geometry=inside,
-                dpr=window.devicePixelRatioF())
+                dpr=window.devicePixelRatioF(),**native)
 
 
 def main(launcher: Path, argv):
@@ -164,6 +179,120 @@ def _map_stable(page, settle, wait_until):
     assert ready(), 'map changed during stable capture delay'
 
 
+def _map_vector_capture(canvas, output, name):
+    """Record the native GL buffer separately from the composited UI image."""
+    viewport = getattr(canvas, '_vector_viewport', None)
+    if viewport is None:
+        return None  # Offscreen/minimal Qt has no native OpenGL child.
+    prepared = getattr(canvas, '_vector_prepared', None)
+    vector_key = getattr(canvas, '_vector_key', None)
+    assert prepared is not None and vector_key == canvas._revision, 'current vector geometry is not prepared'
+    key, view = canvas._render_key(), (*canvas.center, canvas.zoom)
+    assert (canvas._vector_presented_key, canvas._vector_presented_view) == (key, view), (
+        'map capture has no current vector presentation', name)
+
+    framebuffer = viewport.grabFramebuffer()
+    fallback = bool(canvas._vector_gl_failed)
+    valid = bool(viewport.isValid())
+    framebuffer_path = None
+    if not framebuffer.isNull():
+        framebuffer_path = output / (name + '-vector-framebuffer.png')
+        assert framebuffer.save(str(framebuffer_path))
+    from PySide6.QtGui import QColor
+    from map_canvas import MAP_BACKGROUND
+    background = QColor(MAP_BACKGROUND)
+    def map_pixels(image):
+        xs = range(image.width() // 10, image.width() * 9 // 10,
+                   max(1, image.width() // 100))
+        ys = range(image.height() // 10, image.height() * 9 // 10,
+                   max(1, image.height() // 100))
+        near_background = ink = 0
+        for y in ys:
+            for x in xs:
+                colour = image.pixelColor(x, y)
+                difference = max(abs(a - b) for a, b in zip(colour.getRgb()[:3], background.getRgb()[:3]))
+                near_background += difference <= 8
+                ink += colour.alpha() > 0 and difference > 8
+        # Close views can lie entirely inside an observed wide road. Its fill
+        # is valid geometry; the ancestor/reference comparison still rejects
+        # a wrong composition without requiring empty map background here.
+        assert ink, ('map capture has no visible geometry', name, near_background, ink)
+        return dict(background_samples=near_background, geometry_samples=ink)
+    if not fallback:
+        assert valid and canvas._vector_context_ready, 'OpenGL viewport was not initialized'
+        assert framebuffer_path is not None, 'OpenGL viewport returned an empty framebuffer'
+        assert framebuffer.width() > 0 and framebuffer.height() > 0
+        # Exclude the scale and corner controls; a blank GL surface must not
+        # pass merely because an older QWidget bitmap or UI overlay is present.
+        pixels = map_pixels(framebuffer)
+        assert canvas._frame_job is None, 'native vector presentation started a raster frame job'
+    else:
+        fallback_image = canvas.grab().toImage()
+        assert not fallback_image.isNull(), 'vector CPU fallback returned an empty map image'
+        pixels = map_pixels(fallback_image)
+
+    return dict(viewport_valid=valid, viewport_dpr=viewport.devicePixelRatioF(),
+                framebuffer_dpr=framebuffer.devicePixelRatioF(),
+                framebuffer_size=[framebuffer.width(), framebuffer.height()],
+                framebuffer=str(framebuffer_path) if framebuffer_path else None,
+                gl_fallback=fallback, vector_key=vector_key, vector_revision=canvas._revision,
+                vector_presented_key=list(canvas._vector_presented_key),
+                vector_prepared=True, current_vector_presentation=True, **pixels)
+
+
+def _map_composition_mismatch(actual, expected):
+    """Permit sample coverage changes at edges while rejecting background noise."""
+    import numpy as np
+    difference = np.max(np.abs(actual.astype(int)-expected.astype(int)), axis=2)
+    padded = np.pad(expected.astype(int), ((1, 1), (1, 1), (0, 0)), mode='edge')
+    edge = np.zeros(expected.shape[:2], dtype=bool)
+    for dy in range(3):
+        for dx in range(3):
+            neighbour = padded[dy:dy+expected.shape[0], dx:dx+expected.shape[1]]
+            edge |= np.max(np.abs(neighbour-expected.astype(int)), axis=2) > 2
+    # Fractional DPR captures and framebuffer readback can resolve one of
+    # four MSAA samples differently at an edge. Uniform regions stay strict.
+    return (difference > 2) & ~((difference <= 64) & edge)
+
+
+def _assert_map_composition(widget, captured, canvas):
+    """Compare the original ancestor capture before any framebuffer readback."""
+    viewport = getattr(canvas, '_vector_viewport', None)
+    if viewport is None or canvas._vector_gl_failed:
+        return None
+    import numpy as np
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import QWidget
+    ratio = captured.devicePixelRatioF()
+    origin = canvas.mapTo(widget, QPoint())
+    width, height = round(canvas.width()*ratio), round(canvas.height()*ratio)
+    actual = captured.toImage().copy(round(origin.x()*ratio), round(origin.y()*ratio), width, height)
+    expected = viewport.grabFramebuffer()
+    def pixels(image):
+        image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+        return np.frombuffer(image.bits(), np.uint8).reshape(
+            image.height(), image.bytesPerLine()//4, 4)[:, :image.width(), :3].copy()
+    actual, expected = pixels(actual), pixels(expected)
+    assert actual.shape == expected.shape, 'composited map has the wrong dimensions'
+    mask = np.ones((height, width), dtype=bool)
+    # Search, zoom and loading controls are siblings deliberately over the map.
+    for overlay in canvas.parentWidget().findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        if overlay is canvas or not overlay.isVisible():
+            continue
+        top = overlay.geometry().topLeft()-canvas.geometry().topLeft()
+        left, upper = round(top.x()*ratio), round(top.y()*ratio)
+        right, lower = left+round(overlay.width()*ratio), upper+round(overlay.height()*ratio)
+        if right <= 0 or lower <= 0 or left >= width or upper >= height:
+            continue
+        mask[max(0, upper-2):min(height, lower+2), max(0, left-2):min(width, right+2)] = False
+    assert np.any(mask), 'no uncovered map pixels to verify'
+    mismatch = _map_composition_mismatch(actual, expected)
+    fraction = float(np.count_nonzero(mismatch & mask)/np.count_nonzero(mask))
+    assert fraction < .001, ('composited map differs from its current vector frame', fraction)
+    return dict(pixels_compared=int(np.count_nonzero(mask)), mismatch_fraction=fraction)
+
+
 def _map_passenger_input_case(page, settle, wait_until, capture):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -216,6 +345,14 @@ def _exercise_map_inputs(win, page, settle, wait_until, capture):
     win.raise_(); win.activateWindow(); settle(300)
     canvas = page.canvas
     _map_stable(page, settle, wait_until)
+    prepared = getattr(canvas, '_vector_prepared', None)
+    vector_key = getattr(canvas, '_vector_key', None)
+    assert prepared is not None and vector_key == canvas._revision
+    def assert_reused_vector():
+        assert canvas._vector_prepared is prepared and canvas._vector_key == vector_key, (
+            'drag or zoom rebuilt immutable vector geometry')
+        if getattr(canvas, '_vector_viewport', None) is not None and not canvas._vector_gl_failed:
+            assert canvas._frame_job is None, 'native vector interaction started a raster frame job'
     center, zoom = canvas.center, canvas.zoom
     origin = QPoint(canvas.width()//2, canvas.height()//2)
     target = origin+QPoint(55,35)
@@ -223,13 +360,16 @@ def _exercise_map_inputs(win, page, settle, wait_until, capture):
     QTest.mouseMove(canvas, target, delay=30)
     QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=target)
     assert canvas.center != center
+    assert_reused_vector()
     QApplication.sendEvent(canvas, QWheelEvent(QPointF(origin), QPointF(canvas.mapToGlobal(origin)),
         QPoint(), QPoint(0,120), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
         Qt.ScrollPhase.ScrollUpdate, False))
     assert canvas.zoom > zoom
+    assert_reused_vector()
     _map_stable(page, settle, wait_until); capture('map-native-drag-zoom')
     navigation = dict(dragged=True, zoomed=True, center=list(canvas.center), zoom=canvas.zoom,
-                      canvas_size=[canvas.width(),canvas.height()], window_size=[win.width(),win.height()])
+                      canvas_size=[canvas.width(),canvas.height()], window_size=[win.width(),win.height()],
+                      vector_prepared_reused=True)
 
     _map_click(page.preset_pivot.items['single'], settle)
     _map_click(page.dock.tabs['lines'], settle)
@@ -354,6 +494,60 @@ def _exercise_map_inputs(win, page, settle, wait_until, capture):
     return dict(navigation=navigation,search=search,sorting=sorting,building=building_evidence,passengers=passenger,metrics=metrics)
 
 
+def _exercise_map_zoom_views(window,page,settle,wait,capture):
+    """Keep full-window evidence at city, district and street symbol scales."""
+    from map_scale import route_width,stop_radius
+    canvas = page.canvas
+    previous_preset = page.preset
+    previous_state = page.panel_set.state()
+    previous_view = (*canvas.center,canvas.zoom)
+    page.set_preset('network')
+    state = page.panel_set.state()
+    state.update(color_by='line',line_numbers=True,stops=True,stop_names=True,
+                 passenger_min=None,passenger_max=None,
+                 manual_line_ids={r.id for r in page.query.snapshot.routes})
+    page.apply_state(state)
+    wait(lambda:canvas.can_export(),120)
+    route = next(r for r in canvas.snapshot.routes if any(len(path)>1 for path in canvas.route_paths(r)))
+    path = max(canvas.route_paths(route),key=lambda path:len(path))
+    a,b = max(zip(path,path[1:]),key=lambda pair:(pair[1][0]-pair[0][0])**2+(pair[1][2]-pair[0][2])**2)
+    center = ((a[0]+b[0])/2,(a[2]+b[2])/2)
+    # Include a real lane-displacement case in every detailed native capture.
+    import math
+    symbols=canvas._display_stops(canvas.snapshot.routes,clip=False)
+    shifted=[(stop,point) for stop,point in symbols if math.dist(stop.position,point)>2.]
+    focus_stop=focus_point=None
+    if shifted:
+        focus_stop,focus_point=min(shifted,key=lambda row:math.hypot(row[1][0]-center[0],row[1][2]-center[1]))
+        center=(focus_point[0],focus_point[2])
+    prepared = canvas._vector_prepared
+    rows = []
+    for width,height in ((960,680),(1440,960)):
+        _resize_for_workarea(window,width,height);settle()
+        canvas.fit_to_map();wait(lambda:canvas.can_export(),120)
+        fit_view = (*canvas.center,canvas.zoom)
+        for name,zoom,position in (('city',fit_view[2],fit_view[:2]),
+                                   ('district',.25,center),('street',1.,center),('near',4.,center),
+                                   ('close',16.,center),('maximum',100.,center)):
+            canvas.center=position;canvas.zoom=zoom;canvas._changed(interactive=True)
+            wait(lambda:canvas.can_export(),120);settle()
+            capture(f'map-zoom-{name}-{width}x{height}')
+            assert canvas._vector_prepared is prepared, 'Zoom rebuilt world geometry'
+            if name!='city' and focus_stop is not None:
+                assert dict((s.id,p) for s,p in canvas._display_stops(canvas.snapshot.routes))[focus_stop.id]==focus_point
+            rows.append(dict(name=name,zoom=zoom,center=list(position),
+                             automatic_line_width=route_width(zoom),shared_line_offset=0.,
+                             station_id=focus_stop.id if focus_stop else None,
+                             station_symbol=list(focus_point) if focus_point else None,
+                             station_native_position=list(focus_stop.position) if focus_stop else None,
+                             stop_radius=stop_radius(zoom),window=_window_workarea_evidence(window)))
+    page.apply_state(previous_state)
+    page.set_preset(previous_preset)
+    canvas.center=previous_view[:2];canvas.zoom=previous_view[2];canvas._changed()
+    wait(lambda:canvas.can_export(),120)
+    return rows
+
+
 def _map_current_export(page, path):
     from PySide6.QtGui import QImage
     assert page.canvas.can_export(), 'map export requires the current complete frame'
@@ -393,7 +587,8 @@ def _exercise(win, desktop_app, args):
         if delay:
             settle(delay)
         path = args.output / (name + '.png')
-        assert widget.grab().save(str(path))
+        captured = widget.grab()
+        assert captured.save(str(path))
         composited = None
         if app.platformName() == 'windows' and activate:
             widget.window().raise_()
@@ -430,6 +625,10 @@ def _exercise(win, desktop_app, args):
                 rect=widget.geometry()
                 return [rect.x(),rect.y(),rect.width(),rect.height()]
             records[-1].update(plot_rect=geometry(canvas),legend_rect=geometry(strip),legend_covers_map=False)
+            records[-1]['composition'] = _assert_map_composition(widget, captured, canvas)
+            vector = _map_vector_capture(canvas, args.output, name)
+            if vector is not None:
+                records[-1]['vector'] = vector
 
     assert abs(win.devicePixelRatioF() - args.expected_dpr) < .001, (win.devicePixelRatioF(), args.expected_dpr)
     from app_metadata import APP_NAME
@@ -520,6 +719,7 @@ def _exercise(win, desktop_app, args):
     _resize_for_workarea(win, 1440, 960)
     settle()
     map_native_inputs = _exercise_map_inputs(win,map_page,settle,wait_until,capture)
+    map_zoom_views = _exercise_map_zoom_views(win,map_page,settle,wait_until,capture)
     assert not map_errors, map_errors
     map_current_export = _map_current_export(map_page,args.output/'map-current.png')
     _resize_for_workarea(win, 960, 680)
@@ -875,6 +1075,7 @@ def _exercise(win, desktop_app, args):
                      'routes': len(map_page.query.snapshot.routes),
                      'buildings': len(map_page.query.snapshot.buildings)}
     report['map']['native_inputs'] = map_native_inputs
+    report['map']['zoom_views'] = map_zoom_views
     report['map']['current_export'] = map_current_export
     report['home_structure_responsive'] = home_structure_responsive
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

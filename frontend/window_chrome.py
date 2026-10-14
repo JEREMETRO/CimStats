@@ -230,6 +230,19 @@ class FluentMainWindow(_ChromeMixin, FramelessMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent, show_icon=True)
 
+    def _initFrameless(self):
+        if sys.platform == 'win32' and QApplication.platformName() == 'windows':
+            from PySide6.QtOpenGLWidgets import QOpenGLWidget
+            # Declare the eventual GL surface before frameless setup creates
+            # the native handle and installs DWM chrome. A first GL child added
+            # after the Logo is visible would recreate that handle and lose
+            # border/shadow/animation styles. The anchor never displays content
+            # or prepares map data; the map owns its actual rendering context.
+            self._vector_surface_anchor = QOpenGLWidget(self)
+            self._vector_surface_anchor.resize(1,1)
+            self._vector_surface_anchor.hide()
+        super()._initFrameless()
+
 
 class FluentWindow(_ChromeMixin, FramelessWindow):
     pass

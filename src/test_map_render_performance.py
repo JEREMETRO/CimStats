@@ -49,14 +49,14 @@ def test_large_frame_render_does_not_block_ui_and_drops_stale_options(qt_applica
     from PySide6.QtCore import QTimer
     from PySide6.QtTest import QTest
     from map_model import MapRoad
-    from map_canvas import _MapDrawing
+    import map_vector
     canvas=MapCanvas();canvas.resize(400,300)
     roads=tuple(MapRoad(i,'road','',(((0.,0.,0.),(10.,0.,0.)),)) for i in range(1001))
-    original=_MapDrawing._paint
-    def slow(self,painter,overlays=True):
+    original=map_vector.paint_vector_map
+    def slow(painter,surface,prepared,overlays=True):
         time.sleep(.2)
-        return original(self,painter,overlays)
-    monkeypatch.setattr(_MapDrawing,'_paint',slow)
+        return original(painter,surface,prepared,overlays)
+    monkeypatch.setattr(map_vector,'paint_vector_map',slow)
     canvas.set_snapshot(MapSnapshot(roads=roads,bounds=(0.,0.,100.,100.)))
     ticks=[];timer=QTimer();timer.timeout.connect(lambda:ticks.append(time.monotonic()));timer.start(10)
     canvas.show();qt_application.processEvents()
