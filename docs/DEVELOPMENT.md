@@ -44,7 +44,7 @@ py -3.12 -m venv .venv
 
 参见[构建与发布](RELEASE.md)。版本来自根目录 `VERSION`，界面元数据在 `src/app_metadata.py`。界面字体复用 `frontend/stats_typography.py`，数据处理保留原始分组和完整性标记。
 
-地图原生提交组件由 `tools/build_map_native.py` 从 `frontend/native/map_gpu_submit.c` 构建。Windows 开发依赖包含固定版本的 Zig，也可通过 `CIMSTATS_ZIG` 指定编译器路径。源码运行前执行 `python tools/build_map_native.py`；单文件打包会自动构建并纳入 DLL。编译器仅用于构建，不进入发行包。组件不可用时，地图沿用 Python 提交路径；上下文不支持 GPU 绘制时使用原有矢量画布。
+地图原生提交组件由 `tools/build_map_native.py` 从 `frontend/native/map_gpu_submit.c` 构建。Windows 开发依赖包含固定版本的 Zig，也可通过 `CIMSTATS_ZIG` 指定编译器路径。源码运行前执行 `python tools/build_map_native.py`；单文件打包在本次构建目录中生成并纳入 DLL，避免与正在运行的源码程序争用文件。编译器仅用于构建，不进入发行包。组件不可用时，地图沿用 Python 提交路径；上下文不支持 GPU 绘制时使用原有矢量画布。
 
 应用外壳在 `frontend/app_shell.py`，通用控件在 `frontend/ui_kit.py`。图表数据由调用方构造 `ChartData` 和 `Series`，绘制、悬停与缩放由 `frontend/chart_canvas.py` 负责。
 

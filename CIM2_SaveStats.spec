@@ -57,7 +57,7 @@ project_datas = bundle_data(root)
 pyside_dir = Path(distribution('PySide6').locate_file('PySide6'))
 shiboken_dir = Path(distribution('shiboken6').locate_file('shiboken6'))
 system32 = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "System32"
-native_map = build_map_native(root)
+native_map = build_map_native(root, Path(workpath) / 'map-native' / 'map_gpu_submit.dll')
 
 a = Analysis(
     [str(root / "CIM2_SaveStats.py")],

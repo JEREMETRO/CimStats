@@ -104,13 +104,18 @@ class SpecContract(unittest.TestCase):
         metadata.icon_directory = lambda root: root/'frontend/static/branding/cimstats'
         root = candidate_package.ROOT
         native = ModuleType('build_map_native')
-        native.build=lambda source_root:source_root/'build/native/map_gpu_submit.dll'
+        def build_native(source_root, output=None):
+            observed['native_source_root'] = source_root
+            observed['native_output'] = output
+            return output or source_root/'build/native/map_gpu_submit.dll'
+        native.build=build_native
         def analysis(*args, **kwargs):
             observed['analysis'] = kwargs
             return SimpleNamespace(pure=[],scripts=['launcher'],binaries=['native-dependencies'],datas=kwargs['datas'])
         def exe(*args, **kwargs): observed['exe']=(args,kwargs); return 'executable'
         def collect(*args, **kwargs): observed['collect']=(args,kwargs)
-        namespace = {'SPECPATH':str(root),'Analysis':analysis,'PYZ':lambda pure:'pyz','EXE':exe,'COLLECT':collect}
+        namespace = {'SPECPATH':str(root),'workpath':str(root/'build/candidates/spec-test-work'),
+                     'Analysis':analysis,'PYZ':lambda pure:'pyz','EXE':exe,'COLLECT':collect}
         environment = {'CIMSTATS_LOCAL_REVIEW_BUILD':'1' if local_review else '',
                        'CIM2_BUILD_MANAGED_ROOT':str(root/'game_runtime/Managed'),
                        'CIM2_BUILD_PROBE_PATH':str(root/'data/Assembly-CSharp.probe.dll')}
@@ -121,7 +126,10 @@ class SpecContract(unittest.TestCase):
 
     def test_onefile_spec_keeps_native_and_data_files_in_executable(self):
         observed = self.evaluate()
-        self.assertIn((str(candidate_package.ROOT/'build/native/map_gpu_submit.dll'),'.'),observed['analysis']['binaries'])
+        self.assertEqual(observed['native_source_root'], candidate_package.ROOT)
+        native_output = candidate_package.ROOT/'build/candidates/spec-test-work/map-native/map_gpu_submit.dll'
+        self.assertEqual(observed['native_output'], native_output)
+        self.assertIn((str(native_output),'.'),observed['analysis']['binaries'])
         args, options = observed['exe']
         self.assertFalse(options.get('exclude_binaries', False))
         self.assertEqual(args[2], ['native-dependencies'])
