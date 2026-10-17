@@ -147,7 +147,9 @@ def test_smoke_single_route_exports_use_actual_entry_preview_and_files(smoke_win
     evidence=_exercise_route_exports(window,window.map_page,route,tmp_path,settle,wait_until,capture)
     assert [item['format'] for item in evidence]==['PNG','JPG','PDF']
     assert all(item['route_id']==42 and item['ppi']==80 for item in evidence)
-    assert all(item['size']==[400,267] and item['preview_nonempty'] for item in evidence)
+    assert [item['size'] for item in evidence]==[[400,267],[400,600],[400,600]]
+    assert [item['orientation'] for item in evidence]==['landscape','portrait','portrait']
+    assert all(item['preview_nonempty'] and item['tab_round_trips'] for item in evidence)
     assert all(item['width_mm']==127 and item['bytes']>0 for item in evidence)
     assert len(captures)==3
     assert FluentFileDialog.__dict__['getSaveFileName'] is picker

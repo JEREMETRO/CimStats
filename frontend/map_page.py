@@ -780,7 +780,6 @@ class MapPage(QWidget):
             return
         if any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops)):
             self.surface.set_loading(True)
-        self._prepare_hidden_layout()
         if self.session.get('lines'):
             if self._stats_worker is not None:self._stats_worker.requestInterruption()
             started=time.perf_counter()
@@ -815,17 +814,25 @@ class MapPage(QWidget):
         self._failed(generation,message)
 
     def _finish_snapshot_loading(self,snapshot,stats=None):
-        self.set_snapshot(snapshot,stats=stats)
-        if not self.canvas.isVisible():
-            self.canvas._fit_pending=not isinstance(self.parentWidget(),QStackedWidget)
-        self.canvas.prepare_frame()
+        try:
+            self.set_snapshot(snapshot,stats=stats)
+            if not self.canvas.isVisible():
+                self.canvas._fit_pending=not isinstance(self.parentWidget(),QStackedWidget)
+            self.canvas.prepare_frame()
+        except Exception as error:
+            # Qt completion slots do not propagate back into the worker's
+            # exception handler. Release the request so revisiting can retry.
+            self._switching=False
+            self._snapshot=self.query=self.result=None
+            self._failed(self._generation,str(error))
+            return
         self.ready.emit()
 
     def _prepare_hidden_layout(self):
-        """Resolve the actual stacked shell bounds before hidden frame prewarming."""
+        """Resolve the actual viewport before fitting a hidden snapshot."""
         parent=self.parentWidget()
-        if self.isVisible() or not isinstance(parent,QStackedWidget):return
-        self.resize(parent.contentsRect().size())
+        if self.isVisible():return
+        if isinstance(parent,QStackedWidget):self.resize(parent.contentsRect().size())
         self.ensurePolished()
         self.layout().setGeometry(self.rect())
         self.dock_stack.layout().setGeometry(self.dock_stack.rect())
@@ -846,9 +853,11 @@ class MapPage(QWidget):
             self._awaiting_frame=False
             self.surface.set_loading(False)
             self._requested=False
+            self.status.setText('地图读取失败：'+str(message).splitlines()[0] if message else '地图读取失败')
             self.failed.emit(message)
 
     def set_snapshot(self,snapshot,*,stats=None):
+        self._prepare_hidden_layout()
         self._snapshot=snapshot
         self._switching=True
         self._awaiting_frame=self._requested and any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops))
@@ -881,9 +890,7 @@ class MapPage(QWidget):
             self.surface.set_loading(False)
 
     def _render_failed(self, message):
-        self._awaiting_frame=False
-        self.surface.set_loading(False)
-        self.failed.emit(message)
+        self._failed(self._generation,message)
 
     def apply_state(self,state):
         if state!=self.panel_set.state():self.panel_set.set_state(state)

@@ -13,11 +13,13 @@ import math
 import os
 import sys
 import time
+import ctypes
 import numpy as np
+from shiboken6 import getCppPointer
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter, QPainterPath,
-                           QPainterPathStroker, QPen, QPolygonF)
+                           QPainterPathStroker, QPen, QPolygonF, QTransform)
 
 import stats_tokens as tokens
 from map_scale import (detail_fraction, route_width,
@@ -29,6 +31,7 @@ _RANK = {'unknown': 0, 'local': 1, 'pedestrian': 2, 'secondary': 3,
          'arterial': 4, 'express': 5, 'track': 6}
 _TILE = 512.
 _PROFILE = bool(os.environ.get('CIM_MAP_VECTOR_PROFILE'))
+_BULK_POLYGON_SUPPORTED = None
 
 
 def _zoom_key(zoom):
@@ -87,6 +90,7 @@ class _LaneTemplate:
     screen_base: np.ndarray
     normals: np.ndarray
     fractions: np.ndarray
+    polygon: QPolygonF
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +185,7 @@ def _lane_template(points):
     fractions = arcs/arcs[-1] if arcs[-1] else np.zeros(len(coords))
     for array in (screen_base, normals, fractions):
         array.setflags(write=False)
-    return _LaneTemplate(screen_base, normals, fractions)
+    return _LaneTemplate(screen_base, normals, fractions, _qpolygon(screen_base))
 
 
 def _bulk_lane_templates(paths):
@@ -215,12 +219,49 @@ def _bulk_lane_templates(paths):
     for array in (screen_base, normals, fractions):
         array.setflags(write=False)
     return tuple(_LaneTemplate(screen_base[start:end], normals[start:end],
-                               fractions[start:end])
+                               fractions[start:end], _qpolygon(screen_base[start:end]))
                  for start, end in zip(starts, ends))
 
 
+def _bulk_polygon_supported():
+    """Validate the Qt 6 QPointF double layout before native bulk transfer.
+
+    QPolygonF.data() exposes its contiguous mutable QPointF storage. Keep
+    every pointer local to a new, exclusively owned polygon; never write to
+    a retained/shared path or leave an array alias in the prepared scene.
+    """
+    global _BULK_POLYGON_SUPPORTED
+    if _BULK_POLYGON_SUPPORTED is None:
+        _BULK_POLYGON_SUPPORTED = False
+        try:
+            values = np.array(((1.25, -2.5), (3.75, -4.5)), dtype=np.float64)
+            probe = QPolygonF([QPointF(*point) for point in values])
+            first = probe.data()
+            address = getCppPointer(first)[0]
+            if ctypes.string_at(address, values.nbytes) == values.tobytes():
+                replacement = np.array(((7.25, -8.5), (9.75, -10.5)), dtype=np.float64)
+                ctypes.memmove(address, replacement.ctypes.data, replacement.nbytes)
+                _BULK_POLYGON_SUPPORTED = all(
+                    probe[i].x() == x and probe[i].y() == y
+                    for i, (x, y) in enumerate(replacement))
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            pass
+    return _BULK_POLYGON_SUPPORTED
+
+
 def _qpolygon(points):
-    return QPolygonF([QPointF(float(x), float(y)) for x, y in points])
+    if not len(points):
+        return QPolygonF()
+    if not _bulk_polygon_supported():
+        return QPolygonF([QPointF(float(x), float(y)) for x, y in points])
+    values = np.ascontiguousarray(points, dtype=np.float64)
+    if values.ndim != 2 or values.shape[1] != 2:
+        raise ValueError('Polygon coordinates must have shape (N, 2)')
+    polygon = QPolygonF()
+    polygon.resize(len(values))
+    first = polygon.data()
+    ctypes.memmove(getCppPointer(first)[0], values.ctypes.data, values.nbytes)
+    return polygon
 
 
 def _lane_polygons(template, zoom, start, end, casing):
@@ -237,6 +278,48 @@ def _lane_polygons(template, zoom, start, end, casing):
     outer_right = base+normal*(high+casing/2)[:, None]
     return (_qpolygon(np.concatenate((left, right[::-1]))),
             _qpolygon(np.concatenate((outer_left, outer_right[::-1]))))
+
+
+def _bulk_lane_polygons(requests, zoom):
+    """Evaluate saved lane ribbons in one array pass, preserving every vertex.
+
+    The reference _lane_polygons remains the definition for a single curve.
+    Packaging into Qt values is per curve; coordinate arithmetic is per batch.
+    """
+    result = [None] * len(requests)
+    detailed = []
+    scale = QTransform.fromScale(zoom, zoom)
+    for index, (template, start, end, casing) in enumerate(requests):
+        if start is None or end is None or not template.fractions[-1]:
+            result[index] = (scale.map(template.polygon), None)
+        else:
+            detailed.append((index, template, start, end, casing))
+    if not detailed:
+        return result
+    sizes = np.fromiter((len(item[1].fractions) for item in detailed), dtype=np.int64)
+    ends = np.cumsum(sizes)
+    starts = ends - sizes
+    base = np.concatenate([item[1].screen_base for item in detailed]) * zoom
+    normals = np.concatenate([item[1].normals for item in detailed])
+    fractions = np.concatenate([item[1].fractions for item in detailed])
+    start = np.repeat(np.array([item[2] for item in detailed]), sizes, axis=0)
+    end = np.repeat(np.array([item[3] for item in detailed]), sizes, axis=0)
+    casing = np.repeat(np.array([item[4] for item in detailed]), sizes)
+    low = start[:, 0]*(1-fractions) + end[:, 0]*fractions
+    high = start[:, 1]*(1-fractions) + end[:, 1]*fractions
+    vertex = np.arange(len(base))
+    first = np.repeat(starts, sizes)
+    left = first + vertex
+    right = 2*np.repeat(ends, sizes) - 1 - vertex + first
+    core = np.empty((2*len(base), 2), dtype=np.float64)
+    edge = np.empty_like(core)
+    core[left] = base + normals*low[:, None]
+    core[right] = base + normals*high[:, None]
+    edge[left] = base + normals*(low-casing/2)[:, None]
+    edge[right] = base + normals*(high+casing/2)[:, None]
+    for (index, *_), first, last in zip(detailed, 2*starts, 2*ends):
+        result[index] = (_qpolygon(core[first:last]), _qpolygon(edge[first:last]))
+    return result
 
 
 def _freeze_tiles(items):
@@ -525,12 +608,14 @@ def _connection_paints(surface, prepared, viewport, road_style, cancelled=None):
     styles_by_road = cache.setdefault('__road_styles__', {})
     margins_by_lane = cache.setdefault('__lane_margins__', {})
     overview = surface.zoom < .15
-    for connection in _visible_connections(prepared, viewport, surface.zoom):
+    visible = tuple(_visible_connections(prepared, viewport, surface.zoom))
+    pending = []
+    requests = []
+    for connection in visible:
         _check(cancelled)
         identity = id(connection)
         paints = cache.get(identity)
         if paints is not None:
-            result[connection.layer].extend(paints)
             continue
         styles = []
         margins = []
@@ -553,14 +638,17 @@ def _connection_paints(surface, prepared, viewport, road_style, cancelled=None):
         width = max(.5, min(widths))
         casing = .2 if surface.zoom < .15 else .45
         start, end = margins if not overview else (None, None)
+        pending.append((connection, styles, style, width, casing))
+        requests.extend((template, start, end, casing) for template in connection.templates)
+    polygons = iter(_bulk_lane_polygons(requests, surface.zoom))
+    for connection, styles, style, width, casing in pending:
+        _check(cancelled)
         paints = []
         for template in connection.templates:
             # At overview scale lane boundaries are subpixel; the saved turn
             # curve remains a vector stroke. Detailed scales restore the
             # authentic tapered lane polygons from the same world template.
-            core, edge = ((_qpolygon(template.screen_base*surface.zoom), None)
-                          if overview else
-                          _lane_polygons(template, surface.zoom, start, end, casing))
+            core, edge = next(polygons)
             fill = QBrush(QColor(style.fill))
             endpoints = template.screen_base[[0, -1]]*surface.zoom
             if styles[0].fill != styles[1].fill and not np.array_equal(endpoints[0], endpoints[1]):
@@ -571,8 +659,11 @@ def _connection_paints(surface, prepared, viewport, road_style, cancelled=None):
             paints.append(_ConnectionPaint(_RANK[style.level], width, casing, core, edge,
                                            fill, style.shell, connection.tunnel,
                                            connection.owner_tile))
-        cache[identity] = tuple(paints)
-        result[connection.layer].extend(paints)
+        cache[id(connection)] = tuple(paints)
+    # Cache hits and newly compiled ribbons must remain in the exact original
+    # saved-connection order before the stable rank sort.
+    for connection in visible:
+        result[connection.layer].extend(cache[id(connection)])
     for layer in result:
         result[layer].sort(key=lambda entry: entry.rank)
     return result
@@ -664,10 +755,10 @@ def _route_polygon(surface, prepared, path, offset):
     if record is not None and record[0] is path:
         cache.move_to_end(key)
         return record[1]
-    polygon = surface._polyline(path, offset)
-    transform = surface._transform()
-    origin = QPointF(transform.m31(), transform.m32())
-    local = QPolygonF([point-origin for point in polygon])
+    # Routes retain their saved coordinates without lane displacement. Map
+    # the cached world polygon directly to a local origin in Qt, avoiding a
+    # Python QPointF allocation per vertex and cancellation of large pans.
+    local = QTransform.fromScale(surface.zoom, -surface.zoom).map(surface._world_polygon(path))
     cache[key] = (path, local)
     if len(cache) > 8192:
         cache.popitem(last=False)

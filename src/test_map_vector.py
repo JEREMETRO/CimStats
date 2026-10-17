@@ -488,18 +488,149 @@ def test_same_zoom_pan_reuses_screen_width_route_offset(qt_application, monkeypa
                        roads=False, buildings=False)
     surface.options.update(routes=True, route_colors={7: '#2266ff'})
     prepared = build_vector_map(surface)
-    original = surface._polyline
+    original = surface._world_polygon
     calls = []
     def counted(*args):
         calls.append(1)
         return original(*args)
-    monkeypatch.setattr(surface, '_polyline', counted)
+    monkeypatch.setattr(surface, '_world_polygon', counted)
     first = _image(surface, prepared)
     assert calls
     surface.center = (60., 50.)
     second = _image(surface, prepared)
     assert len(calls) == 1
     assert first.pixelColor(200, 145) == second.pixelColor(190, 145)
+
+
+def test_overview_new_zoom_transforms_prepared_connection_points_in_qt(qt_application, monkeypatch):
+    from map_canvas import road_style
+    source = MapRoad(1, 'road', 'source', (((0., 0., 0.), (40., 0., 0.)),),
+                     lanes_a=1, lanes_b=1, road_class='ordinary')
+    target = replace(source, id=2)
+    curve = ((40., 0., 50.), (48., 0., 55.), (60., 0., 50.))
+    junction = MapJunction(3, (50., 0., 50.), (1, 2),
+                          (MapJunctionConnection(4, 1, 2, 0, 0, 0x1000000, (curve,)),))
+    surface = _surface(qt_application, MapSnapshot(roads=(source, target), junctions=(junction,),
+                       bounds=(0., 0., 100., 100.)), buildings=False)
+    surface.zoom = .1
+    prepared = build_vector_map(surface)
+    def no_python_points(*args):
+        pytest.fail('A new overview zoom rebuilt saved points in Python')
+    monkeypatch.setattr(map_vector, '_qpolygon', no_python_points)
+    surface.zoom = .12
+    paint = map_vector._connection_paints(surface, prepared, surface._viewport_bounds(), road_style)[1][0]
+    assert [(p.x(), p.y()) for p in paint.core] == [(x*.12, -z*.12) for x, _, z in curve]
+    assert paint.edge is None
+
+
+def test_route_zoom_maps_world_polygon_without_pan_and_inverse_pan(qt_application, monkeypatch):
+    from PySide6.QtCore import QPointF
+    path = ((10., 0., 50.), (45., 0., 55.), (90., 0., 50.))
+    route = MapRoute(7, 'line', 7, 'company', 'company', 'bus', (), (path,))
+    surface = _surface(qt_application, MapSnapshot(routes=(route,), bounds=(0., 0., 100., 100.)),
+                       roads=False, buildings=False)
+    prepared = build_vector_map(surface)
+    surface.center = (123456.789, -98765.4321)
+    surface.zoom = .75
+    world = surface._world_polygon(path)
+    def no_screen_translation(*args):
+        pytest.fail('Route cache needlessly applied and cancelled screen translation')
+    monkeypatch.setattr(surface, '_polyline', no_screen_translation)
+    polygon = map_vector._route_polygon(surface, prepared, path, 0.)
+    assert list(polygon) == [QPointF(p.x()*.75, -p.y()*.75) for p in world]
+
+
+def test_bulk_polygon_preserves_strided_readonly_points_without_point_wrappers(monkeypatch):
+    import numpy as np
+    coords = np.array([[1.25, -2.5], [11., 12.], [3.75, -4.5], [13., 14.]], dtype=np.float64)
+    points = coords[::2]
+    points.setflags(write=False)
+    # Prime the supported-layout probe before checking the hot construction.
+    map_vector._qpolygon(np.array([[0., 0.]]))
+    original = map_vector.QPointF
+    constructed = []
+    def point(*args):
+        constructed.append(args)
+        return original(*args)
+    monkeypatch.setattr(map_vector, 'QPointF', point)
+    polygon = map_vector._qpolygon(points)
+    assert not constructed, 'Bulk polygon still creates Python QPointF wrappers per vertex'
+    assert [(p.x(), p.y()) for p in polygon] == [(1.25, -2.5), (3.75, -4.5)]
+    coords[:] = 99.
+    assert [(p.x(), p.y()) for p in polygon] == [(1.25, -2.5), (3.75, -4.5)]
+    assert map_vector._qpolygon(np.empty((0, 2))).isEmpty()
+
+
+def test_bulk_lane_polygon_matches_reference_point_construction(qt_application):
+    import numpy as np
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    points = np.array([[12.345678901, -9.876543210], [0., -0.], [1e8, -1e8], [1e-12, -1e-12]])
+    actual = map_vector._qpolygon(points)
+    expected = QPolygonF([QPointF(float(x), float(y)) for x, y in points])
+    assert actual == expected
+    copied = QPolygonF(actual)
+    actual[0] = QPointF(2., 3.)
+    assert copied == expected
+
+
+def test_batched_lane_material_matches_each_saved_curve_exactly(qt_application):
+    curves = (
+        ((0., 0., 0.), (5., 0., 3.), (10., 0., 0.)),
+        ((20., 0., 0.), (25., 0., 4.), (30., 0., 5.), (35., 0., 0.)),
+        ((40., 0., 1.), (40., 0., 1.)),
+    )
+    templates = map_vector._bulk_lane_templates(curves)
+    requests = ((templates[0], (-2., 3.), (-1., 2.), .45),
+                (templates[1], (-3., 2.), (-2., 3.), .45),
+                (templates[2], None, None, .45))
+    expected = [map_vector._lane_polygons(template, .1731, start, end, casing)
+                for template, start, end, casing in requests]
+    assert hasattr(map_vector, '_bulk_lane_polygons'), 'Detailed lane geometry still evaluates NumPy one curve at a time'
+    actual = map_vector._bulk_lane_polygons(requests, .1731)
+    assert actual == expected
+
+
+def test_bulk_polygon_layout_fallback_keeps_identical_coordinates(monkeypatch):
+    import numpy as np
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    points = np.array(((1.125, -2.25), (-3.5, 4.75)))
+    monkeypatch.setattr(map_vector, '_BULK_POLYGON_SUPPORTED', False)
+    assert map_vector._qpolygon(points) == QPolygonF([QPointF(*point) for point in points])
+
+
+def test_batched_lane_material_retains_mixed_curve_lengths_and_zoom_precision(qt_application):
+    import numpy as np
+    random = np.random.default_rng(20618)
+    curves = tuple(tuple((float(x), 0., float(z)) for x, z in random.normal(size=(count, 2)).cumsum(axis=0))
+                   for count in range(2, 100))
+    templates = map_vector._bulk_lane_templates(curves)
+    requests = [(template, (-2.12, 3.67), (-1.42, 4.19), .45) for template in templates]
+    for zoom in (.15, .26908685288118867, 1., 16., 100.):
+        expected = [map_vector._lane_polygons(template, zoom, start, end, casing)
+                    for template, start, end, casing in requests]
+        assert map_vector._bulk_lane_polygons(requests, zoom) == expected
+
+
+def test_partial_connection_cache_keeps_the_original_paint_order(qt_application):
+    from map_canvas import road_style
+    source = MapRoad(1, 'road', 'source', (((0., 0., 0.), (40., 0., 0.)),),
+                     lanes_a=1, lanes_b=1, road_class='ordinary')
+    target = replace(source, id=2)
+    curves = tuple(((x, 0., 0.), (x+5., 0., 5.), (x+10., 0., 0.)) for x in (0., 100., 200.))
+    junction = MapJunction(3, (0., 0., 0.), (1, 2),
+                          tuple(MapJunctionConnection(4+i, 1, 2, 0, 0, 0x1000000, (curve,))
+                                for i, curve in enumerate(curves)))
+    surface = _surface(qt_application, MapSnapshot(roads=(source, target), junctions=(junction,),
+                       bounds=(0., 0., 220., 20.)), buildings=False)
+    prepared = build_vector_map(surface)
+    all_bounds = (-10., -10., 220., 20.)
+    expected = map_vector._connection_paints(surface, prepared, all_bounds, road_style)[1]
+    surface._vector_connection_cache.clear()
+    map_vector._connection_paints(surface, prepared, (195., -10., 220., 20.), road_style)
+    actual = map_vector._connection_paints(surface, prepared, all_bounds, road_style)[1]
+    assert [paint.core for paint in actual] == [paint.core for paint in expected]
 
 
 def test_pan_across_route_bounds_reuses_the_query_route_plan(qt_application):

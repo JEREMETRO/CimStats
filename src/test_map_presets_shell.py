@@ -262,6 +262,33 @@ def test_hidden_prefetch_layout_uses_stack_size(settings, app):
         assert not page.canvas._fit_pending
     finally: stack.close()
 
+
+@pytest.mark.parametrize('stacked',[False,True])
+def test_snapshot_before_first_show_fits_the_actual_map_viewport(settings,app,stacked):
+    from PySide6.QtWidgets import QStackedWidget, QWidget
+    from map_page import MapPage
+    from map_model import MapSnapshot
+    host=QStackedWidget() if stacked else None
+    if host is not None:
+        host.resize(960,680);host.addWidget(QWidget())
+    page=MapPage(settings,host)
+    if host is not None:host.addWidget(page)
+    else:page.resize(960,680)
+    try:
+        page.set_snapshot(MapSnapshot(routes=routes(),bounds=(0,0,8000,8000)))
+        if host is not None:
+            host.show();host.setCurrentWidget(page)
+        else:page.show()
+        app.processEvents()
+        assert page.canvas.width()>400 and page.canvas.height()>400
+        # The 8 km city must fill the available viewport with an 80 px margin,
+        # rather than remain a few pixels after fitting a hidden 1 px canvas.
+        expected=min(page.canvas.width()-80,page.canvas.height()-80)/8000
+        assert page.canvas.zoom==pytest.approx(expected)
+        assert page.canvas.center==(4000,4000)
+    finally:
+        (host if host is not None else page).close()
+
 # An application default must reach GeometryService unchanged; frozen directories are temporary.
 def test_default_cache_delegates_to_geometry_service(settings, app, tmp_path):
     from map_page import MapPage

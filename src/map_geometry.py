@@ -929,11 +929,12 @@ def _read_catalog(bundles):
     return catalog
 
 
-def _restore_lookup(probe,source):
+def _restore_lookup(probe,source,*,source_metadata=None):
     """Restore metadata lookup only in the freshly generated private probe."""
     import dnfile
     original=FilePath(source).read_bytes(); out=bytearray(FilePath(probe).read_bytes())
-    pe=dnfile.dnPE(str(source)); patched=dnfile.dnPE(str(probe))
+    pe=source_metadata if source_metadata is not None else dnfile.dnPE(str(source))
+    patched=dnfile.dnPE(str(probe))
     try:
         a=[(str(m.Name),m.Rva) for m in pe.net.mdtables.MethodDef]
         b=[(str(m.Name),m.Rva) for m in patched.net.mdtables.MethodDef]
@@ -955,7 +956,8 @@ def _restore_lookup(probe,source):
                     else: out[offset+4:offset+8]=(6).to_bytes(4,'little')
                     out[offset+header:offset+header+6]=replacement
     finally:
-        pe.close(); patched.close()
+        if source_metadata is None:pe.close()
+        patched.close()
     FilePath(probe).write_bytes(out)
 
 
@@ -1020,8 +1022,12 @@ def _worker(config):
     shutil.copy2(FilePath(config['runtime_data'])/'UnityEngine.dll',runtime/'UnityEngine.dll')
     os.environ.update(CIM2_ASSEMBLY_SOURCE=str(source),CIM2_PROBE_OUTPUT=str(runtime/'Assembly-CSharp.probe.dll'))
     # Keep probe preparation in this killable worker, with no orphan subprocess.
-    runpy.run_path(str(probe_script()),run_name='__map_probe__')
-    _restore_lookup(runtime/'Assembly-CSharp.probe.dll',source)
+    prepared=runpy.run_path(str(probe_script()),run_name='__map_probe__')
+    metadata=prepared.get('pe')
+    try:
+        _restore_lookup(runtime/'Assembly-CSharp.probe.dll',source,source_metadata=metadata)
+    finally:
+        if metadata is not None:metadata.close()
     os.utime(runtime/'Assembly-CSharp.probe.dll',None)
     os.environ.update(CIM2_RUNTIME_DATA_DIR=str(runtime),CIM2_MANAGED_ROOT=str(managed),CIM2_PAYLOAD_DIR=str(job/'payload'))
     sys.argv=['map_geometry',config['save']]

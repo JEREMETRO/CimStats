@@ -12,7 +12,8 @@ def request(**kwargs):
 
 
 @pytest.mark.parametrize('aspect,orientation',[('16:9','landscape'),('16:10','landscape'),
-    ('3:2','landscape'),('A4','landscape'),('A4','portrait')])
+    ('3:2','landscape'),('A4','landscape'),('16:9','portrait'),('16:10','portrait'),
+    ('3:2','portrait'),('A4','portrait')])
 def test_complete_layout_never_overlaps_map_or_silently_drops_fields(qt_application,aspect,orientation):
     from route_export_model import ALL_FIELDS
     from route_export_render import build_layout
@@ -47,9 +48,20 @@ def test_preview_dimensions_preserve_paper_aspect(qt_application):
 
 
 @pytest.mark.parametrize('fmt',['PNG','JPG','PDF'])
-def test_outputs_are_real_decodable_files_with_resolution_or_vector_text(qt_application,tmp_path,fmt):
+@pytest.mark.parametrize('aspect,orientation,pixels,points', [
+    ('16:9', 'landscape', (400, 225), (360., 202.5)),
+    ('16:10', 'landscape', (400, 250), (360., 225.)),
+    ('3:2', 'landscape', (400, 267), (360., 240.)),
+    ('A4', 'landscape', (935, 661), (841.89, 595.28)),
+    ('16:9', 'portrait', (400, 711), (360., 640.)),
+    ('16:10', 'portrait', (400, 640), (360., 576.)),
+    ('3:2', 'portrait', (400, 600), (360., 540.)),
+    ('A4', 'portrait', (661, 935), (595.28, 841.89)),
+])
+def test_outputs_are_real_decodable_files_with_resolution_or_vector_text(qt_application,tmp_path,fmt,
+                                                                         aspect,orientation,pixels,points):
     from route_export_render import render_export
-    req=request(format=fmt,width_mm=127,ppi=80)
+    req=request(format=fmt,width_mm=127,ppi=80,aspect=aspect,orientation=orientation)
     path=tmp_path/('route.'+fmt.lower())
     result=render_export(req,path)
     assert Path(result.path)==path and path.stat().st_size>100
@@ -60,11 +72,13 @@ def test_outputs_are_real_decodable_files_with_resolution_or_vector_text(qt_appl
         assert b' l' in content and b'BT' in content
         assert '503E' in page.extract_text().replace('\t','')
         assert len(page.images)==0  # This fixture has no logo: page is entirely vector.
-        assert abs(float(page.mediabox.width)-360)<.1
+        # QPageSize serializes the paper box in whole PDF points.
+        assert abs(float(page.mediabox.width)-points[0])<=.51
+        assert abs(float(page.mediabox.height)-points[1])<=.51
     else:
         from PIL import Image
         with Image.open(path) as image:
-            assert image.size==(400,267)
+            assert image.size==pixels
             assert abs(image.info['dpi'][0]-80)<.1
 
 
@@ -228,7 +242,7 @@ def test_whole_view_distinguishes_up_dashed_and_down_solid_in_actual_pixels(qt_a
     assert len(colors[1])>1
 
 
-def test_selected_route_fills_map_with_safe_stroke_margin_without_clipping(qt_application):
+def test_selected_route_leaves_context_at_both_ends_without_clipping(qt_application):
     import route_export_render as renderer
     req=request(show_stops=False)
     scene=renderer._prepare_scene(req)
@@ -240,7 +254,26 @@ def test_selected_route_fills_map_with_safe_stroke_margin_without_clipping(qt_ap
             extent=extent.united(shape.path.boundingRect())
     assert extent.left()>=mx+12 and extent.right()<=mx+mw-12
     assert extent.top()>=my+12 and extent.bottom()<=my+mh-12
-    assert abs(max(extent.width()/(mw-32),extent.height()/(mh-32))-1)<1e-6
+    # The route should fill most of the map while leaving visible geography
+    # beyond its endpoints, rather than touching the former 16-unit inset.
+    assert .80 < max(extent.width()/mw,extent.height()/mh) < .90
+
+
+@pytest.mark.parametrize('aspect', ['16:9','16:10','3:2','A4'])
+@pytest.mark.parametrize('orientation', ['landscape','portrait'])
+def test_export_keeps_real_roads_just_beyond_both_route_endpoints(qt_application,aspect,orientation):
+    from map_model import MapRoad
+    from route_export_render import _prepare_scene
+    req=request(show_stops=False,aspect=aspect,orientation=orientation)
+    roads=tuple(MapRoad(i,'road','context',(((x,0.,20.),(x,0.,80.)),),
+        road_class='expressway',width=12.) for i,x in enumerate((-10.,210.),1))
+    req=replace(req,snapshot=replace(req.snapshot,roads=roads))
+    scene=_prepare_scene(req)
+    fills=[shape for shape in scene.shapes if shape.pen is not None
+        and shape.pen.color().name()=='#f7e4ab']
+    assert len(fills)==2
+    mx,my,mw,mh=scene.layout.map_rect
+    assert all(mx<shape.path.boundingRect().left()<mx+mw for shape in fills)
 
 
 def test_portrait_map_height_adapts_to_information_space(qt_application):
@@ -253,9 +286,11 @@ def test_portrait_map_height_adapts_to_information_space(qt_application):
     assert any(l.map_rect[2]!=l.map_rect[3] for l in layouts)
 
 
-def test_rectangular_map_keeps_equal_horizontal_and_vertical_geometry_scale(qt_application):
+@pytest.mark.parametrize('aspect', ['16:9', '16:10', '3:2', 'A4'])
+@pytest.mark.parametrize('orientation', ['landscape', 'portrait'])
+def test_rectangular_map_keeps_equal_horizontal_and_vertical_geometry_scale(qt_application,aspect,orientation):
     import route_export_render as renderer
-    scene=renderer._prepare_scene(request(aspect='16:9',show_stops=False))
+    scene=renderer._prepare_scene(request(aspect=aspect,orientation=orientation,show_stops=False))
     mx,my,mw,mh=scene.layout.map_rect
     assert mw!=mh
     route_shape=next(s for s in scene.shapes if s.pen is not None and s.pen.color().name()==scene.line.lower())

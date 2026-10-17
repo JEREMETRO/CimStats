@@ -170,3 +170,29 @@ def test_parallel_direction_failure_is_explicit_and_cleans_workers(tmp_path,monk
     with pytest.raises(RuntimeError,match='Map direction analysis failed'):
         map_geometry._parallel_directions(_direction_jobs(),tmp_path)
     assert launched and all(process.poll() is not None for process in launched)
+
+
+def test_probe_restore_reuses_source_metadata_without_changing_the_generated_assembly(tmp_path,monkeypatch):
+    import dnfile
+    import runpy
+    import map_geometry
+    source=Path(map_geometry.__file__).resolve().parents[1]/'game_runtime/Managed/Assembly-CSharp.dll'
+    probe=tmp_path/'probe.dll'
+    monkeypatch.setenv('CIM2_ASSEMBLY_SOURCE',str(source))
+    monkeypatch.setenv('CIM2_PROBE_OUTPUT',str(probe))
+    prepared=runpy.run_path(str(map_geometry.probe_script()),run_name='__map_probe_test__')
+    metadata=prepared['pe']
+    try:
+        generated=probe.read_bytes()
+        map_geometry._restore_lookup(probe,source)
+        expected=probe.read_bytes()
+        probe.write_bytes(generated)
+        original=dnfile.dnPE
+        def read_metadata(path,*args,**kwargs):
+            assert Path(path)!=source, 'The generator already parsed the immutable source assembly'
+            return original(path,*args,**kwargs)
+        monkeypatch.setattr(dnfile,'dnPE',read_metadata)
+        map_geometry._restore_lookup(probe,source,source_metadata=metadata)
+        assert probe.read_bytes()==expected
+        assert metadata.net.mdtables.TypeDef
+    finally:metadata.close()

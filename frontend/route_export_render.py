@@ -320,7 +320,12 @@ def _prepare_scene(request,cancel=None):
     has_legend=(request.metrics.effective_direction=='whole' and request.route.direction.kind=='roundtrip'
         and request.route.direction.terminal_index is not None and bool(request.route.leg_paths))
     plot_height=map_height-60 if has_legend else map_height
-    scale=min((map_width-32)/max(xmax-xmin,1.),(plot_height-32)/max(zmax-zmin,1.))
+    # Keep surrounding real geography visible beyond both route ends. The
+    # same proportional inset applies to every paper size and orientation.
+    inset_x=max(24.,map_width*.06)
+    inset_y=max(24.,plot_height*.06)
+    scale=min((map_width-2*inset_x)/max(xmax-xmin,1.),
+              (plot_height-2*inset_y)/max(zmax-zmin,1.))
     world_xmin,world_xmax=cx-map_width/scale/2,cx+map_width/scale/2
     world_zmin,world_zmax=cz-(map_height-plot_height/2)/scale,cz+plot_height/scale/2
     def project(p):return QPointF(mx+map_width/2+(p[0]-cx)*scale,my+plot_height/2-(p[2]-cz)*scale)

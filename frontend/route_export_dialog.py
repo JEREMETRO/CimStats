@@ -85,8 +85,11 @@ class RouteExportDialog(FluentDialog):
         self.pages = QStackedWidget(self.settings_host)
         self.pages.setMinimumSize(0, 0)
         for key, title in (('settings', '导出设置'), ('data', '导出数据')):
-            self.tabs.addItem(key, title, onClick=lambda k=key: self._set_page(k))
+            self.tabs.addItem(key, title, onClick=lambda checked=False, k=key: self._set_page(k))
         configure_navigation_pivot(self.tabs)
+        # These tabs have no icons, so they need no reserved icon padding.
+        for item in self.tabs.items.values():
+            item.setStyleSheet(item.styleSheet() + '\nQPushButton { padding: 7px 12px; }')
         self.tabs.setItemFontSize(14)
         self.tabs.setCurrentItem('settings')
         right.addWidget(self.tabs)
@@ -95,7 +98,7 @@ class RouteExportDialog(FluentDialog):
         self.pages.addWidget(settings)
         self.format_control = self._segments(layout, '文件格式', [('PNG', 'PNG'), ('JPG', 'JPG'), ('PDF', 'PDF')], self._options.format)
         self.aspect_control = self._segments(layout, '画幅', [(v, v) for v in ('16:9', '16:10', '3:2', 'A4')], self._options.aspect)
-        self.orientation_control = self._segments(layout, None, [('landscape', '横向'), ('portrait', '纵向')], self._options.orientation)
+        self.orientation_control = self._segments(layout, '画幅方向', [('landscape', '横向'), ('portrait', '纵向')], self._options.orientation)
         layout.addWidget(self._label('成品尺寸（毫米）', bold=True))
         sizes = QHBoxLayout()
         sizes.setSpacing(8)
@@ -302,7 +305,6 @@ class RouteExportDialog(FluentDialog):
         self.height_edit.setValue(size.height_mm)
         self._updating = False
         a4 = self._options.aspect == 'A4'
-        self.orientation_control.setVisible(a4)
         self.width_edit.setEnabled(not a4)
         self.height_edit.setEnabled(not a4)
         self.pixel_label.setText(f'{size.width_px} × {size.height_px} 像素')

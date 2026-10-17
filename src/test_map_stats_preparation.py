@@ -140,3 +140,49 @@ def test_map_backend_dependencies_prepare_in_existing_startup_worker(qt_applicat
         assert set(observed)=={'map_geometry','map_query'}
         assert all(thread!=threading.get_ident() for thread in observed.values())
     finally:window.close()
+
+
+@pytest.mark.parametrize('failure_stage',['query','frame'])
+def test_snapshot_callback_failure_is_visible_and_can_retry(qt_application,tmp_path,monkeypatch,failure_stage):
+    import map_page
+    source=tmp_path/'city.save';source.write_bytes(b'save')
+    page=map_page.MapPage(QSettings(str(tmp_path/'failure.ini'),QSettings.Format.IniFormat))
+    page.set_session({'save_key':'A','save_path':str(source)})
+    page._requested=True;page.surface.set_loading(True)
+    errors=[];ready=[]
+    page.failed.connect(errors.append);page.ready.connect(lambda:ready.append(True))
+    snapshot=MapSnapshot(routes=(MapRoute(1,'1',1,'a','公司','bus',(),(((0.,0.,0.),(100.,0.,0.)),)),))
+    def fail(*args,**kwargs):raise RuntimeError('snapshot preparation failed')
+    target,name=(map_page,'MapQuery') if failure_stage=='query' else (page.canvas,'prepare_frame')
+    original=getattr(target,name)
+    monkeypatch.setattr(target,name,fail)
+    escaped=[]
+    try:
+        try:page._finish_snapshot_loading(snapshot)
+        except Exception as error:escaped.append(str(error))
+        assert escaped==[], 'Qt completion callbacks must report failure instead of escaping'
+        assert errors==['snapshot preparation failed'] and ready==[]
+        assert page.surface.loading.isHidden() and not page._awaiting_frame
+        assert not page._requested and not page._switching
+        assert page.query is None and page.result is None
+        assert 'snapshot preparation failed' in page.status.text()
+        monkeypatch.setattr(target,name,original)
+        page._requested=True
+        page._finish_snapshot_loading(snapshot)
+        assert ready==[True] and page.query is not None
+        assert 'snapshot preparation failed' not in page.status.text()
+    finally:page.close()
+
+
+def test_render_failure_leaves_a_visible_retryable_error(qt_application,tmp_path):
+    from map_page import MapPage
+    page=MapPage(QSettings(str(tmp_path/'render-failure.ini'),QSettings.Format.IniFormat))
+    page._requested=True;page._awaiting_frame=True;page.surface.set_loading(True)
+    errors=[];page.failed.connect(errors.append)
+    try:
+        page._render_failed('drawing failed')
+        assert errors==['drawing failed']
+        assert not page._requested and not page._awaiting_frame
+        assert page.surface.loading.isHidden()
+        assert 'drawing failed' in page.status.text()
+    finally:page.close()

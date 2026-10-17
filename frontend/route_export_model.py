@@ -90,6 +90,7 @@ def measure_output(options):
         w,h=(297.,210.) if options.orientation=='landscape' else (210.,297.)
     else:
         ratio={'16:9':16/9,'16:10':1.6,'3:2':1.5}[options.aspect]
+        if options.orientation=='portrait':ratio=1/ratio
         w,h=((options.width_mm,options.width_mm/ratio) if options.height_mm is None
              else (options.height_mm*ratio,options.height_mm))
     px,py=round(w/25.4*options.ppi),round(h/25.4*options.ppi)

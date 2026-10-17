@@ -1226,11 +1226,24 @@ class MapCanvas(_MapDrawing, QWidget):
             raise TypeError('Unknown map options: ' + ', '.join(sorted(unknown)))
         if 'direction' in options and options['direction'] not in ('whole','up','down'):
             raise ValueError('direction must be whole, up or down')
+        changed = {key for key, value in options.items() if value != self.options[key]}
+        if not changed:
+            return
         legend_changed=any(key in options and options[key]!=self.options[key]
                            for key in ('legend_items','legend_external'))
+        # These values are baked into prepared world paths. Route symbols,
+        # labels and legends are interpreted at paint time and can retain them.
+        geometry_options = {'roads','road_levels','buildings','building_classes',
+                            'building_uses','building_colors'}
+        reuse_geometry = (not changed.intersection(geometry_options)
+                          and self._vector_prepared is not None
+                          and self._vector_key == self._revision)
         self.options.update(options)
         self._revision += 1
         self._invalidate_vectors()
+        if reuse_geometry:
+            self._vector_key = self._revision
+            self._vector_surface.options = dict(self.options)
         self._notify_export_availability()
         if legend_changed:self.legend_changed.emit()
         self.update()
@@ -1591,6 +1604,14 @@ class MapCanvas(_MapDrawing, QWidget):
             return
         if key==self._render_key():
             self._frame,self._frame_key,self._frame_view=frame,key,view
+            if (self._vector_prepared is not None
+                    and surface._vector_prepared is self._vector_prepared
+                    and self._vector_key == self._revision
+                    and self._vector_presented_key != key):
+                # The worker has finished with these paint values. Transfer
+                # its warmed paths to the first native paint without sharing
+                # mutable caches with an active job or replacing live caches.
+                self._vector_surface=surface
             self._base_cache=surface._base_cache
             for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
                 setattr(self,name,getattr(surface,name))

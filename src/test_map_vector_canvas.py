@@ -158,3 +158,80 @@ def test_measured_road_width_changes_continuously_at_detail_threshold():
     assert abs(after-before)<.01
     widths=[road_style(road,i/1000).width for i in range(10,1001)]
     assert all(b>=a for a,b in zip(widths,widths[1:]))
+
+
+def test_unchanged_options_leave_current_vectors_and_export_ready(qt_application):
+    canvas=MapCanvas();canvas.resize(400,300)
+    try:
+        canvas.set_snapshot(_snapshot());canvas.prepare_frame()
+        prepared,key=canvas._vector_prepared,canvas._render_key()
+        canvas.set_options(**canvas.options)
+        assert canvas._render_key()==key
+        assert canvas._vector_prepared is prepared and canvas.can_export()
+    finally:canvas.close()
+
+
+def test_presentation_changes_reuse_geometry_and_update_live_options(qt_application):
+    canvas=MapCanvas();canvas.resize(400,300)
+    try:
+        canvas.set_snapshot(_snapshot());canvas.prepare_frame()
+        prepared=canvas._vector_prepared
+        canvas.set_options(stop_names=False,route_colors={7:'#123456'},legend_external=True)
+        assert not canvas.can_export()
+        canvas.prepare_frame()
+        assert canvas.can_export() and canvas._vector_prepared is prepared
+        assert not canvas._vector_surface.options['stop_names']
+        assert canvas._vector_surface.options['route_colors']=={7:'#123456'}
+    finally:canvas.close()
+
+
+def test_native_retained_frame_skips_replay_but_invalidates_on_view_or_fbo(qt_application,monkeypatch):
+    from types import SimpleNamespace
+    import map_vector_canvas
+    from map_vector_canvas import VectorMapViewport
+    paints=[];presented=[]
+    canvas=SimpleNamespace(_index_closed=False,_revision=1,_vector_key=1,
+        _vector_prepared=object(),center=(1.,2.),zoom=1.,
+        _render_key=lambda:(1,400,300,1.,'font',None),
+        _paint_vectors=lambda *a,**k:paints.append(True),
+        _vector_presented=lambda *a:presented.append(a))
+    viewport=SimpleNamespace(canvas=canvas,_painted_stamp=None,_context_generation=1,
+        defaultFramebufferObject=lambda:9)
+    class Painter:
+        def __init__(self,device):pass
+        def isActive(self):return True
+        def end(self):pass
+    monkeypatch.setattr(map_vector_canvas,'QPainter',Painter)
+    VectorMapViewport.paintGL(viewport);VectorMapViewport.paintGL(viewport)
+    assert len(paints)==1 and len(presented)==2
+    canvas.center=(2.,2.);VectorMapViewport.paintGL(viewport)
+    viewport.defaultFramebufferObject=lambda:10
+    VectorMapViewport.paintGL(viewport)
+    viewport._context_generation+=1;VectorMapViewport.paintGL(viewport)
+    assert len(paints)==4
+
+
+def test_hidden_prepared_frame_transfers_strokes_to_first_live_vector_paint(qt_application,monkeypatch):
+    from map_canvas import _FrameJob
+    from map_model import MapRoute
+    import map_vector
+    route=MapRoute(7,'7',7,'a','A','bus',(),(((0.,0.,0.),(50.,0.,30.),(100.,0.,0.)),))
+    canvas=MapCanvas();canvas.resize(400,300)
+    try:
+        canvas.set_snapshot(MapSnapshot(routes=(route,),bounds=(0.,0.,100.,100.)))
+        assert canvas._prepare_vectors()
+        key,view=canvas._render_key(),(*canvas.center,canvas.zoom)
+        job=_FrameJob(_FrameSurface(canvas),key,view)
+        completed=[]
+        job.signals.completed.connect(lambda *args:completed.append(args))
+        job.run()
+        assert completed
+        canvas._frame_completed(*completed[0])
+        def unexpected_compile():
+            raise AssertionError('First live paint rebuilt a stroke already prepared in the hidden frame')
+        monkeypatch.setattr(map_vector,'QPainterPathStroker',unexpected_compile)
+        image=QImage(400,300,QImage.Format.Format_ARGB32_Premultiplied)
+        painter=QPainter(image)
+        try:canvas._paint_vectors(painter,overlays=False)
+        finally:painter.end()
+    finally:canvas.close()

@@ -26,6 +26,21 @@ def test_physical_dimensions_round_once_and_lock_aspect():
     assert measure_output(ExportOptions(height_mm=127.)).pixels==(2250,1500)
 
 
+@pytest.mark.parametrize('aspect,height,pixels', [
+    ('16:9', 451.5555555556, (3000, 5333)),
+    ('16:10', 406.4, (3000, 4800)),
+    ('3:2', 381., (3000, 4500)),
+])
+def test_non_a4_portrait_inverts_ratio_and_preserves_width(aspect, height, pixels):
+    from route_export_model import ExportOptions, measure_output
+    size = measure_output(ExportOptions(aspect=aspect, orientation='portrait'))
+    assert size.millimetres == pytest.approx((254., height))
+    assert size.pixels == pixels
+    # The height editor must still drive both dimensions using the portrait ratio.
+    size = measure_output(ExportOptions(aspect=aspect, orientation='portrait', height_mm=height))
+    assert size.millimetres == pytest.approx((254., height))
+
+
 @pytest.mark.parametrize('ppi,pixels',[(80,(800,533)),(150,(1500,1000)),(300,(3000,2000)),(600,(6000,4000))])
 def test_all_supported_precisions_convert_millimetres_to_pixels(ppi,pixels):
     from route_export_model import ExportOptions,measure_output

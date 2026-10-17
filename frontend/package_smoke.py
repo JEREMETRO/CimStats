@@ -602,6 +602,13 @@ def _exercise_route_exports(win, page, route, output, settle, wait_until, captur
             dialog = page._route_export_dialog
             assert isinstance(dialog, route_export_dialog.RouteExportDialog) and dialog.isVisible()
             assert dialog._request.route_id == route.id
+            for key in ('data', 'settings', 'data', 'settings'):
+                _map_click(dialog.tabs.items[key], settle)
+                assert dialog.pages.currentIndex() == (0 if key == 'settings' else 1)
+                assert dialog.tabs.currentRouteKey() == key
+            assert dialog.orientation_control.isVisible()
+            orientation = 'landscape' if fmt == 'PNG' else 'portrait'
+            _map_click(dialog.orientation_control._buttons[orientation], settle)
             _map_click(dialog.format_control._buttons[fmt], settle)
             _map_click(dialog.ppi_control._buttons['80'], settle)
             width_editor = dialog.width_edit.lineEdit()
@@ -615,6 +622,7 @@ def _exercise_route_exports(win, page, route, output, settle, wait_until, captur
             assert not dialog.preview.image.isNull(), dialog.error_label.text()
             options = dialog.options()
             assert options.format == fmt and options.ppi == 80 and options.width_mm == 127
+            assert options.orientation == orientation
             size = measure_output(options)
             preview_size = [dialog.preview.image.width(), dialog.preview.image.height()]
             capture('single-route-export-preview-' + fmt.lower(), dialog)
@@ -635,6 +643,7 @@ def _exercise_route_exports(win, page, route, output, settle, wait_until, captur
             evidence.append(dict(format=fmt, path=str(destination), bytes=destination.stat().st_size,
                 route_id=route.id, ppi=options.ppi, width_mm=size.width_mm, height_mm=size.height_mm,
                 size=list(size.pixels), preview_size=preview_size, preview_nonempty=True,
+                orientation=options.orientation, tab_round_trips=True,
                 normal_export_entry=True, exported_signal=True))
             dialog = None  # Successful exports close and dispose their own dialog.
     finally:

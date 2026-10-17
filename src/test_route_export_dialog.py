@@ -82,6 +82,65 @@ def test_small_window_keeps_fixed_actions_and_scrolls_settings(dialog):
     assert dialog.preview.width() < 600
 
 
+def test_tab_clicks_repeatedly_return_to_settings_with_matching_selection(dialog):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    dialog._initial_content_sized = True
+    dialog.resize(960, 680)
+    dialog.show()
+    QTest.qWait(30)
+    for key, index in (('data', 1), ('settings', 0)) * 4:
+        QTest.mouseClick(dialog.tabs.items[key], Qt.MouseButton.LeftButton)
+        assert dialog.pages.currentIndex() == index
+        assert dialog.tabs.currentRouteKey() == key
+        assert dialog.pages.currentWidget().isVisible()
+
+
+@pytest.mark.parametrize('key', ['settings', 'data'])
+def test_text_only_tab_label_is_centered_over_selected_indicator(dialog, key):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+    dialog._initial_content_sized = True
+    dialog.resize(960, 680)
+    dialog.show()
+    item = dialog.tabs.items[key]
+    QTest.mouseClick(item, Qt.MouseButton.LeftButton)
+    QTest.qWait(600)
+    option = QStyleOptionButton()
+    item.initStyleOption(option)
+    contents = item.style().subElementRect(QStyle.SubElement.SE_PushButtonContents, option, item)
+    text_center = item.x() + contents.center().x()
+    indicator_center = dialog.tabs.slideAni.geometry.center().x()
+    assert abs(text_center - indicator_center) <= 1
+
+
+@pytest.mark.parametrize('aspect,dimensions,pixel_text', [
+    ('16:9', (254., 451.56), '3000 × 5333 像素'),
+    ('16:10', (254., 406.4), '3000 × 4800 像素'),
+    ('3:2', (254., 381.), '3000 × 4500 像素'),
+    ('A4', (210., 297.), '2480 × 3508 像素'),
+])
+def test_portrait_is_visible_and_clickable_for_every_aspect(dialog, aspect, dimensions, pixel_text):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    dialog._initial_content_sized = True
+    dialog.resize(960, 680)
+    dialog.show()
+    QTest.qWait(30)
+    assert dialog.orientation_control.isVisible()
+    assert dialog.orientation_control.isEnabled()
+    QTest.mouseClick(dialog.aspect_control._buttons[aspect], Qt.MouseButton.LeftButton)
+    QTest.mouseClick(dialog.orientation_control._buttons['portrait'], Qt.MouseButton.LeftButton)
+    assert dialog.options().orientation == 'portrait'
+    assert (dialog.width_edit.value(), dialog.height_edit.value()) == dimensions
+    assert dialog.pixel_label.text() == pixel_text
+    assert dialog._current_request().options.orientation == 'portrait'
+    QTest.mouseClick(dialog.orientation_control._buttons['landscape'], Qt.MouseButton.LeftButton)
+    assert dialog.width_edit.value() > dialog.height_edit.value()
+    assert dialog.width_edit.isEnabled() == (aspect != 'A4')
+
+
 def test_oversize_output_shows_error_and_disables_export(dialog):
     dialog.width_edit.setValue(1000)
     dialog.ppi_control.setCurrentKey('600')
