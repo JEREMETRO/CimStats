@@ -92,15 +92,26 @@ def test_opaque_startup_surface_can_acknowledge_frame_without_outer_paint(qt_app
 
 def test_bootstrap_begins_welcome_after_first_paint_without_helper(qt_application, tmp_path, monkeypatch):
     from startup_bootstrap import main
+    from PySide6.QtWidgets import QApplication
+    from shiboken6 import isValid
     monkeypatch.setattr(SplashProcess, 'start', lambda *_args: pytest.fail('Normal startup must not create a helper'))
+    windows = []
+    destroyed_with_application = []
 
     class WelcomeWindow(QWidget):
+        def __init__(self):
+            super().__init__()
+            windows.append(self)
+            self.destroyed.connect(lambda: destroyed_with_application.append(QApplication.instance() is qt_application))
+
         def begin_welcome_transition(self):
             assert self.isVisible() and not self.property('startupHandoffPending')
             QTimer.singleShot(0, self.close)
 
     trace = tmp_path / 'trace.json'
     assert main(ROOT / 'CIM2_SaveStats.py', window_factory=WelcomeWindow, trace_path=trace) == 0
+    assert not isValid(windows[0]), 'Window resources survived until QApplication destruction'
+    assert destroyed_with_application == [True]
     events = json.loads(trace.read_text())
     names = [event['event'] for event in events]
     assert names.index('logo_first_paint') <= names.index('window_first_paint') < names.index('welcome_transition_started')
@@ -185,3 +196,47 @@ assert main(Path(sys.argv[1]), window_factory=FailedWindow, trace_path=Path(sys.
     events = json.loads(trace.read_text())
     assert any(e['event'] == 'startup_failed' and e['reason'] == 'RuntimeError' for e in events)
     assert not any(e['event'] == 'welcome_transition_started' for e in events)
+
+
+def test_startup_failure_waits_for_import_thread_before_destroying_window(tmp_path):
+    import os
+    import subprocess
+    import sys
+    trace = tmp_path / 'failed-thread.json'
+    script = tmp_path / 'failed_thread.py'
+    script.write_text('''
+from pathlib import Path
+import sys
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QWidget
+from startup_bootstrap import main
+class ImportTask(QThread):
+    failed = Signal(object)
+    def run(self):
+        self.failed.emit(RuntimeError('import failure before thread return'))
+        self.msleep(200)
+class FailedWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.task = ImportTask(self)
+    def initialize_content(self):
+        pass
+    def initialize_content_async(self, ready, failed):
+        self.task.failed.connect(failed)
+        self.task.start()
+    def closeEvent(self, event):
+        if self.task.isRunning():
+            event.ignore()
+        else:
+            event.accept()
+assert main(Path(sys.argv[1]), window_factory=FailedWindow, trace_path=Path(sys.argv[2])) == 1
+''', encoding='utf-8')
+    env = os.environ.copy()
+    env['PYTHONPATH'] = os.pathsep.join((str(ROOT / 'frontend'), str(ROOT / 'src')))
+    env['QT_QPA_PLATFORM'] = 'offscreen'
+    result = subprocess.run([sys.executable, str(script), str(ROOT / 'CIM2_SaveStats.py'), str(trace)],
+                            env=env, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    events = json.loads(trace.read_text())
+    assert any(e['event'] == 'application_exit' and e['code'] == 1 for e in events)
+    assert any(e['event'] == 'window_resources_released' for e in events)

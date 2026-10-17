@@ -15,6 +15,41 @@ from app_metadata import (APP_NAME, TECHNICAL_APPLICATION_NAME, WINDOWS_APP_ID,
                           application_version, bundle_root, icon_png_paths)
 
 
+def _dispose_window(window):
+    """Release GL contexts while their QApplication and platform still exist."""
+    from PySide6.QtCore import QCoreApplication, QEvent, QThread, QThreadPool
+    from PySide6.QtOpenGLWidgets import QOpenGLWidget
+    from shiboken6 import delete, isValid
+    if isValid(window):
+        window.close()
+    if isValid(window):
+        # A startup error can leave the event loop before its importing thread
+        # has returned, even if closeEvent correctly refused the first close.
+        for worker in window.findChildren(QThread):
+            worker.requestInterruption()
+            worker.wait()
+    page = getattr(window, 'map_page', None) if isValid(window) else None
+    canvas = getattr(page, 'canvas', None)
+    if canvas is not None and isValid(canvas):
+        # Closing a parent only hides its children; notify the canvas itself
+        # so its pending geometry/index jobs are cancelled before deletion.
+        canvas.close()
+    # These tasks own independent values and never wait for a GUI callback.
+    # Keep the application alive until their final CPU paint has returned.
+    QThreadPool.globalInstance().waitForDone()
+    if isValid(window):
+        for viewport in window.findChildren(QOpenGLWidget):
+            release = getattr(viewport, '_release_gpu', None)
+            if release is not None:
+                release()
+    # The top-level backing context, hidden anchor and Qt's internal GL paint
+    # resources must also be destroyed; releasing our renderer alone is not
+    # enough. Deferred deletion could run after QGuiApplication teardown.
+    if isValid(window):
+        delete(window)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 def main(launcher: Path, *, root: Path | None = None, window_factory=None,
          trace_path: Path | None = None):
     root = root or bundle_root()
@@ -113,6 +148,8 @@ def main(launcher: Path, *, root: Path | None = None, window_factory=None,
         window.show()
         result = app.exec()
         record('application_exit', code=result)
+        _dispose_window(window)
+        record('window_resources_released')
         return 1 if failure else result
     except BaseException as exc:
         record('startup_failed', reason=type(exc).__name__)
