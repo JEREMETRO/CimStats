@@ -182,3 +182,23 @@ def test_smoke_comparison_availability_uses_actual_company_count(smoke_window, c
     window.statistics_page.set_session(session)
     evidence=_company_comparison_evidence(window.statistics_page)
     assert evidence==dict(company_count=company_count,comparison_available=company_count>=2)
+
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_smoke_failure_marker_survives_automatic_last_window_exit(tmp_path, monkeypatch, failed):
+    import startup_bootstrap
+    from package_smoke import main
+    source=tmp_path/'session'; source.mkdir()
+    output=tmp_path/'output'
+    def bootstrap(_launcher, *, window_factory, trace_path):
+        trace_path.write_text(json.dumps([
+            {'event':name,'window_id':42}
+            for name in ('logo_first_paint','desktop_import_started','window_first_paint')]),encoding='utf-8')
+        if failed:
+            (output/'failure.txt').write_text('original acceptance failed',encoding='utf-8')
+        return 0  # Qt can quit when the last window closes before a scheduled exit(1).
+    monkeypatch.setattr(startup_bootstrap,'main',bootstrap)
+    assert main(tmp_path/'CimStats.exe', ['--job',str(source),'--output',str(output),
+                '--expected-dpr','1'])==int(failed)
+    if failed:
+        assert (output/'failure.txt').read_text(encoding='utf-8')=='original acceptance failed'

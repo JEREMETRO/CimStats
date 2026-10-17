@@ -119,6 +119,8 @@ def main(launcher: Path, argv):
     result = bootstrap_main(launcher, window_factory=factory, trace_path=args.output / 'startup.json')
     if result:
         return result
+    if (args.output / 'failure.txt').is_file():
+        return 1
     try:
         trace = json.loads((args.output / 'startup.json').read_text(encoding='utf-8'))
         names = [event['event'] for event in trace]
