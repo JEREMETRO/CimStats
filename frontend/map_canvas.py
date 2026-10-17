@@ -35,6 +35,18 @@ ROAD_STYLES = {
     'track': ('#9BA8B1','#E4E9ED',.8,1.5),
     'unknown': ('#D6DEE3','#E6ECEF',.55,1.2),
 }
+_GPU_BASE_OPTIONS = {'roads','road_levels','buildings','building_classes',
+                     'building_uses','building_colors'}
+
+
+def _gpu_base_key(snapshot,options):
+    """Value snapshots for base options; identity for immutable saved geometry."""
+    filters=tuple(None if options[key] is None else frozenset(options[key])
+                  for key in ('road_levels','building_classes','building_uses'))
+    return (snapshot.source_hash,snapshot.asset_signature,
+            id(snapshot.roads),id(snapshot.junctions),id(snapshot.buildings),
+            options['roads'],options['buildings'],*filters,
+            frozenset(options['building_colors'].items()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1042,6 +1054,28 @@ class _VectorJob(QRunnable):
             self._emit('failed', self.key, str(error))
 
 
+class _GpuJob(_VectorJob):
+    """Compile retained buffers off the GUI thread, once per map revision."""
+    def __init__(self,surface,key,prepared,base=None):
+        super().__init__(surface,key)
+        self.prepared=prepared
+        self.base=base
+
+    def run(self):
+        from map_gpu_geometry import compile_gpu_layers
+        from map_gpu_annotations import AnnotationCache
+        try:
+            cancelled=CooperativeCancellation(self.cancelled.is_set,budget=.004,pause=.0001)
+            scene=compile_gpu_layers(self.surface,self.prepared,cancelled,base=self.base)
+            annotations=AnnotationCache(self.surface,self.prepared)
+            self._emit('completed',self.key,
+                       None if self.cancelled.is_set() else (scene,annotations),self.surface)
+        except InterruptedError:
+            self._emit('completed',self.key,None,self.surface)
+        except Exception as error:
+            self._emit('failed',self.key,str(error))
+
+
 class MapCanvas(_MapDrawing, QWidget):
     """View changes emit ``(center_x, center_z, pixels_per_metre)``.
 
@@ -1100,7 +1134,14 @@ class MapCanvas(_MapDrawing, QWidget):
         self._vector_presented_view = None
         self._vector_context_ready = False
         self._vector_gl_failed = False
+        self._vector_gl_error = None
         self._vector_viewport = None
+        self._gpu_scene = None
+        self._gpu_annotations = None
+        self._gpu_key = None
+        self._gpu_job = None
+        self._gpu_base_signature = None
+        self._gpu_base_sources = ()
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self.update)
@@ -1123,6 +1164,8 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def set_snapshot(self, snapshot):
         previous=self.snapshot
+        new_source=(snapshot.source_hash,snapshot.asset_signature)!=(previous.source_hash,previous.asset_signature)
+        empty=not any((snapshot.roads,snapshot.buildings,snapshot.routes,snapshot.stops,snapshot.junctions))
         self.snapshot = snapshot
         if (snapshot.source_hash != previous.source_hash or snapshot.asset_signature != previous.asset_signature
                 or snapshot.roads is not previous.roads or snapshot.junctions is not previous.junctions
@@ -1130,6 +1173,12 @@ class MapCanvas(_MapDrawing, QWidget):
             self._index_cache.clear()
         self._revision += 1
         self._invalidate_vectors()
+        if new_source or empty:
+            self._gpu_scene=self._gpu_annotations=None
+            self._gpu_key=self._gpu_base_signature=None
+            self._gpu_base_sources=()
+            if self._vector_viewport is not None:
+                self._vector_viewport._release_gpu()
         self._notify_export_availability()
         self._async_render=sum(len(getattr(snapshot,name)) for name in ('roads','buildings','routes','junctions'))>1000
         if snapshot.roads is not previous.roads:
@@ -1210,6 +1259,8 @@ class MapCanvas(_MapDrawing, QWidget):
             self._index_job.cancel()
         if self._vector_job is not None:
             self._vector_job.cancel()
+        if self._gpu_job is not None:
+            self._gpu_job.cancel()
         super().closeEvent(event)
 
     def showEvent(self, event):
@@ -1233,17 +1284,19 @@ class MapCanvas(_MapDrawing, QWidget):
                            for key in ('legend_items','legend_external'))
         # These values are baked into prepared world paths. Route symbols,
         # labels and legends are interpreted at paint time and can retain them.
-        geometry_options = {'roads','road_levels','buildings','building_classes',
-                            'building_uses','building_colors'}
-        reuse_geometry = (not changed.intersection(geometry_options)
+        reuse_geometry = (not changed.intersection(_GPU_BASE_OPTIONS)
                           and self._vector_prepared is not None
                           and self._vector_key == self._revision)
+        reuse_gpu=(changed <= {'stops','stop_names','line_numbers','legend_items','legend_external'}
+                   and self._gpu_scene is not None and self._gpu_key==self._revision)
         self.options.update(options)
         self._revision += 1
         self._invalidate_vectors()
         if reuse_geometry:
             self._vector_key = self._revision
             self._vector_surface.options = dict(self.options)
+        if reuse_gpu:
+            self._gpu_key=self._revision
         self._notify_export_availability()
         if legend_changed:self.legend_changed.emit()
         self.update()
@@ -1424,6 +1477,8 @@ class MapCanvas(_MapDrawing, QWidget):
         self._vector_presented_view = None
         if self._vector_job is not None:
             self._vector_job.cancel()
+        if self._gpu_job is not None:
+            self._gpu_job.cancel()
 
     def _prepare_vectors(self):
         if self._vector_key == self._revision and self._vector_prepared is not None:
@@ -1490,6 +1545,69 @@ class MapCanvas(_MapDrawing, QWidget):
         surface._highlight = self._highlight
         paint_vector_map(painter, surface, self._vector_prepared, overlays)
 
+    def _prepare_gpu(self):
+        if self._gpu_key==self._revision and self._gpu_scene is not None:
+            return True
+        if self._gpu_job is not None or self._index_closed:
+            return False
+        surface=_FrameSurface(self)
+        signature=_gpu_base_key(surface.snapshot,surface.options)
+        surface._gpu_base_signature=signature
+        base=(self._gpu_scene.base if self._gpu_scene is not None
+              and self._gpu_base_signature==signature else None)
+        job=_GpuJob(surface,self._revision,self._vector_prepared,base=base)
+        job.signals.completed.connect(self._gpu_completed)
+        job.signals.failed.connect(self._gpu_failed)
+        self._gpu_job=job
+        if self._async_render:
+            QThreadPool.globalInstance().start(job)
+        else:
+            job.run()
+        return self._gpu_key==self._revision and self._gpu_scene is not None
+
+    @Slot(object,object,object)
+    def _gpu_completed(self,key,result,surface):
+        if self._gpu_job is not None and self._gpu_job.key==key:
+            self._gpu_job=None
+        if self._index_closed:
+            return
+        if key!=self._revision or result is None:
+            self.prepare_frame()
+            return
+        self._gpu_scene,self._gpu_annotations=result
+        # Publish cache identity only with an accepted completed layer pair.
+        # Strong source references make the identity signature safe across
+        # route queries, even after their former snapshots are released.
+        self._gpu_base_signature=surface._gpu_base_signature
+        snapshot=surface.snapshot
+        self._gpu_base_sources=(snapshot.roads,snapshot.junctions,snapshot.buildings)
+        self._gpu_key=key
+        self.prepare_frame()
+        if not self.isVisible() and self.can_export():
+            self.frame_ready.emit()
+        self.update()
+
+    @Slot(object,str)
+    def _gpu_failed(self,key,message):
+        if self._gpu_job is not None and self._gpu_job.key==key:
+            self._gpu_job=None
+        if self._index_closed:
+            return
+        if key!=self._revision:
+            self.prepare_frame()
+            return
+        self._vector_paint_failed(self._render_key(),(*self.center,self.zoom),message)
+
+    def _paint_gpu_annotations(self,painter):
+        from map_gpu_annotations import paint_annotations
+        surface=self._vector_surface
+        surface._size=QSize(self.width(),self.height())
+        surface._font=self.font()
+        surface.ratio=self.devicePixelRatioF()
+        surface.center,surface.zoom=self.center,self.zoom
+        surface._highlight=self._highlight
+        paint_annotations(painter,surface,self._vector_prepared,self._gpu_annotations)
+
     def _vector_presented(self, key, view):
         if self._index_closed or key != self._render_key() or view != (*self.center, self.zoom):
             return
@@ -1507,6 +1625,7 @@ class MapCanvas(_MapDrawing, QWidget):
         # A missing GL context changes the device, never the map data or the
         # vector scaling rules. The parent can replay the same world paths.
         self._vector_gl_failed = True
+        self._vector_gl_error = str(message)
         self._vector_presented_key = self._vector_presented_view = None
         if self._vector_viewport is not None:
             self._vector_viewport.hide()
@@ -1530,6 +1649,8 @@ class MapCanvas(_MapDrawing, QWidget):
             return
         if not self._prepare_vectors():
             return
+        if self._vector_viewport is not None and not self._vector_gl_failed:
+            self._prepare_gpu()
         if (self._vector_viewport is not None and not self._vector_gl_failed
                 and self.isVisible()):
             if (self._vector_presented_key != self._render_key()
@@ -1616,7 +1737,7 @@ class MapCanvas(_MapDrawing, QWidget):
             for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
                 setattr(self,name,getattr(surface,name))
             self._notify_export_availability()
-            if view==(*self.center,self.zoom):
+            if view==(*self.center,self.zoom) and self.can_export():
                 self.frame_ready.emit()
         else:
             self._notify_export_availability()
@@ -1657,6 +1778,9 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def can_export(self):
         """Whether a complete frame exists for the exact current viewport."""
+        if (self._vector_viewport is not None and not self._vector_gl_failed
+                and (self._gpu_key!=self._revision or self._gpu_scene is None)):
+            return False
         if self._vector_viewport is not None and self.isVisible():
             key, view = self._render_key(), (*self.center, self.zoom)
             return (not self._index_closed and self._indexes_ready

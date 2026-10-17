@@ -105,6 +105,42 @@ def test_whole_information_preserves_original_shared_speed_precision_and_availab
         assert rows['单程时间']=='55 min' and rows['核定速度']==expected
 
 
+@pytest.mark.parametrize('direction,count', [('down','3 站'),('up','4 站'),('whole','19 站')])
+def test_station_count_follows_saved_direction_calls_instead_of_unique_visible_symbols(direction,count):
+    from map_model import MapRoute, RouteDirection
+    from map_route_metrics import selected_route_metrics
+    from map_line_presentation import line_information
+    route=MapRoute(42,'X',1,'a','A','bus',(1,2,3,2,2,1),(),RouteDirection('roundtrip',2))
+    info=line_information({'lines':[{'对象ID':42,'站点数':19}]},42,
+        direction_metrics=selected_route_metrics(route,direction))
+    row=next(row for _,_,rows in info['sections'] for row in rows if row[0]=='站点数')
+    label={'up':'上行站点数','down':'下行站点数','whole':'站点数'}[direction]
+    assert row==('站点数',label,count)
+
+
+@pytest.mark.parametrize('terminal',[None,True,0,6])
+def test_station_count_unknown_direction_never_reuses_full_route_count(terminal):
+    from map_model import MapRoute, RouteDirection
+    from map_route_metrics import selected_route_metrics
+    from map_line_presentation import line_information
+    route=MapRoute(42,'X',1,'a','A','bus',(1,2,3,1),(),RouteDirection('roundtrip',terminal))
+    info=line_information({'lines':[{'对象ID':42,'站点数':4}]},42,
+        direction_metrics=selected_route_metrics(route,'up'))
+    assert next(row for _,_,rows in info['sections'] for row in rows if row[0]=='站点数')==('站点数','上行站点数','—')
+
+
+@pytest.mark.parametrize('kind',['circular','one_way'])
+@pytest.mark.parametrize('count,expected',[(0,'0 站'),(None,'—')])
+def test_nonsplit_station_count_keeps_known_zero_separate_from_missing(kind,count,expected):
+    from map_model import MapRoute, RouteDirection
+    from map_route_metrics import selected_route_metrics
+    from map_line_presentation import line_information
+    route=MapRoute(42,'X',1,'a','A','bus',(1,2,1),(),RouteDirection(kind))
+    info=line_information({'lines':[{'对象ID':42,'站点数':count}]},42,
+        direction_metrics=selected_route_metrics(route,'up'))
+    assert next(row for _,_,rows in info['sections'] for row in rows if row[0]=='站点数')==('站点数','站点数',expected)
+
+
 def test_company_legend_and_options_use_information_page_names_without_changing_ids():
     from map_model import MapRoute, MapSnapshot
     from map_query import MapQuery

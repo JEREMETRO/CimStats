@@ -953,6 +953,9 @@ class MapPage(QWidget):
 
     def showEvent(self,event):
         super().showEvent(event)
+        if (self.query is not None and self.canvas._vector_viewport is not None
+                and not self.canvas.can_export()):
+            self._awaiting_frame=True
         if self._awaiting_frame or (self._prefetch_path is not None and self._requested and self.query is None):
             self.surface.set_loading(True)
         self.ensure_loaded()

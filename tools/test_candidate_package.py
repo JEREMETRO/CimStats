@@ -14,7 +14,8 @@ from candidate_package import source_path_allowed, compare_inventory, package_bl
 
 class CandidateRules(unittest.TestCase):
     def test_source_includes_own_code_and_bridge_source(self):
-        for path in ('src/app_metadata.py', 'frontend/app_startup.py', 'tools/test_publish_pipeline.ps1', 'optional/save_editing/CIM2RuntimeScheduleBridge.cs'):
+        for path in ('src/app_metadata.py', 'frontend/app_startup.py', 'frontend/native/map_gpu_submit.c',
+                     'tools/test_publish_pipeline.ps1', 'optional/save_editing/CIM2RuntimeScheduleBridge.cs'):
             self.assertTrue(source_path_allowed(path))
 
     def test_source_excludes_game_dll_even_outside_data(self):
@@ -102,6 +103,8 @@ class SpecContract(unittest.TestCase):
         metadata.application_metadata = lambda root: SimpleNamespace(name='CimStats',version=version,author='JEREMETRO',copyright_notice='Copyright 2026 JEREMETRO',license_spdx='GPL-3.0-only')
         metadata.icon_directory = lambda root: root/'frontend/static/branding/cimstats'
         root = candidate_package.ROOT
+        native = ModuleType('build_map_native')
+        native.build=lambda source_root:source_root/'build/native/map_gpu_submit.dll'
         def analysis(*args, **kwargs):
             observed['analysis'] = kwargs
             return SimpleNamespace(pure=[],scripts=['launcher'],binaries=['native-dependencies'],datas=kwargs['datas'])
@@ -112,12 +115,13 @@ class SpecContract(unittest.TestCase):
                        'CIM2_BUILD_MANAGED_ROOT':str(root/'game_runtime/Managed'),
                        'CIM2_BUILD_PROBE_PATH':str(root/'data/Assembly-CSharp.probe.dll')}
         distribution = lambda name: SimpleNamespace(files=[],version='test',locate_file=lambda entry:root/'not-installed'/entry)
-        with patch.dict(sys.modules,{'PyInstaller.utils.hooks':hooks,'PyInstaller.utils.win32.versioninfo':resource,'app_metadata':metadata}), patch.dict(os.environ,environment), patch.object(importlib.metadata,'distribution',distribution):
+        with patch.dict(sys.modules,{'PyInstaller.utils.hooks':hooks,'PyInstaller.utils.win32.versioninfo':resource,'app_metadata':metadata,'build_map_native':native}), patch.dict(os.environ,environment), patch.object(importlib.metadata,'distribution',distribution):
             exec(compile((root/'CIM2_SaveStats.spec').read_text(encoding='utf-8-sig'),'CIM2_SaveStats.spec','exec'),namespace)
         return observed
 
     def test_onefile_spec_keeps_native_and_data_files_in_executable(self):
         observed = self.evaluate()
+        self.assertIn((str(candidate_package.ROOT/'build/native/map_gpu_submit.dll'),'.'),observed['analysis']['binaries'])
         args, options = observed['exe']
         self.assertFalse(options.get('exclude_binaries', False))
         self.assertEqual(args[2], ['native-dependencies'])

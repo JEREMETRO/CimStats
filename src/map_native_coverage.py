@@ -11,12 +11,65 @@ from map_model import BuildingServiceLines
 SOURCE = 'native:TransportManager.ListLines:all-companies'
 
 
+def _coverage_reader(runtime, method):
+    """Call the original query and copy its ordered IDs inside managed code.
+
+    Reflection.Emit is part of the existing CLR runtime. The reader is private
+    to this extraction and emits no assembly/file or replacement query logic.
+    Only native returned references cross back as primitive integers; -1 keeps
+    a null reference distinct from the real serialized zero identity.
+    """
+    import clr
+    import System.Reflection.Emit
+    S=runtime.System
+    O=S.Reflection.Emit.OpCodes
+    parameters=method.GetParameters()
+    line_type=parameters[0].ParameterType.GetElementType()
+    manager_type=method.DeclaringType
+    result_type=S.Array[S.Int64]
+    dynamic=S.Reflection.Emit.DynamicMethod('ReadNativeCoverageIDs',S.Object,
+        S.Array[S.Type]([S.Object,S.Object,S.Object]),manager_type.Module,True)
+    il=dynamic.GetILGenerator()
+    buffer=il.DeclareLocal(parameters[0].ParameterType)
+    count=il.DeclareLocal(S.Int32)
+    result=il.DeclareLocal(result_type)
+    index=il.DeclareLocal(S.Int32)
+    line=il.DeclareLocal(line_type)
+    check=il.DefineLabel();loop=il.DefineLabel();present=il.DefineLabel();store=il.DefineLabel()
+    def emit(op,operand=None):
+        if operand is None:il.Emit(op)
+        else:il.Emit(op,clr.GetClrType(operand) if isinstance(operand,type) else operand)
+    emit(O.Ldc_I4,S.Int32(256));emit(O.Newarr,line_type);emit(O.Stloc,buffer)
+    emit(O.Ldarg_0);emit(O.Castclass,manager_type);emit(O.Ldloc,buffer)
+    emit(O.Ldarg_1);emit(O.Unbox_Any,parameters[1].ParameterType)
+    emit(O.Ldarg_2);emit(O.Castclass,parameters[2].ParameterType)
+    emit(O.Callvirt,method);emit(O.Stloc,count)
+    emit(O.Ldloc,count);emit(O.Ldc_I4_1);emit(O.Add);emit(O.Newarr,S.Int64);emit(O.Stloc,result)
+    emit(O.Ldloc,result);emit(O.Ldc_I4_0);emit(O.Ldloc,count);emit(O.Conv_I8);emit(O.Stelem_I8)
+    emit(O.Ldc_I4_0);emit(O.Stloc,index);emit(O.Br,check)
+    il.MarkLabel(loop)
+    emit(O.Ldloc,buffer);emit(O.Ldloc,index);emit(O.Ldelem_Ref);emit(O.Stloc,line)
+    emit(O.Ldloc,result);emit(O.Ldloc,index);emit(O.Ldc_I4_1);emit(O.Add)
+    emit(O.Ldloc,line);emit(O.Brtrue,present)
+    emit(O.Ldc_I4_M1);emit(O.Conv_I8);emit(O.Br,store)
+    il.MarkLabel(present)
+    emit(O.Ldloc,line);emit(O.Ldfld,line_type.GetField('m_objectID',runtime.FLAGS));emit(O.Conv_U8)
+    il.MarkLabel(store)
+    emit(O.Stelem_I8)
+    emit(O.Ldloc,index);emit(O.Ldc_I4_1);emit(O.Add);emit(O.Stloc,index)
+    il.MarkLabel(check)
+    emit(O.Ldloc,index);emit(O.Ldloc,count);emit(O.Blt,loop)
+    emit(O.Ldloc,result);emit(O.Ret)
+    return dynamic.CreateDelegate(S.Func[S.Object,S.Object,S.Object,S.Object])
+
+
 class NativeCoverageQuery:
     def __init__(self, runtime, root, catalog, *, field=None, cancelled=None):
         self.e = runtime
         self.field = field or runtime.field
         self.manager = None
         self.method = None
+        self._read_ids = None
         self.max_catchment_fixed = None
         self.diagnostic = None
         self._guarded_cells = set()
@@ -119,27 +172,40 @@ class NativeCoverageQuery:
         self.method = next(m for m in manager_type.GetMethods(e.FLAGS)
                            if m.Name == 'ListLines' and len(m.GetParameters()) == 3)
         self.manager = manager
+        try:
+            self._read_ids = _coverage_reader(e,self.method)
+        except (S.Exception,ImportError,TypeError,AttributeError):
+            # Some CLR hosts disallow dynamic readers. The original reflection
+            # path retains the same data and completeness semantics there.
+            self._read_ids = None
 
     def query(self, position, *, company=None, cancelled=None):
         self._cancel(cancelled)
         if self.manager is None or position is None:
             return BuildingServiceLines(complete=False, diagnostic=self.diagnostic or 'native_coverage_position_unavailable')
         e = self.e
-        buffer = e.System.Array.CreateInstance(e.ASM.GetType('LineData'), 256)
         # Native InfoTool allocates 256; original ListLines owns order/dedup,
         # strict 3D radius boundaries and original chain traversal safeguards.
         try:
-            count = int(self.method.Invoke(self.manager, [buffer, position, company]))
+            if self._read_ids is not None:
+                values = memoryview(self._read_ids(self.manager,position,company)).tolist()
+                count = values[0]
+                identities = [None if value == -1 else value for value in values[1:]]
+            else:
+                buffer = e.System.Array.CreateInstance(e.ASM.GetType('LineData'), 256)
+                count = int(self.method.Invoke(self.manager, [buffer, position, company]))
+                identities = [self.field(buffer.GetValue(index),'m_objectID') for index in range(count)]
         except e.System.Reflection.TargetInvocationException as error:
             self.diagnostic = f'native_coverage_query_failed:{error.InnerException}'
+            return BuildingServiceLines(complete=False, diagnostic=self.diagnostic)
+        except e.System.Exception as error:
+            self.diagnostic = f'native_coverage_query_failed:{error}'
             return BuildingServiceLines(complete=False, diagnostic=self.diagnostic)
         self._cancel(cancelled)
         ids, unresolved = [], []
         duplicate_identity = False
-        for index in range(count):
+        for identity in identities:
             self._cancel(cancelled)
-            line = buffer.GetValue(index)
-            identity = self.field(line, 'm_objectID')
             if identity is None or int(identity) <= 0:
                 unresolved.append(None if identity is None else int(identity))
             elif int(identity) not in ids:

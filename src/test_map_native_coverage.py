@@ -204,3 +204,64 @@ def test_native_distinct_objects_with_colliding_ids_are_flagged_not_claimed_comp
     result=NativeCoverageQuery(native.e,root,catalog).query(native.vector(0))
     assert result.known and result.route_ids==(1,)
     assert result.complete is False and 'duplicate_identity' in result.diagnostic
+
+
+def test_managed_native_coverage_reader_preserves_order_counts_and_unsigned_ids(native):
+    from map_native_coverage import NativeCoverageQuery, _coverage_reader
+    root,catalog,owners=graph(native,lines=5)
+    query=NativeCoverageQuery(native.e,root,catalog)
+    read=_coverage_reader(native.e,query.method)
+    values=list(memoryview(read(query.manager,native.vector(0),None)))
+    assert values==[5,1,2,3,4,5]
+    assert list(memoryview(read(query.manager,native.vector(151*1024),None)))==[0]
+    assert list(memoryview(read(query.manager,native.vector(0),owners[1])))==[2,2,4]
+    root,catalog,_=graph(native,lines=260,duplicate=False)
+    query=NativeCoverageQuery(native.e,root,catalog)
+    assert list(memoryview(read(query.manager,native.vector(0),None)))==[256,*range(1,257)]
+
+
+def test_native_managed_and_reflected_coverage_results_are_identical(native):
+    from map_native_coverage import NativeCoverageQuery
+    root,catalog,owners=graph(native,lines=5)
+    query=NativeCoverageQuery(native.e,root,catalog)
+    assert query._read_ids is not None
+    positions=[native.vector(0),native.vector(149*1024),native.vector(150*1024),native.vector(0,151*1024)]
+    fast=[query.query(position,company=company) for position in positions for company in (None,*owners)]
+    query._read_ids=None
+    assert fast==[query.query(position,company=company) for position in positions for company in (None,*owners)]
+
+
+def test_managed_citizen_reader_preserves_nulls_zero_identity_and_native_groups(native):
+    from map_geometry import _citizen_reader
+    S=native.e.System
+    first=native.new('CitizenData');native.set(first,'m_citizenID',21)
+    second=native.new('CitizenData');native.set(second,'m_citizenID',0)
+    group=first.GetType().GetField('m_socialGroup',native.e.FLAGS)
+    values=S.Enum.GetValues(group.FieldType)
+    group.SetValue(first,values.GetValue(1));group.SetValue(second,values.GetValue(2))
+    array=S.Array.CreateInstance(first.GetType(),3);array.SetValue(first,0);array.SetValue(second,2)
+    reader,names=_citizen_reader(native.e)
+    assert list(memoryview(reader(array)))==[1,21,1,0,0,0,1,0,2]
+    assert names[1]==str(values.GetValue(1)) and names[2]==str(values.GetValue(2))
+    assert list(memoryview(reader(None)))==[]
+
+
+def test_managed_coverage_unavailable_preserves_original_query(native,monkeypatch):
+    import map_native_coverage as coverage
+    root,catalog,_=graph(native)
+    def unavailable(*args):
+        raise native.e.System.NotSupportedException('CLR host disables dynamic methods')
+    monkeypatch.setattr(coverage,'_coverage_reader',unavailable)
+    query=coverage.NativeCoverageQuery(native.e,root,catalog)
+    assert query._read_ids is None
+    result=query.query(native.vector(0))
+    assert result.known and result.complete and result.route_ids==(1,2)
+
+
+def test_managed_coverage_keeps_full_unsigned_identity(native):
+    from map_native_coverage import NativeCoverageQuery
+    root,catalog,_=graph(native,lines=1,duplicate=False)
+    transport=native.e.field(root,'m_transportManagerData')
+    native.set(native.e.field(transport,'m_firstLine'),'m_objectID',4294967295)
+    result=NativeCoverageQuery(native.e,root,catalog).query(native.vector(0))
+    assert result.known and result.complete and result.route_ids==(4294967295,)

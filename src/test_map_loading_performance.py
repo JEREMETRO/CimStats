@@ -184,12 +184,19 @@ def test_probe_restore_reuses_source_metadata_without_changing_the_generated_ass
     metadata=prepared['pe']
     try:
         generated=probe.read_bytes()
-        map_geometry._restore_lookup(probe,source)
+        original=dnfile.dnPE
+        def eager(path,*args,**kwargs):
+            kwargs['clr_lazy_load']=False
+            return original(path,*args,**kwargs)
+        with monkeypatch.context() as eager_context:
+            eager_context.setattr(dnfile,'dnPE',eager)
+            map_geometry._restore_lookup(probe,source)
         expected=probe.read_bytes()
         probe.write_bytes(generated)
         original=dnfile.dnPE
         def read_metadata(path,*args,**kwargs):
             assert Path(path)!=source, 'The generator already parsed the immutable source assembly'
+            assert kwargs.get('clr_lazy_load') is True, 'Probe identity only needs method names and RVAs'
             return original(path,*args,**kwargs)
         monkeypatch.setattr(dnfile,'dnPE',read_metadata)
         map_geometry._restore_lookup(probe,source,source_metadata=metadata)

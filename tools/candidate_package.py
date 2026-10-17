@@ -55,6 +55,7 @@ def source_path_allowed(relative, *, license_names=()):
     if path == 'third_party_licenses/PROVENANCE.json' or path in license_names: return True
     if path.startswith(ICON_DIR): return path[len(ICON_DIR):] in ICON_NAMES
     if parts[0] in ('src', 'frontend', 'tools') and path.endswith('.py'): return True
+    if path == 'frontend/native/map_gpu_submit.c': return True
     if parts[0] == 'tools' and path.endswith('.ps1'): return True
     if path in ('optional/save_editing/CIM2RuntimeScheduleBridge.cs', 'optional/save_editing/bridge.rsp', 'optional/save_editing/README.md'): return True
     if path.startswith('.github/') and path.endswith(('.yml', '.yaml', '.md')): return True

@@ -12,6 +12,19 @@ from map_vector import VectorMapCancelled, build_vector_map, paint_vector_map, _
 import map_vector
 
 
+def test_independent_opposite_lane_windings_do_not_cancel_in_exports(qt_application):
+    from types import SimpleNamespace
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QBrush,QColor,QPolygonF
+    polygon=QPolygonF([QPointF(0,0),QPointF(10,0),QPointF(10,10),QPointF(0,10)])
+    items=[SimpleNamespace(core=p,edge=p,fill=QBrush(QColor('#ffffff')),
+                           shell='#aabbcc',tunnel=False) for p in (polygon,QPolygonF(list(reversed(polygon))))]
+    for shell in (False,True):
+        runs=map_vector._connection_runs(items,shell,1)
+        assert len(runs)==2
+        assert all(path.contains(QPointF(5,5)) for _,path,_,_ in runs)
+
+
 def _surface(qt_application, snapshot, **options):
     canvas = MapCanvas()
     canvas.resize(400, 300)

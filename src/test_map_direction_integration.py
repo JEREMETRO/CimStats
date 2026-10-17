@@ -20,7 +20,7 @@ def direction_page(qt_application, tmp_path):
     page.set_session(dict(save_key='directions', simulation_time='2013-05-23T23:59:00',
         lines=[{'对象ID': 20, '线路名称': '7路', '线路号': 7, '运输制式': '公交',
             '公司标识': 'a', '公司名称': '公司', '地图里程': 3.15,
-            '单程时间': 55, '核定速度': 3.44, '当日发班数': 0, '今日客流': 0,
+            '单程时间': 55, '核定速度': 3.44, '当日发班数': 0, '今日客流': 0, '站点数': 3,
             '时刻表': {}, '原始字段': {'单程时间_tick': 55*tick, '客流_今日': 0, '时刻表数': 0}}]))
     page.set_snapshot(MapSnapshot(routes=(route,), bounds=(0, 0, 100, 100)))
     page.set_preset('single')
@@ -63,3 +63,12 @@ def test_full_catalog_sort_metadata_refreshes_when_statistics_change(direction_p
     assert second['passengers']==30
     assert second['opened_at']=='2013-05-22T12:00:01'
     assert first['passengers']==0
+
+
+def test_station_count_updates_in_actual_direction_panel(direction_page):
+    panel=direction_page.single_panel
+    assert panel.information_labels['站点数'].text()=='2 站'
+    panel.direction_buttons['down'].click()
+    assert panel.information_labels['站点数'].text()=='2 站'
+    panel.direction_buttons['both'].click()
+    assert panel.information_labels['站点数'].text()=='3 站'

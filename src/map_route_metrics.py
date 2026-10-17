@@ -19,6 +19,7 @@ class RouteMetrics:
     speed_kmh: float | None
     approved_duration_ticks: int | None = None
     diagnostics: tuple[str, ...] = ()
+    station_count: int | None = None
 
     @property
     def total_km(self):
@@ -61,6 +62,10 @@ def selected_route_metrics(route: MapRoute, direction: str = 'whole', include_de
         return RouteMetrics(effective, None, None, None, None, None,
                             diagnostics=('direction_terminal_unknown',))
     expected_legs = len(route.stop_ids)-1
+    # Business calls retain repeated station identities and the shared terminal.
+    # Whole-route information keeps its original line-page availability rules.
+    station_count = (terminal+1 if effective == 'down' else len(route.stop_ids)-terminal
+                     if effective == 'up' else None)
     indices = tuple(operating_leg_indices(route, effective, leg_count=max(0,expected_legs)))
     lengths = route.leg_map_length_units
     selected_lengths = ([lengths[i] for i in indices]
@@ -107,4 +112,4 @@ def selected_route_metrics(route: MapRoute, direction: str = 'whole', include_de
         if speed_length is None and operating is not None and deadhead is not None:
             speed_length = _km(selected_lengths + depot_lengths)
     speed = speed_length / duration * 60 if speed_length is not None and duration is not None and duration > 0 else None
-    return RouteMetrics(effective,length,operating,deadhead,duration,speed,ticks,tuple(issues))
+    return RouteMetrics(effective,length,operating,deadhead,duration,speed,ticks,tuple(issues),station_count)

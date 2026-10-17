@@ -5,6 +5,7 @@ from dataclasses import dataclass,replace
 from pathlib import Path
 import os
 import struct
+import re
 import tempfile
 import zlib
 
@@ -80,6 +81,19 @@ def _emit_text(items,value,x,y,width,size,role='label',weight=400,align='left',d
     return h
 
 
+def _operating_time_display(value,width,size):
+    """Wrap between saved periods, keeping a clock range on the same line."""
+    metrics=QFontMetricsF(_font(TextItem(value,(),size,500,'value')))
+    lines=[];line=''
+    for part in re.findall(r'[^，、]+[，、]?',value):
+        candidate=line+part
+        if line and metrics.horizontalAdvance(candidate)>width:
+            lines.append(line);line=part
+        else:line=candidate
+    if line:lines.append(line)
+    return '\n'.join(lines)
+
+
 def _header(items,request,x,y,width,company_size,route_height_limit,logo_side=64):
     company=request.information.company_name+'·'+request.information.mode
     company_width=width-logo_side-24
@@ -146,7 +160,6 @@ def _portrait_layout(request,width,height):
         # data categories use the wide lower area without shrinking all text.
         for index,(section_id,title,rows) in enumerate(sections):
             split=section_id=='line_information' and len(rows)>7
-            groups=(rows[:(len(rows)+1)//2],rows[(len(rows)+1)//2:]) if split else (rows,)
             if len(sections)==2:
                 slot=(content_width-64)/3
                 x=margin if index==0 else margin+2*(slot+32)
@@ -155,6 +168,16 @@ def _portrait_layout(request,width,height):
             column=(category_w-32)/2 if split else category_w
             primary=next((key for key,_,_ in rows if key in ('今日客流','平均客流')),None) if section_id=='passenger_data' else None
             row_top=y+emit(title,x,y,category_w,26,'heading',600)+(6 if primary else 10)
+            operating=next((row for row in rows if row[0]=='运营时间'),None)
+            if operating is not None:
+                _,label,value=operating
+                label_w=category_w*.25;value_w=category_w-label_w-16
+                lh=emit(label,x,row_top,label_w,body)
+                display=_operating_time_display(value,value_w,body+2)
+                vh=emit(value,x+label_w+16,row_top,value_w,body+2,'value',500,'right',display)
+                row_top+=max(lh,vh)+4
+                rows=tuple(row for row in rows if row[0]!='运营时间')
+            groups=(rows[:(len(rows)+1)//2],rows[(len(rows)+1)//2:]) if split else (rows,)
             section_bottom=row_top
             for group_index,group in enumerate(groups):
               column_x=x+group_index*(column+32);cursor=row_top
@@ -217,11 +240,13 @@ def build_layout(request):
                     y+=8 if dense else 12
                     continue
                 # Dates and confirmed depot names need more room than their labels.
-                label_w=column*(.45 if key in ('开线日期','最近改线日期','线路车库') else .57)
+                label_w=column*(.25 if key=='运营时间' else .45 if key in ('开线日期','最近改线日期','线路车库') else .57)
                 value_w=column-label_w-14
                 label_h=_text_height(label,label_w,body,'label')
                 value_size=body if compact else body+2
                 display_value=(value.replace(' ','\n',1) if key in ('开线日期','最近改线日期') and ' ' in value else value)
+                if key=='运营时间':
+                    display_value=_operating_time_display(value,value_w,value_size)
                 value_h=_text_height(display_value,value_w,value_size,'value',500)
                 h=max(label_h,value_h)
                 items.extend((TextItem(label,(x,y,label_w,h),body),

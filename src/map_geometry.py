@@ -48,10 +48,10 @@ SCHEMA_VERSION = 12
 SOCIAL_GROUPS = ('BlueCollar','WhiteCollar','Student','BusinessPeople','Pensioner','Tourist')
 
 
-def native_distribution_tables(assembly_path):
+def native_distribution_tables(assembly_path, *, source_metadata=None):
     """Read the game's distribution initializers without running Unity code."""
     import dnfile
-    pe=dnfile.dnPE(str(assembly_path))
+    pe=source_metadata if source_metadata is not None else dnfile.dnPE(str(assembly_path))
     try:
         fields={str(row.Name):0x04000000|i for i,row in enumerate(pe.net.mdtables.Field,1)}
         tables={}
@@ -91,7 +91,7 @@ def native_distribution_tables(assembly_path):
         tables['work']=work
         return tables
     finally:
-        pe.close()
+        if source_metadata is None:pe.close()
 
 
 def native_citizen_multiplier(items):
@@ -119,6 +119,54 @@ def native_function_capacities(metadata,multiplier,tables):
             row[role]=0 if amount==0 else ((amount*distribution[area][i]+99)//100
                 if amount is not None and known_area and distribution is not None else None)
     return result
+
+
+def _citizen_reader(runtime):
+    """Copy serialized citizen identity/group scalars in one managed pass.
+
+    Presence is separate from a real zero identity, whose reference fallback
+    remains assigned by the original Python identity reader.
+    """
+    import clr
+    import System.Reflection.Emit
+    S=runtime.System;O=S.Reflection.Emit.OpCodes
+    citizen_type=runtime.ASM.GetType('CitizenData')
+    citizen_array=S.Array.CreateInstance(citizen_type,0).GetType()
+    identity=citizen_type.GetField('m_citizenID',runtime.FLAGS)
+    group=citizen_type.GetField('m_socialGroup',runtime.FLAGS)
+    names={int(value):str(value) for value in S.Enum.GetValues(group.FieldType)}
+    dynamic=S.Reflection.Emit.DynamicMethod('ReadCitizenScalars',S.Object,
+        S.Array[S.Type]([S.Object]),citizen_type.Module,True)
+    il=dynamic.GetILGenerator()
+    values=il.DeclareLocal(citizen_array);result=il.DeclareLocal(S.Array[S.Int32])
+    index=il.DeclareLocal(S.Int32);citizen=il.DeclareLocal(citizen_type)
+    present=il.DefineLabel();check=il.DefineLabel();loop=il.DefineLabel();advance=il.DefineLabel()
+    def emit(op,operand=None):
+        if operand is None:il.Emit(op)
+        else:il.Emit(op,clr.GetClrType(operand) if isinstance(operand,type) else operand)
+    emit(O.Ldarg_0);emit(O.Brtrue,present)
+    emit(O.Ldc_I4_0);emit(O.Newarr,S.Int32);emit(O.Ret)
+    il.MarkLabel(present)
+    emit(O.Ldarg_0);emit(O.Castclass,citizen_array);emit(O.Stloc,values)
+    emit(O.Ldloc,values);emit(O.Ldlen);emit(O.Conv_I4);emit(O.Ldc_I4_3);emit(O.Mul)
+    emit(O.Newarr,S.Int32);emit(O.Stloc,result)
+    emit(O.Ldc_I4_0);emit(O.Stloc,index);emit(O.Br,check)
+    il.MarkLabel(loop)
+    emit(O.Ldloc,values);emit(O.Ldloc,index);emit(O.Ldelem_Ref);emit(O.Stloc,citizen)
+    emit(O.Ldloc,citizen);emit(O.Brfalse,advance)
+    for offset,field in ((0,None),(1,identity),(2,group)):
+        emit(O.Ldloc,result);emit(O.Ldloc,index);emit(O.Ldc_I4_3);emit(O.Mul)
+        if offset:emit(O.Ldc_I4,S.Int32(offset));emit(O.Add)
+        if field is None:emit(O.Ldc_I4_1)
+        else:emit(O.Ldloc,citizen);emit(O.Ldfld,field);emit(O.Conv_I4)
+        emit(O.Stelem_I4)
+    il.MarkLabel(advance)
+    emit(O.Ldloc,index);emit(O.Ldc_I4_1);emit(O.Add);emit(O.Stloc,index)
+    il.MarkLabel(check)
+    emit(O.Ldloc,index);emit(O.Ldloc,values);emit(O.Ldlen);emit(O.Conv_I4);emit(O.Blt,loop)
+    emit(O.Ldloc,result);emit(O.Ret)
+    return dynamic.CreateDelegate(S.Func[S.Object,S.Object]),names
+
 
 
 class MapCancelled(Exception):
@@ -233,9 +281,16 @@ def actual_lane_attributes(lanes,sidewalk_left=None,sidewalk_right=None):
     return values
 
 
-def _road_paths(road, reverse=False):
-    paths=tuple(sample_curve(c) for c in road.get('curves',()))
-    return tuple(p[::-1] for p in paths[::-1]) if reverse else paths
+def _road_paths(road, reverse=False, *, geometry_cache=None):
+    key=('road',id(road),reverse)
+    if geometry_cache is not None and key in geometry_cache:
+        return geometry_cache[key]
+    if reverse:
+        paths=tuple(p[::-1] for p in _road_paths(road,geometry_cache=geometry_cache)[::-1])
+    else:
+        paths=tuple(sample_curve(c) for c in road.get('curves',()))
+    if geometry_cache is not None:geometry_cache[key]=paths
+    return paths
 
 
 def _project(point,path,prefer_last=False):
@@ -251,15 +306,22 @@ def _project(point,path,prefer_last=False):
     return best
 
 
-def lane_paths(road,lane,reverse=False):
+def lane_paths(road,lane,reverse=False,*,geometry_cache=None):
     """Saved centre cubics + saved signed lane offset, evaluated in 3D.
 
     Positive offset is the right normal (dz,0,-dx) of the forward road.
     Junction endpoints independently validate this against saved lane cubics.
     """
+    key=('lane',id(road),id(lane),reverse)
+    if geometry_cache is not None and key in geometry_cache:
+        return geometry_cache[key]
+    if reverse and geometry_cache is not None:
+        paths=tuple(p[::-1] for p in lane_paths(road,lane,geometry_cache=geometry_cache)[::-1])
+        geometry_cache[key]=paths
+        return paths
     result=[];offset=lane['offset']
-    for controls in road.get('curves',()):
-        centre=sample_curve(controls); count=len(centre)-1; path=[]
+    for controls,centre in zip(road.get('curves',()),_road_paths(road,geometry_cache=geometry_cache)):
+        count=len(centre)-1; path=[]
         for i,p in enumerate(centre):
             t=i/count
             tangent=tuple(3*((1-t)**2*(controls[1][k]-controls[0][k])+2*(1-t)*t*(controls[2][k]-controls[1][k])+t*t*(controls[3][k]-controls[2][k])) for k in range(3))
@@ -271,7 +333,9 @@ def lane_paths(road,lane,reverse=False):
                 path.append((p[0]+offset*tangent[2]/length,p[1],p[2]-offset*tangent[0]/length))
         result.append(tuple(path))
     paths=tuple(result)
-    return tuple(p[::-1] for p in paths[::-1]) if reverse else paths
+    paths=tuple(p[::-1] for p in paths[::-1]) if reverse else paths
+    if geometry_cache is not None:geometry_cache[key]=paths
+    return paths
 
 
 def select_lane_chain(references,roads,connections,mode=None):
@@ -312,7 +376,7 @@ def select_lane_chain(references,roads,connections,mode=None):
     return best[1],best[2],()
 
 
-def route_leg(references, roads, start=None, end=None, *, connections=None, mode=None, lane_selection=None):
+def route_leg(references, roads, start=None, end=None, *, connections=None, mode=None, lane_selection=None, geometry_cache=None):
     """Keep every real curve; clip only endpoint roads, never bridge a gap."""
     paths=[]; issues=[]; previous=None; source_indices=[]
     lane_indices=selected_connections=None
@@ -336,16 +400,16 @@ def route_leg(references, roads, start=None, end=None, *, connections=None, mode
         previous=last
         try:
             if lane_indices is None:
-                current=_road_paths(road,reverse)
+                current=_road_paths(road,reverse,geometry_cache=geometry_cache)
             else:
                 lane=next(v for v in road['lanes'] if v['index']==lane_indices[index])
-                current=lane_paths(road,lane,reverse)
+                current=lane_paths(road,lane,reverse,geometry_cache=geometry_cache)
         except (ValueError,TypeError):
             issues.append(f'invalid_curve:{rid}'); continue
         if not current:
             issues.append(f'empty_road:{rid}')
         if selected_connections and index:
-            c=selected_connections[index-1]; connector=_road_paths(c)
+            c=selected_connections[index-1]; connector=_road_paths(c,geometry_cache=geometry_cache)
             if paths and current and connector:
                 # Use the actual stored fixed-point endpoint, replacing only
                 # sub-2cm floating normalization differences; never draw a
@@ -485,6 +549,9 @@ def direction_worker_main(config_path):
 
 
 def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None, *, direction_worker_dir=None):
+    # Scope memoization to this immutable extraction. Repeated saved road/lane
+    # references share exact samples without persisting or modifying raw input.
+    geometry_cache={}
     roads=[]; diagnostics=list(data.get('diagnostics',()))
     raw_roads=data['roads']
     connection_lookup={}
@@ -494,7 +561,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
     for r in raw_roads.values():
         _check(cancelled)
         try:
-            paths=_road_paths(r)
+            paths=_road_paths(r,geometry_cache=geometry_cache)
         except (ValueError,TypeError):
             paths=(); diagnostics.append(f"invalid_road_curve:{r['id']}")
         roads.append(MapRoad(r['id'],r.get('asset_id',''),r.get('name',''),paths,
@@ -523,7 +590,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         for c in j.get('connections',()):
             _check(cancelled)
             try:
-                paths=_road_paths(c)
+                paths=_road_paths(c,geometry_cache=geometry_cache)
             except (ValueError,TypeError):
                 paths=(); issues.append(f"invalid_connection_curve:{c['id']}")
             connections.append(MapJunctionConnection(c['id'],c['source_road_id'],c['target_road_id'],
@@ -571,7 +638,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         if has_depot:
             for i in (0,len(raw_legs)-1):
                 if raw_legs:
-                    p,di=route_leg(raw_legs[i].get('roads',()),raw_roads,connections=connection_lookup if 'junctions' in data else None,mode=line.get('mode'))
+                    p,di=route_leg(raw_legs[i].get('roads',()),raw_roads,connections=connection_lookup if 'junctions' in data else None,mode=line.get('mode'),geometry_cache=geometry_cache)
                     depot_paths.extend(p)
                     depot_leg_paths.append(tuple(p))
                     diagnostics.extend(f"route:{line['id']}:depot:{d}" for d in di)
@@ -587,12 +654,12 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
             leg=raw_legs[index]
             p,di=route_leg(leg.get('roads',()),raw_roads,a['position'],b['position'],
                            connections=connection_lookup if 'junctions' in data else None,mode=line.get('mode'),
-                           lane_selection=lane_selections.get(index))
+                           lane_selection=lane_selections.get(index),geometry_cache=geometry_cache)
             legs.append(p)
             # Direction identifies the canonical saved road corridor, not an
             # arbitrary legal lane selected for map display. Lane offsets and
             # the selected turn arc must not move a business terminal index.
-            canonical,_=route_leg(leg.get('roads',()),raw_roads,a['position'],b['position'])
+            canonical,_=route_leg(leg.get('roads',()),raw_roads,a['position'],b['position'],geometry_cache=geometry_cache)
             analysis_legs.append(canonical)
             issues.extend(f'leg:{index}:{d}' for d in di)
             if leg.get('dirty'):
@@ -934,7 +1001,7 @@ def _restore_lookup(probe,source,*,source_metadata=None):
     import dnfile
     original=FilePath(source).read_bytes(); out=bytearray(FilePath(probe).read_bytes())
     pe=source_metadata if source_metadata is not None else dnfile.dnPE(str(source))
-    patched=dnfile.dnPE(str(probe))
+    patched=dnfile.dnPE(str(probe),clr_lazy_load=True)
     try:
         a=[(str(m.Name),m.Rva) for m in pe.net.mdtables.MethodDef]
         b=[(str(m.Name),m.Rva) for m in patched.net.mdtables.MethodDef]
@@ -1026,6 +1093,11 @@ def _worker(config):
     metadata=prepared.get('pe')
     try:
         _restore_lookup(runtime/'Assembly-CSharp.probe.dll',source,source_metadata=metadata)
+        try:
+            distribution_tables=native_distribution_tables(source,source_metadata=metadata)
+        except (OSError,ValueError,KeyError,StopIteration,AttributeError,struct.error) as error:
+            print(f'native_distribution_unavailable:{type(error).__name__}:{error}',flush=True)
+            distribution_tables={}
     finally:
         if metadata is not None:metadata.close()
     os.utime(runtime/'Assembly-CSharp.probe.dll',None)
@@ -1045,14 +1117,14 @@ def _worker(config):
     _install_catalog(e,catalog)
     print(f'assets:{len(catalog)}',flush=True)
     root,_=e.load_root(True); print('deserialized',flush=True)
-    data=_extract_objects(e,root,catalog)
+    data=_extract_objects(e,root,catalog,distribution_tables=distribution_tables)
     if config.get('geometry_format')=='ndjson':
         _write_geometry_ndjson(data,job/'geometry.ndjson')
     else:
         (job/'geometry.json').write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
 
 
-def _extract_objects(e,root,catalog):
+def _extract_objects(e,root,catalog,*,distribution_tables=None):
     # pythonnet reflection metadata lookup is expensive for hundreds of
     # thousands of associations. Cache by managed wrapper type and field name;
     # GetValue still reads the actual object, never a cached observation.
@@ -1092,7 +1164,7 @@ def _extract_objects(e,root,catalog):
     rule_values=None if items is None else [(str(field(entry.Key,'m_category') or ''),str(field(entry.Key,'m_id') or ''),int(entry.Value)) for entry in items]
     multiplier=native_citizen_multiplier(rule_values)
     try:
-        tables=native_distribution_tables(e.SOURCE_ASSEMBLY)
+        tables=distribution_tables if distribution_tables is not None else native_distribution_tables(e.SOURCE_ASSEMBLY)
     except (OSError,ValueError,KeyError,StopIteration,AttributeError,struct.error) as error:
         print(f'native_distribution_unavailable:{type(error).__name__}:{error}',flush=True)
         tables=None
@@ -1111,7 +1183,16 @@ def _extract_objects(e,root,catalog):
         key=next_ref; next_ref-=1; bucket.append((obj,key)); return key
     def vector(obj):
         return tuple(int(field(obj,axis))/1024 for axis in ('x','y','z')) if obj is not None else None
+    try:
+        read_citizens,citizen_group_names=_citizen_reader(e)
+    except (e.System.Exception,ImportError,TypeError,AttributeError):
+        read_citizens=None
     def citizens(values):
+        if read_citizens is not None:
+            copied=memoryview(read_citizens(values))
+            return [(copied[i+1] if copied[i+1] else identity(values[i//3]),
+                     citizen_group_names.get(copied[i+2],str(copied[i+2])))
+                    for i in range(0,len(copied),3) if copied[i]]
         result=[]
         for c in array(values):
             if c is not None:

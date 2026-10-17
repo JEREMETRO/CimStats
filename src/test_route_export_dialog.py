@@ -67,7 +67,16 @@ def test_data_selection_and_direction_rebuild_real_request(dialog):
     request = dialog._current_request()
     assert request.metrics.effective_direction == 'up'
     assert len(request.paths) == 1
-    assert len(request.options.selected_fields) == 17
+    assert len(request.options.selected_fields) == 18
+
+
+def test_operating_time_defaults_first_and_user_can_explicitly_hide_it(dialog):
+    assert next(iter(dialog.field_checks))=='运营时间'
+    assert dialog.field_checks['运营时间'].isChecked()
+    assert dialog._current_request().information.sections[0][2][0][0]=='运营时间'
+    dialog.field_checks['运营时间'].setChecked(False)
+    assert all(key!='运营时间' for _,_,rows in dialog._current_request().information.sections
+               for key,_,_ in rows)
 
 
 def test_small_window_keeps_fixed_actions_and_scrolls_settings(dialog):

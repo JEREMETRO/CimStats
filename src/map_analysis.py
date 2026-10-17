@@ -38,11 +38,45 @@ def _align(sim, trace=False):
     return float(table[-1,-1]),pairs
 
 
+
+def _split_alignment_scores(similarity, cuts, cancelled=None):
+    """Score all prefix/reversed-suffix splits with one alignment traversal.
+
+    Each former per-terminal matrix is a top-left prefix of the same matrix
+    with reversed columns. Its score is therefore the value on the shared
+    DP table's anti-diagonal. Only the preceding row is needed for scores.
+    """
+    if not cuts:
+        return {}
+    count = len(similarity)
+    wanted = set(cuts)
+    width = count-min(wanted)
+    previous = np.zeros(width+1)
+    scores = {}
+    for row in range(max(wanted)):
+        if cancelled:
+            cancelled()
+        width = min(width, count-row-1)
+        previous = previous[:width+1]
+        values = similarity[row, -width:][::-1]
+        current = np.empty(width+1)
+        current[0] = 0.
+        current[1:] = np.maximum.accumulate(np.maximum(previous[1:], previous[:-1]+values))
+        cut = row+1
+        if cut in wanted:
+            scores[cut] = float(current[count-cut])
+        previous = current
+    return scores
+
+
 def _proximity(a,b):
     delta = a[:,None,:]-b[None,:,:]
     distance = np.linalg.norm(delta,axis=2)
     # Separate a surface road from an overpass/tunnel occupying the same x/z.
-    return np.where((distance<=250)&(np.abs(delta[:,:,1])<=6),np.exp(-(distance/120)**2),0.)
+    valid = (distance<=250)&(np.abs(delta[:,:,1])<=6)
+    result = np.zeros(distance.shape)
+    result[valid] = np.exp(-(distance[valid]/120)**2)
+    return result
 
 
 def _sample(paths):
@@ -70,17 +104,20 @@ def _cached_geometry_similarity(samples, cancelled=None):
     count=len(all_samples)
     if count>4000:
         return None
-    similarity=np.empty((count,count),dtype=float)
+    similarity=np.zeros((count,count),dtype=float)
     position=all_samples[:,:3]
     direction=all_samples[:,3:6]
     weight=all_samples[:,6]
     for first in range(0,count,256):
         if cancelled: cancelled()
         last=min(count,first+256)
-        similarity[first:last]=_proximity(position[first:last],position)
-        cosine=direction[first:last] @ (-direction.T)
-        similarity[first:last]*=np.where(cosine>=.6,np.clip(cosine,0,1),0)
-        similarity[first:last]*=np.minimum(weight[first:last,None],weight[None,:])
+        # Every terminal compares an earlier prefix against a later suffix;
+        # cells below this diagonal cannot affect any candidate's score.
+        target = similarity[first:last, first:]
+        target[:]=_proximity(position[first:last],position[first:])
+        cosine=direction[first:last] @ (-direction[first:].T)
+        target*=np.where(cosine>=.6,np.clip(cosine,0,1),0)
+        target*=np.minimum(weight[first:last,None],weight[None,first:])
     return similarity
 
 
@@ -101,6 +138,8 @@ def infer_direction(points: Path, legs: tuple[tuple[Path,...],...], names=None, 
     cumulative=np.r_[0,np.cumsum(lengths)]
     total=float(cumulative[-1])
     similarity=_cached_geometry_similarity(samples,cancelled) if n>2 else None
+    cuts=np.cumsum([len(sample) for sample in samples[:-1]]).tolist()
+    geometry_scores=_split_alignment_scores(similarity,cuts,cancelled) if similarity is not None else {}
     cut=0
     candidates=[]
     for k in range(1,n-1):
@@ -109,8 +148,7 @@ def infer_direction(points: Path, legs: tuple[tuple[Path,...],...], names=None, 
         cut+=len(samples[k-1])
         geometry=0.
         if similarity is not None:
-            sim=similarity[:cut,cut:][:,::-1]
-            geometry=2*_align(sim)[0]/max(total,1e-8)
+            geometry=2*geometry_scores[cut]/max(total,1e-8)
         else:
             down=np.concatenate(samples[:k]); up=np.concatenate(samples[k:])[::-1].copy()
             up[:,3:6]*=-1

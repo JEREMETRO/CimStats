@@ -47,6 +47,32 @@ def test_preview_dimensions_preserve_paper_aspect(qt_application):
     assert not image.isNull()
 
 
+@pytest.mark.parametrize('aspect,orientation',[(a,o) for a in ('16:9','16:10','3:2','A4')
+                                             for o in ('landscape','portrait')])
+def test_native_operating_time_is_complete_in_all_fields_layout(qt_application,aspect,orientation):
+    from map_model import RouteService,ServiceTimetable
+    from route_export_model import ExportOptions,build_export_request,ALL_FIELDS
+    from route_export_render import build_layout
+    session,snapshot=source();hour=36_000_000_000
+    tables=(ServiceTimetable(62,6*hour,22*hour,hour,tuple(range(6*hour,23*hour,hour))),
+            ServiceTimetable(65,8*hour,21*hour,hour,tuple(range(8*hour,22*hour,hour))))
+    route=replace(snapshot.routes[0],service=RouteService(True,True,tables))
+    req=build_export_request(session,replace(snapshot,routes=(route,)),42,
+        ExportOptions(aspect=aspect,orientation=orientation,selected_fields=ALL_FIELDS))
+    layout=build_layout(req)
+    item=next(item for item in layout.text_items if item.text=='工作日06:00-22:00，周末08:00-21:00')
+    assert item.rect[1]+item.rect[3]<=layout.height
+    first=next(item for item in layout.text_items if item.text=='运营时间')
+    second=next(item for item in layout.text_items if item.text=='线路车库')
+    assert first.rect[1]<second.rect[1]
+    from PySide6.QtGui import QFontMetricsF
+    from route_export_render import _font
+    assert QFontMetricsF(_font(item)).horizontalAdvance('工作日06:00-22:00')<=item.rect[2]
+    for line in (item.display_text or item.text).splitlines():
+        assert QFontMetricsF(_font(item)).horizontalAdvance(line)<=item.rect[2]
+    assert item.rect[1]+item.rect[3]<=second.rect[1]
+
+
 @pytest.mark.parametrize('fmt',['PNG','JPG','PDF'])
 @pytest.mark.parametrize('aspect,orientation,pixels,points', [
     ('16:9', 'landscape', (400, 225), (360., 202.5)),

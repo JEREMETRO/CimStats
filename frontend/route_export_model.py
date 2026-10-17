@@ -9,7 +9,7 @@ import re
 from map_model import MapSnapshot
 from map_visibility import operating_paths, visible_route_stop_ids, usable_paths
 from map_route_metrics import selected_route_metrics
-from map_service_time import session_line
+from map_service_time import session_line, operating_time_text
 from map_line_presentation import line_information, _LINE_FIELDS, _PASSENGER_FIELDS
 from line_query_page import line_display_value, shown
 from report_model import display_company
@@ -28,10 +28,10 @@ class LayoutError(ExportError):
 
 
 FIELD_SECTIONS = tuple((key,title,tuple((f[0],f[1]) for f in fields))
-    for key,title,fields in (('line_information','线路信息',_LINE_FIELDS),
+    for key,title,fields in (('line_information','线路信息',(('运营时间','运营时间',''),)+_LINE_FIELDS),
                             ('passenger_data','客流数据',_PASSENGER_FIELDS)))
 ALL_FIELDS = tuple(key for _,_,fields in FIELD_SECTIONS for key,_ in fields)
-DEFAULT_FIELDS = ('地图里程','单程时间','核定速度','站点数','当日发班数','平均间隔','今日客流')
+DEFAULT_FIELDS = ('运营时间','地图里程','单程时间','核定速度','站点数','当日发班数','平均间隔','今日客流')
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,21 +165,17 @@ def build_export_request(session,map_snapshot,route_id,options,*,branding=None):
     sections=[]
     for section_id,title,rows in source['sections']:
         rows=list(rows)
+        if section_id=='line_information':
+            rows.insert(0,('运营时间','运营时间',operating_time_text(session,route_id,route=route)))
         # The existing single panel adds direction length independently of line_information.
         length=('地图里程','地图里程',shown(metrics.length_km,'km'))
         rows=[length if row[0]=='地图里程' else row for row in rows]
         if not any(row[0]=='地图里程' for row in rows) and section_id=='line_information':
-            rows.insert(3,length)
+            rows.insert(next(i for i,row in enumerate(rows) if row[0]=='单程时间'),length)
         filtered=[]
         for key,label,value in rows:
             if key not in options.selected_fields:continue
             label=label.replace(f'（{suffix}）','')
-            if key=='站点数' and direction!='whole':
-                label=suffix+'站点数'
-                terminal=route.direction.terminal_index
-                count=((len(route.stop_ids)-terminal if direction=='up' else terminal+1)
-                    if type(terminal) is int and 0<terminal<len(route.stop_ids)-1 else None)
-                value=shown(count,'站')
             filtered.append((key,label,value))
         if filtered:
             if section_id=='passenger_data':

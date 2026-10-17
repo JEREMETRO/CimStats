@@ -11,6 +11,7 @@ root = Path(SPECPATH)
 sys.path[:0] = [str(root / 'src'), str(root / 'tools')]
 from app_metadata import application_metadata, icon_directory
 from candidate_package import bundle_data, managed_data
+from build_map_native import build as build_map_native
 metadata = application_metadata(root)
 if metadata.name != 'CimStats' or metadata.version != (root / 'VERSION').read_text(encoding='utf-8-sig').strip():
     raise RuntimeError('Integrate and freeze the approved CimStats VERSION before building')
@@ -56,6 +57,7 @@ project_datas = bundle_data(root)
 pyside_dir = Path(distribution('PySide6').locate_file('PySide6'))
 shiboken_dir = Path(distribution('shiboken6').locate_file('shiboken6'))
 system32 = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "System32"
+native_map = build_map_native(root)
 
 a = Analysis(
     [str(root / "CIM2_SaveStats.py")],
@@ -67,7 +69,7 @@ a = Analysis(
         *runtime_datas,
         *fluent_datas,
     ],
-    binaries=[
+    binaries=[(str(native_map), ".")] + [
         # Keep a flat copy of Qt's loader dependencies.  Some Windows loader
         # configurations do not resolve a DLL imported by PySide6/*.pyd from
         # a sibling package directory in a one-file extraction.
@@ -90,7 +92,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "pytest", "_pytest", "Cython", "IPython"],
+    excludes=["tkinter", "pytest", "_pytest", "Cython", "IPython", "ziglang"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

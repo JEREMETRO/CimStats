@@ -237,13 +237,26 @@ def _map_vector_capture(canvas, output, name):
         assert not fallback_image.isNull(), 'vector CPU fallback returned an empty map image'
         pixels = map_pixels(fallback_image)
 
+    renderer=getattr(viewport,'_gpu_renderer',None)
+    retained={}
+    if not fallback:
+        assert renderer is not None and renderer.scene is not None, 'current map has no retained GPU scene'
+        routes=getattr(renderer,'_routes_renderer',None)
+        native=renderer._submitter is not None and (routes is None or routes._submitter is not None)
+        if getattr(sys,'frozen',False):
+            assert native, 'frozen map is missing its native submission component'
+        retained=dict(retained_gpu=True,native_submission=native,
+                      uploaded_bytes=renderer.uploaded_bytes,
+                      base_vertex_buffer=renderer.vertex_buffer.bufferId(),
+                      route_vertex_buffer=routes.vertex_buffer.bufferId() if routes else None,
+                      direct_array_upload=renderer.direct_upload and (routes is None or routes.direct_upload))
     return dict(viewport_valid=valid, viewport_dpr=viewport.devicePixelRatioF(),
                 framebuffer_dpr=framebuffer.devicePixelRatioF(),
                 framebuffer_size=[framebuffer.width(), framebuffer.height()],
                 framebuffer=str(framebuffer_path) if framebuffer_path else None,
                 gl_fallback=fallback, vector_key=vector_key, vector_revision=canvas._revision,
                 vector_presented_key=list(canvas._vector_presented_key),
-                vector_prepared=True, current_vector_presentation=True, **pixels)
+                vector_prepared=True, current_vector_presentation=True, **pixels, **retained)
 
 
 def _map_composition_mismatch(actual, expected):

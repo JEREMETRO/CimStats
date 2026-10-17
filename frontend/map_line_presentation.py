@@ -50,6 +50,9 @@ def line_information(session, route_id, *, direction_metrics=None):
             if key == '地图里程' and direction != 'whole':
                 continue
             value = line_display_value(line, key, lines)
+            if key == '站点数' and direction != 'whole':
+                title = suffix+'站点数'
+                value = metric('station_count')
             if key in ('单程时间', '核定速度'):
                 title = f'{"核定时间" if key == "单程时间" else "核定速度"}（{suffix}）'
                 if direction_metrics is not None and direction != 'whole':

@@ -691,8 +691,10 @@ def _connection_runs(items, shell, layer):
             polygon = item.edge if shell else item.core
             brush = (QBrush(QColor('#C6D0D7' if item.tunnel else item.shell)) if shell else
                      QBrush(QColor('#E3E9ED')) if item.tunnel else item.fill)
-            gradient = brush.gradient() is not None
-            key = None if gradient else ('area', brush.color().name())
+            # Each saved closed contour is an independently filled surface.
+            # Summing signed winding numbers from overlapping opposite
+            # contours would cancel their common interior into a hole.
+            key = None
             pen = None
         else:
             polygon = item.core

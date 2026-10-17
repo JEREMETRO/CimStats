@@ -150,3 +150,70 @@ def route_operates(session, route_id, start: datetime, end: datetime | None = No
     if service.active is None or service.complete is None:
         return None
     return True if any(r is True for r in results) else None
+
+
+def operating_time_text(session, route_id, *, route=None):
+    """Saved weekly windows, grouped only when every listed day agrees.
+
+    Native table boundaries preserve shutdown gaps even below the presentation
+    schedule's three-hour threshold. Use actual departures, not a template's
+    requested end or a last vehicle's arrival time. Overnight spans stay on
+    their saved starting weekday and explicitly label the following day.
+    """
+    if route is not None and route.id != route_id:
+        return '—'
+    service = route.service if route is not None else service_from_session(session, route_id)
+    # Old map snapshots may lack native service entirely; the shared legacy
+    # reader can recover it only when the session retained complete metadata.
+    if service == RouteService():
+        service = service_from_session(session, route_id)
+    if service.active is False or service.complete is False:
+        return '停运'
+    if service.timetables is None:
+        return '—'
+    windows = [[] for _ in range(7)]  # Sunday is native bit zero.
+    for table in service.timetables:
+        mask = running_day_mask(table.active_days)
+        if mask is not None and not mask & 0x7f:
+            continue
+        rows = table.departure_ticks
+        if rows == ():
+            continue
+        if (mask is None or rows is None or
+                any(optional_integer(t) is None or not 0 <= t < 2*DAY_TICKS for t in rows)):
+            return '—'
+        first,last = min(rows),max(rows)
+        if last-first >= DAY_TICKS:
+            return '—'
+        for day in range(7):
+            if mask & (1 << day):
+                windows[day].append((first,last))
+    if not any(windows):
+        return '停运'
+    if service.active is None or service.complete is None:
+        return '—'
+
+    def clock(tick):
+        day,remainder = divmod(tick,DAY_TICKS)
+        minutes = remainder // 600_000_000
+        return ('次日' if day else '')+f'{minutes//60:02d}:{minutes%60:02d}'
+
+    def text(spans):
+        merged=[]
+        for start,end in sorted(spans):
+            if merged and start <= merged[-1][1]:
+                merged[-1]=(merged[-1][0],max(merged[-1][1],end))
+            else:
+                merged.append((start,end))
+        return '、'.join(f'{clock(a)}-{clock(b)}' for a,b in merged) or '停运'
+
+    values=tuple(text(spans) for spans in windows)
+    if len(set(values))==1:
+        return values[0]
+    groups={}
+    for day in (1,2,3,4,5,6,0):
+        groups.setdefault(values[day],[]).append(day)
+    labels={frozenset((1,2,3,4,5)):'工作日',frozenset((6,0)):'周末'}
+    weekdays=('周日','周一','周二','周三','周四','周五','周六')
+    return '，'.join(labels.get(frozenset(days),'、'.join(weekdays[d] for d in days))+value
+                    for value,days in groups.items())

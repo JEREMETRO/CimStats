@@ -191,15 +191,19 @@ def test_native_retained_frame_skips_replay_but_invalidates_on_view_or_fbo(qt_ap
     from map_vector_canvas import VectorMapViewport
     paints=[];presented=[]
     canvas=SimpleNamespace(_index_closed=False,_revision=1,_vector_key=1,
-        _vector_prepared=object(),center=(1.,2.),zoom=1.,
+        _vector_prepared=object(),_gpu_key=1,_gpu_scene=object(),center=(1.,2.),zoom=1.,
+        width=lambda:400,height=lambda:300,
         _render_key=lambda:(1,400,300,1.,'font',None),
-        _paint_vectors=lambda *a,**k:paints.append(True),
+        _paint_gpu_annotations=lambda painter:None,
         _vector_presented=lambda *a:presented.append(a))
     viewport=SimpleNamespace(canvas=canvas,_painted_stamp=None,_context_generation=1,
-        defaultFramebufferObject=lambda:9)
+        defaultFramebufferObject=lambda:9,devicePixelRatioF=lambda:1.,
+        _gpu_renderer=SimpleNamespace(paint=lambda *a:paints.append(True)))
     class Painter:
         def __init__(self,device):pass
         def isActive(self):return True
+        def beginNativePainting(self):pass
+        def endNativePainting(self):pass
         def end(self):pass
     monkeypatch.setattr(map_vector_canvas,'QPainter',Painter)
     VectorMapViewport.paintGL(viewport);VectorMapViewport.paintGL(viewport)

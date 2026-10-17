@@ -66,6 +66,8 @@ def test_request_freezes_true_direction_and_retains_full_line_operating_facts():
     assert rows['当日发班数']==('当日发班','70 班')
     assert rows['站点数']==('上行站点数','2 站')
     assert request.information.mode=='城市公交'
+    assert tuple(key for key,_,_ in request.information.sections[0][2])[:5]==(
+        '运营时间','线路车库','开线日期','最近改线日期','地图里程')
     assert {s.id for s in request.stops}=={2,3}
     assert request.paths==(snapshot.routes[0].leg_paths[1][0],)
     session['lines'][0]['今日客流']=999
@@ -153,3 +155,25 @@ def test_today_ratio_selection_also_uses_the_requested_today_heading():
     session,snapshot=source()
     req=build_export_request(session,snapshot,42,ExportOptions(selected_fields=('今日平均单班人次',)))
     assert req.information.sections[0][1]=='今日客流'
+
+
+def test_export_first_information_row_is_native_weekday_weekend_operating_time():
+    from map_model import RouteService, ServiceTimetable
+    from route_export_model import ExportOptions,build_export_request
+    hour=36_000_000_000
+    session,snapshot=source()
+    tables=(ServiceTimetable(62,6*hour,22*hour,hour,tuple(range(6*hour,23*hour,hour))),
+            ServiceTimetable(65,8*hour,21*hour,hour,tuple(range(8*hour,22*hour,hour))))
+    route=replace(snapshot.routes[0],service=RouteService(True,True,tables))
+    req=build_export_request(session,replace(snapshot,routes=(route,)),42,ExportOptions())
+    assert req.information.sections[0][2][0]==('运营时间','运营时间','工作日06:00-22:00，周末08:00-21:00')
+
+
+def test_export_station_information_reuses_shared_direction_formatter():
+    from map_line_presentation import line_information
+    from route_export_model import ExportOptions,build_export_request
+    session,snapshot=source()
+    req=build_export_request(session,snapshot,42,ExportOptions(direction='up'))
+    shared=line_information(session,42,direction_metrics=req.metrics)
+    row=lambda sections: next(row for _,_,rows in sections for row in rows if row[0]=='站点数')
+    assert row(req.information.sections)==row(shared['sections'])==('站点数','上行站点数','2 站')
