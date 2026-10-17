@@ -77,6 +77,8 @@ def test_smoke_map_real_interactions_and_stable_captures(map_page,tmp_path):
     assert evidence['sorting']['selection_preserved']
     assert evidence['building']['candidate_ids']==[70,170]
     assert evidence['building']['selected_ids']==[70,170]
+    assert evidence['building']['native_indicator_cancelled']
+    assert evidence['building']['selected_after_cancel']==evidence['building']['outside_ids']
     assert evidence['navigation']['dragged'] and evidence['navigation']['zoomed']
     assert evidence['navigation']['vector_prepared_reused']
     assert evidence['navigation']['window_size']==[map_page.width(),map_page.height()]
@@ -104,3 +106,66 @@ def test_smoke_export_records_actual_size_and_rejects_unprepared_view(map_page,t
     with pytest.raises(AssertionError):
         _map_current_export(map_page,tmp_path/'stale.png')
     assert not (tmp_path/'stale.png').exists()
+
+
+@pytest.fixture
+def smoke_window(qt_application, tmp_path, monkeypatch):
+    import desktop_app
+    from stats_style import initialize_theme
+    from test_route_export_model import source
+    from test_city_period_modes import observations
+    initialize_theme(qt_application)
+    monkeypatch.setattr(desktop_app, 'QSettings', lambda *_: QSettings(
+        str(tmp_path/'smoke.ini'), QSettings.Format.IniFormat))
+    monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda _: None)
+    window=desktop_app.MainWindow(); window.resize(960,680); window.show()
+    wait_until(lambda: window._welcome_handoff_complete)
+    session,snapshot=source()
+    session.update(save_key='synthetic-smoke', history=observations(),
+                   simulation_time='2024-01-10 00:00:00',
+                   companies=[{'公司标识':'owner','公司名称':'公司'}])
+    window.data=session
+    window.map_page.set_session(session)
+    window.map_page.set_snapshot(snapshot)
+    window.statistics_page.set_session(session)
+    window._refresh_body()
+    yield window,snapshot.routes[0]
+    window.statistics_page.stop_workers(); window.close()
+
+
+def test_smoke_single_route_exports_use_actual_entry_preview_and_files(smoke_window,tmp_path):
+    from package_smoke import _exercise_route_exports
+    from route_export_dialog import FluentFileDialog
+    window,route=smoke_window
+    picker=FluentFileDialog.__dict__['getSaveFileName']
+    captures=[]
+    def capture(name,dialog):
+        assert not dialog.preview.image.isNull()
+        assert dialog.pages.currentIndex()==0 and dialog.format_control.isVisible()
+        assert dialog.grab().save(str(tmp_path/(name+'.png')))
+        captures.append(name)
+    evidence=_exercise_route_exports(window,window.map_page,route,tmp_path,settle,wait_until,capture)
+    assert [item['format'] for item in evidence]==['PNG','JPG','PDF']
+    assert all(item['route_id']==42 and item['ppi']==80 for item in evidence)
+    assert all(item['size']==[400,267] and item['preview_nonempty'] for item in evidence)
+    assert all(item['width_mm']==127 and item['bytes']>0 for item in evidence)
+    assert len(captures)==3
+    assert FluentFileDialog.__dict__['getSaveFileName'] is picker
+
+
+def test_smoke_city_period_records_current_real_snapshot_and_resets_mode(smoke_window,tmp_path):
+    from package_smoke import _exercise_city_period_inputs
+    window,_=smoke_window
+    captures=[]
+    def capture(name):
+        assert window.grab().save(str(tmp_path/(name+'.png')))
+        captures.append(name)
+    evidence=_exercise_city_period_inputs(window,window.statistics_page,settle,wait_until,capture)
+    assert {item['mode'] for item in evidence}=={'default','period'}
+    assert {tuple(item['requested_size']) for item in evidence}=={(960,680),(1440,960)}
+    assert all(item['companies']==[] and item['kpis'] for item in evidence)
+    assert all(item['comparison'] is not None for item in evidence if item['mode']=='period')
+    assert all(item['comparison'] is None for item in evidence if item['mode']=='default')
+    assert len({tuple(item['window']) for item in evidence})==1
+    assert len(captures)==4
+    assert window.statistics_page.city_mode_control.currentKey()=='default'

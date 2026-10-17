@@ -340,7 +340,7 @@ def _exercise_map_inputs(win, page, settle, wait_until, capture):
     from PySide6.QtCore import QPoint, QPointF, Qt
     from PySide6.QtGui import QWheelEvent
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionViewItem
     from unicodedata import normalize
     win.raise_(); win.activateWindow(); settle(300)
     canvas = page.canvas
@@ -467,12 +467,25 @@ def _exercise_map_inputs(win, page, settle, wait_until, capture):
     assert set(page.planning_panel.state()['selected_ids']) == outside | {chosen.data(Qt.ItemDataRole.UserRole)}
     selected_one=sorted(page.planning_panel.state()['selected_ids'])
     _map_stable(page, settle, wait_until); capture('map-native-building-selected')
+    option = QStyleOptionViewItem(); option.initFrom(menu.line_list)
+    menu.line_list.itemDelegate().initStyleOption(option, menu.line_list.indexFromItem(chosen))
+    option.rect = menu.line_list.visualItemRect(chosen)
+    indicator = menu.line_list.style().subElementRect(
+        QStyle.SubElement.SE_ItemViewItemCheckIndicator, option, menu.line_list)
+    assert not indicator.isEmpty(), 'building route has no checkbox indicator'
+    QTest.mouseClick(menu.line_list.viewport(), Qt.MouseButton.LeftButton, pos=indicator.center())
+    settle(50)
+    assert chosen.checkState() == Qt.CheckState.Unchecked
+    assert set(page.planning_panel.state()['selected_ids']) == outside
+    selected_after_cancel = sorted(page.planning_panel.state()['selected_ids'])
+    _map_stable(page, settle, wait_until); capture('map-native-building-cancelled')
     _map_click(menu.select_all, settle)
     assert set(page.planning_panel.state()['selected_ids']) == outside | enabled
     _map_stable(page, settle, wait_until); capture('map-native-building-all')
     building_evidence = dict(building_id=building.id,building_name=building.name,source=source.source,
                              candidate_ids=candidates,candidate_labels=[menu.line_list.item(i).text() for i in range(menu.line_list.count())],
                              selectable_ids=sorted(enabled),selected_one=selected_one,outside_ids=sorted(outside),
+                             selected_after_cancel=selected_after_cancel,native_indicator_cancelled=True,
                              selected_ids=sorted(page.planning_panel.state()['selected_ids']),native_complete=True,
                              clicked_canvas_position=[point.x(),point.y()])
     _map_click(menu.close_button, settle)
@@ -558,6 +571,120 @@ def _map_current_export(page, path):
     assert image.width()==page.canvas.width() and image.height()==page.canvas.height()+legend_height
     return dict(path=str(path),size=[image.width(),image.height()],
                 canvas_size=[page.canvas.width(),page.canvas.height()],legend_height=legend_height)
+
+
+def _exercise_route_exports(win, page, route, output, settle, wait_until, capture):
+    """Use the normal single-route entry and asynchronous export for all formats."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
+    from PySide6.QtTest import QTest
+    import route_export_dialog
+    from route_export_model import measure_output
+    win.navigate(1)
+    assert page.show_route(route.id, page.save_token)
+    _map_stable(page, settle, wait_until)
+    wait_until(page.can_export, 120)
+    picker = route_export_dialog.FluentFileDialog
+    original_picker = picker.__dict__['getSaveFileName']
+    evidence = []
+    dialog = None
+    try:
+        for fmt in ('PNG', 'JPG', 'PDF'):
+            destination = output / ('single-route.' + fmt.lower())
+            assert not destination.exists(), 'single-route export output already exists'
+            win._export_action('map-png')
+            dialog = page._route_export_dialog
+            assert isinstance(dialog, route_export_dialog.RouteExportDialog) and dialog.isVisible()
+            assert dialog._request.route_id == route.id
+            _map_click(dialog.format_control._buttons[fmt], settle)
+            _map_click(dialog.ppi_control._buttons['80'], settle)
+            width_editor = dialog.width_edit.lineEdit()
+            _map_click(width_editor, settle)
+            QTest.keyClick(width_editor, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+            QTest.keyClicks(width_editor, '127')
+            QTest.keyClick(width_editor, Qt.Key.Key_Tab)
+            settle(50)
+            _map_click(dialog.format_control._buttons[fmt], settle)
+            wait_until(lambda: not dialog.preview.image.isNull() or dialog.error_label.isVisible(), 120)
+            assert not dialog.preview.image.isNull(), dialog.error_label.text()
+            options = dialog.options()
+            assert options.format == fmt and options.ppi == 80 and options.width_mm == 127
+            size = measure_output(options)
+            preview_size = [dialog.preview.image.width(), dialog.preview.image.height()]
+            capture('single-route-export-preview-' + fmt.lower(), dialog)
+            completed = []
+            dialog.exported.connect(completed.append)
+            picker.getSaveFileName = staticmethod(lambda *_args, **_kwargs: (str(destination), ''))
+            _map_click(dialog.export_button, settle)
+            wait_until(lambda: bool(completed) or dialog.error_label.isVisible(), 120)
+            assert completed, dialog.error_label.text()
+            assert len(completed) == 1 and Path(completed[0].path) == destination
+            assert destination.is_file() and destination.stat().st_size > 0
+            if fmt == 'PDF':
+                with destination.open('rb') as stream:
+                    assert stream.read(5) == b'%PDF-'
+            else:
+                image = QImage(str(destination))
+                assert not image.isNull() and (image.width(), image.height()) == size.pixels
+            evidence.append(dict(format=fmt, path=str(destination), bytes=destination.stat().st_size,
+                route_id=route.id, ppi=options.ppi, width_mm=size.width_mm, height_mm=size.height_mm,
+                size=list(size.pixels), preview_size=preview_size, preview_nonempty=True,
+                normal_export_entry=True, exported_signal=True))
+            dialog = None  # Successful exports close and dispose their own dialog.
+    finally:
+        picker.getSaveFileName = original_picker
+        if dialog is not None and page._route_export_dialog is dialog:
+            dialog.reject()
+    return evidence
+
+
+def _exercise_city_period_inputs(win, page, settle, wait_until, capture):
+    """Switch the actual city controls and capture only matching query results."""
+    win.navigate(3)
+    wait_until(lambda: page.tab_bar.items['city'].isVisible()
+               and page.tab_bar.items['city'].isEnabled(), 120)
+    _map_click(page.tab_bar.items['city'], settle)
+    _map_click(page.city_mode_control._buttons['default'], settle)
+    wait_until(lambda: page.city_snapshot is not None and page.city_snapshot.filters.comparison is None
+               and not page.workers and not page.network_workers, 120)
+    window = (page.city_snapshot.filters.start, page.city_snapshot.filters.end)
+    grain = page.city_snapshot.filters.grain
+    original_size = (win.width(), win.height())
+    evidence = []
+    for mode in ('default', 'period'):
+        _map_click(page.city_mode_control._buttons[mode], settle)
+        if mode == 'period':
+            _map_choose(page.compare_combo, 'previous', settle)
+        comparison = page._route_comparison('city')
+        assert (comparison is not None) == (mode == 'period')
+        wait_until(lambda: page.city_snapshot is not None
+                   and page.city_snapshot.filters.comparison == comparison
+                   and (page.city_snapshot.filters.start, page.city_snapshot.filters.end) == window
+                   and page.city_snapshot.filters.grain == grain
+                   and not page.query_timer.isActive() and not page.workers and not page.network_workers, 120)
+        for width, height in ((960, 680), (1440, 960)):
+            _resize_for_workarea(win, width, height); settle(300)
+            snapshot = page.city_snapshot
+            assert snapshot.filters.companies == ()
+            assert snapshot.filters.comparison == comparison
+            name = f'city-native-{mode}-{width}x{height}'
+            capture(name)
+            kpis = {key: dict(title=value.title, value=str(value.value) if value.value is not None else None,
+                unit=value.unit, complete=value.complete, reason=value.reason,
+                observed=value.observed.isoformat() if value.observed is not None else None,
+                comparison_available=value.comparison.available,
+                comparison_amount=str(value.comparison.amount) if value.comparison.amount is not None else None)
+                for key, value in snapshot.kpis.items()}
+            evidence.append(dict(case=name, mode=mode, requested_size=[width, height],
+                actual_size=[win.width(), win.height()], window=[stamp.isoformat() for stamp in window],
+                comparison=[stamp.isoformat() for stamp in comparison] if comparison else None,
+                range_key=page.range_preset, grain=grain, comparison_key=page.city_comparison_preset,
+                companies=list(snapshot.filters.companies), kpis=kpis))
+    _map_click(page.city_mode_control._buttons['default'], settle)
+    wait_until(lambda: page.city_snapshot is not None and page.city_snapshot.filters.comparison is None
+               and not page.workers and not page.network_workers, 120)
+    _resize_for_workarea(win, *original_size)
+    return evidence
 
 
 def _exercise(win, desktop_app, args):
@@ -722,6 +849,8 @@ def _exercise(win, desktop_app, args):
     map_zoom_views = _exercise_map_zoom_views(win,map_page,settle,wait_until,capture)
     assert not map_errors, map_errors
     map_current_export = _map_current_export(map_page,args.output/'map-current.png')
+    route_exports = _exercise_route_exports(win,map_page,route,args.output,settle,wait_until,capture)
+    city_period_inputs = _exercise_city_period_inputs(win,page,settle,wait_until,capture)
     _resize_for_workarea(win, 960, 680)
     win.navigate(3)
     page.tab_bar.setCurrentItem('network')
@@ -1077,5 +1206,7 @@ def _exercise(win, desktop_app, args):
     report['map']['native_inputs'] = map_native_inputs
     report['map']['zoom_views'] = map_zoom_views
     report['map']['current_export'] = map_current_export
+    report['map']['single_route_exports'] = route_exports
+    report['city_period_inputs'] = city_period_inputs
     report['home_structure_responsive'] = home_structure_responsive
     (args.output / 'evidence.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

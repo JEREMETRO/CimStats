@@ -352,7 +352,7 @@ def test_up_dash_phase_continues_across_saved_path_fragments(qt_application):
         for x in range(round(mx+mw*.75),round(mx+mw*.90)))
 
 
-def test_exactly_shared_direction_paths_both_remain_visible(qt_application):
+def test_exactly_shared_direction_paths_overlap_without_artificial_lane_shift(qt_application):
     from route_export_model import build_export_request
     from route_export_render import preview,build_layout,_prepare_scene
     from PySide6.QtCore import Qt
@@ -367,4 +367,25 @@ def test_exactly_shared_direction_paths_both_remain_visible(qt_application):
         for style in (Qt.PenStyle.SolidLine,Qt.PenStyle.CustomDashLine)]
     colors=[{image.pixelColor(x,y).name()
         for x in range(round(mx+mw*.25),round(mx+mw*.75))} for y in ys]
-    assert colors[0]=={scene.line.lower()} and len(colors[1])>1
+    assert ys[0]==ys[1]
+    assert colors[0]==colors[1]=={scene.line.lower()}
+
+
+@pytest.mark.parametrize('direction',['whole','up','down'])
+def test_export_station_symbols_follow_visible_leg_and_preserve_native_data(qt_application,direction):
+    from map_model import MapStop,RouteDirection
+    from route_export_model import build_export_request
+    from route_export_render import _prepare_scene,preview
+    req=request(direction=direction);session,_=source()
+    a,b,c=(0.,0.,0.),(100.,0.,0.),(200.,0.,0.)
+    route=replace(req.route,stop_ids=(10,11,12),paths=((a,b),(b,c)),
+                  leg_paths=(((a,b),),((b,c),)),direction=RouteDirection('roundtrip',1))
+    stops=tuple(MapStop(i,str(i),(p[0],p[1],6.)) for i,p in zip((10,11,12),(a,b,c)))
+    selected=build_export_request(session,replace(req.snapshot,routes=(route,),stops=stops),42,req.options)
+    scene=_prepare_scene(selected)
+    body=next(s for s in scene.shapes if s.pen is not None and s.pen.color().name()==scene.line.lower())
+    assert all(abs(p.y()-body.path.elementAt(0).y)<1e-8 for p in scene.station_points)
+    image=preview(selected,(scene.layout.width,scene.layout.height))
+    for point in scene.station_points:
+        assert image.pixelColor(point.toPoint()).name() == scene.background.lower()
+    assert all(s.position[2]==6. for s in selected.stops)

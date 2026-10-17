@@ -295,3 +295,72 @@ def test_popup_check_keyboard_scroll_and_outside_click_preserve_other_selection(
     assert host.wheels == 0
     QTest.mouseClick(host, Qt.MouseButton.LeftButton, pos=QPoint(900, 600))
     assert not m.isVisible() and p.state()['selected_ids'] == {12, 99}
+
+
+def _planning_mouse_target(qt_application, target):
+    from map_preset_panels import PlanningPanel
+    from stats_style import initialize_theme
+    initialize_theme(qt_application)
+    host = QWidget(); host.resize(960, 680); host.show()
+    panel = PlanningPanel(host); panel.resize(340, 620); panel.show()
+    panel.set_popup_host(host); panel.set_routes(routes(), {12, 99})
+    panel.open_building_menu({'name': '建筑'}, routes(), {12, 99},
+                            host.mapToGlobal(QPoint(400, 30)), source_known=True)
+    qt_application.processEvents()
+    view = panel.building_menu.line_list if target == 'menu' else panel.line_list
+    return host, panel, view
+
+
+def _item_check_rect(view, item):
+    from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+    option = QStyleOptionViewItem(); option.initFrom(view)
+    view.itemDelegate().initStyleOption(option, view.indexFromItem(item))
+    option.rect = view.visualItemRect(item)
+    return view.style().subElementRect(QStyle.SubElement.SE_ItemViewItemCheckIndicator,
+                                      option, view)
+
+
+@pytest.mark.parametrize('target', ('menu', 'planning'))
+def test_planning_mouse_indicator_toggles_without_reselecting(qt_application, target):
+    host, panel, view = _planning_mouse_target(qt_application, target)
+    try:
+        item = view.item(0); point = _item_check_rect(view, item).center()
+        spy = QSignalSpy(panel.selectionChanged)
+        for index, expected in enumerate(({99}, {12, 99}, {99}), 1):
+            QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=point)
+            qt_application.processEvents()
+            assert panel.state()['selected_ids'] == expected
+            assert (item.checkState() == Qt.CheckState.Checked) == (12 in expected)
+            assert spy.count() == index
+            assert panel.building_menu.isVisible() == (target == 'menu')
+            assert panel.line_list.item(0).checkState() == item.checkState()
+            assert panel.building_menu.line_list.item(0).checkState() == item.checkState()
+    finally:
+        host.close()
+
+
+@pytest.mark.parametrize('target', ('menu', 'planning'))
+def test_planning_label_double_click_and_keyboard_keep_selection_contract(qt_application, target):
+    host, panel, view = _planning_mouse_target(qt_application, target)
+    try:
+        item = view.item(0); indicator = _item_check_rect(view, item)
+        label = QPoint(view.visualItemRect(item).right() - 8, indicator.center().y())
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=indicator.center())
+        assert panel.state()['selected_ids'] == {99}
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=label)
+        assert panel.state()['selected_ids'] == {12, 99}
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=label)
+        assert panel.state()['selected_ids'] == {12, 99}
+        QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=indicator.center())
+        assert panel.state()['selected_ids'] == {99}
+        QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=label)
+        assert panel.state()['selected_ids'] == {12, 99}
+        view.setCurrentItem(item); view.setFocus()
+        QTest.keyClick(view, Qt.Key.Key_Space)
+        assert panel.state()['selected_ids'] == {99}
+        QTest.keyClick(view, Qt.Key.Key_Return)
+        assert panel.state()['selected_ids'] == {12, 99}
+        QTest.keyClick(view, Qt.Key.Key_Space)
+        assert panel.state()['selected_ids'] == {99}
+    finally:
+        host.close()

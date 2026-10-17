@@ -7,7 +7,6 @@ import os
 import struct
 import tempfile
 import zlib
-from math import hypot
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, QMarginsF, Qt
 from PySide6.QtGui import (QColor,QFont,QFontMetricsF,QImage,QImageWriter,QPageLayout,
@@ -18,7 +17,7 @@ from stats_typography import emphasis_font, ui_font
 from semantic_colors import color_for, building_function_fill
 from map_model import building_function_values
 from map_canvas import road_style
-from map_visibility import operating_paths
+from map_visibility import operating_paths, operating_leg_indices, route_stop_symbols
 
 MAX_IMAGE_BYTES=160*1024*1024  # Includes A4 at 600 ppi; larger JPG requests fail before allocation.
 STRIP_BYTES=16*1024*1024
@@ -306,8 +305,13 @@ def _prepare_scene(request,cancel=None):
     muted='#B4CBDD' if night else '#65758A'
     brand,logo,status=_resolve_brand(request,bg)
     line='#20DFF5' if night else color_for('mode',request.route.mode)
+    effective=request.metrics.effective_direction
+    legs=set(operating_leg_indices(request.route,effective))
+    symbols={sid:point for i,sid,point in route_stop_symbols(request.route,{s.id:s for s in request.stops})
+             if i==-1 or i in legs}
+    station_positions=tuple(symbols.get(s.id,s.position) for s in request.stops) if request.options.show_stops else ()
     points=[p for path in request.paths for p in path]
-    if request.options.show_stops:points.extend(s.position for s in request.stops)
+    points.extend(station_positions)
     if request.options.show_depot_names:points.extend(d.position for d in request.depots)
     xmin,xmax=min(p[0] for p in points),max(p[0] for p in points)
     zmin,zmax=min(p[2] for p in points),max(p[2] for p in points)
@@ -378,7 +382,6 @@ def _prepare_scene(request,cancel=None):
                     Qt.PenStyle.SolidLine,Qt.PenCapStyle.FlatCap if casing else Qt.PenCapStyle.RoundCap,
                     Qt.PenJoinStyle.RoundJoin)
                 shapes.append(_Shape(p,pen))
-    effective=request.metrics.effective_direction
     operating=operating_paths(request.route,effective)
     distinguish=(effective=='whole' and request.route.direction.kind=='roundtrip'
         and request.route.direction.terminal_index is not None and request.route.leg_paths)
@@ -386,8 +389,6 @@ def _prepare_scene(request,cancel=None):
              (operating_paths(request.route,'up'),True,False)] if distinguish else [(operating,False,False)])
     if request.options.include_deadhead:
         groups.append((request.paths[len(operating):],True,True))
-    def key(saved):return min(tuple(saved),tuple(reversed(saved)))
-    shared=(set(map(key,groups[0][0]))&set(map(key,groups[1][0]))) if distinguish else set()
     route_paths=[]
     for saved_paths,dashed,deadhead in groups:
         phase=0.
@@ -395,19 +396,6 @@ def _prepare_scene(request,cancel=None):
             p=path(saved)
             if p is None:continue
             length=p.length()
-            if not deadhead and key(saved) in shared:
-                # Offset the display strokes of an identical saved path, as in
-                # the main map. Stored geometry remains untouched.
-                offset=3. if dashed else -3.
-                if tuple(saved)!=key(saved):offset=-offset
-                points=[project(point) for point in saved];shifted=QPainterPath()
-                for i,point in enumerate(points):
-                    a,b=points[max(0,i-1)],points[min(len(points)-1,i+1)]
-                    dx,dy=b.x()-a.x(),b.y()-a.y();norm=hypot(dx,dy)
-                    point=point+QPointF(-dy/norm*offset,dx/norm*offset) if norm else point
-                    if i:shifted.lineTo(point)
-                    else:shifted.moveTo(point)
-                p=shifted
             route_paths.append((p,dashed,deadhead,phase))
             phase+=length
     # Complete all casings before route bodies, so saved segment joints remain continuous.
@@ -421,7 +409,7 @@ def _prepare_scene(request,cancel=None):
                 dash,gap=(6.,5.) if deadhead else (14.,8.)
                 pen.setDashPattern([dash/width,gap/width]);pen.setDashOffset(phase/width)
             shapes.append(_Shape(p,pen))
-    stations=tuple(project(s.position) for s in request.stops) if request.options.show_stops else ()
+    stations=tuple(project(position) for position in station_positions)
     depots=tuple((d.name,project(d.position)) for d in request.depots) if request.options.show_depot_names else ()
     return _Scene(request,layout,tuple(shapes),stations,depots,bg,map_bg,fg,muted,
         '#365168' if night else '#E0E0E0',brand or muted,line,logo,status,

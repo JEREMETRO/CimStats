@@ -9,7 +9,7 @@ import re
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QColor,QPixmap,QIcon
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QFrame, QHBoxLayout, QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QFrame, QHBoxLayout, QListWidgetItem, QSizePolicy, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, PushButton, TransparentPushButton
 
 from line_schedule import TICKS_PER_SECOND
@@ -128,6 +128,7 @@ class _RouteList(QWidget):
     def __init__(self, checked=True, parent=None, *, persistent=False):
         super().__init__(parent)
         self._checked = checked;self._persistent=persistent;self._routes = []; self._selected = set(); self._duplicate_companies = set()
+        self._indicator_mouse_action = False
         self._sort_by = 'name'; self._sort_desc = False
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(6)
         self.search = _style_control(LineEdit()); self.search.setPlaceholderText('搜索线路'); self.search.setClearButtonEnabled(True)
@@ -152,6 +153,9 @@ class _RouteList(QWidget):
         self.search.textChanged.connect(self._searched)
         self.search.returnPressed.connect(self._submit)
         self.search.installEventFilter(self)
+        if checked:
+            self.line_list.installEventFilter(self)
+            self.line_list.viewport().installEventFilter(self)
         self.line_list.itemChanged.connect(self._item_changed)
         self.line_list.itemClicked.connect(self._activate)
         self.line_list.itemActivated.connect(self._activate)
@@ -162,6 +166,22 @@ class _RouteList(QWidget):
         if not self._checked:self.line_list.show()
 
     def eventFilter(self,watched,event):
+        if self._checked:
+            if watched is self.line_list.viewport() and event.type() in (
+                    QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                    QEvent.Type.MouseButtonDblClick):
+                self._indicator_mouse_action = False
+                point = event.position().toPoint()
+                item = self.line_list.itemAt(point)
+                if event.button() == Qt.MouseButton.LeftButton and item is not None:
+                    option = QStyleOptionViewItem(); option.initFrom(self.line_list)
+                    self.line_list.itemDelegate().initStyleOption(option, self.line_list.indexFromItem(item))
+                    option.rect = self.line_list.visualItemRect(item)
+                    indicator = self.line_list.style().subElementRect(
+                        QStyle.SubElement.SE_ItemViewItemCheckIndicator, option, self.line_list)
+                    self._indicator_mouse_action = indicator.contains(point)
+            elif watched in (self.search, self.line_list) and event.type() == QEvent.Type.KeyPress:
+                self._indicator_mouse_action = False
         if watched is self.search and not self._checked and event.type()==QEvent.Type.FocusIn:
             if event.reason() in (Qt.FocusReason.MouseFocusReason,Qt.FocusReason.TabFocusReason,Qt.FocusReason.BacktabFocusReason):
                 self.line_list.show()
@@ -290,6 +310,11 @@ class _RouteList(QWidget):
         if not item.flags()&Qt.ItemFlag.ItemIsEnabled:return
         identity=item.data(Qt.ItemDataRole.UserRole)
         if self._checked:
+            # Qt already toggles the indicator; only a row/label activation
+            # should add a selection after itemChanged has handled that toggle.
+            if self._indicator_mouse_action:
+                self._indicator_mouse_action = False
+                return
             if identity not in self._selected:
                 selected=self._selected|{identity};self.set_selection(selected);self.changed.emit(set(selected))
         else:

@@ -1,8 +1,8 @@
 # CimStats 构建与发布
 
-当前正式版为 **0.2.0**，下载见 [0.2.0 Release](https://github.com/JEREMETRO/CimStats/releases/tag/v0.2.0)。更新与未修复的已知问题记录在[版本记录](../CHANGELOG.md)，发布说明不得将已知问题列为已修复。
+当前正式版为 **0.2.1**，下载见 [0.2.1 Release](https://github.com/JEREMETRO/CimStats/releases/tag/v0.2.1)。更新与未修复的已知问题记录在[版本记录](../CHANGELOG.md)，发布说明不得将已知问题列为已修复。
 
-根目录 `VERSION` 统一驱动关于页面、EXE 文件／产品版本及包名。0.2.0 发布说明以 0.1.3 为对照，重点介绍新增地图页面及单线、线网、规划功能。三项已知问题的功能路径、操作与现象见[版本记录](../CHANGELOG.md#已知问题)。
+根目录 `VERSION` 统一驱动关于页面、EXE 文件／产品版本及包名。0.2.1 发布说明以 0.2.0 为对照，介绍城市同期、单线成品导出、矢量地图及交互修复。已知问题的功能路径、操作与现象见[版本记录](../CHANGELOG.md#已知问题)。
 
 ## 构建单文件 EXE
 
