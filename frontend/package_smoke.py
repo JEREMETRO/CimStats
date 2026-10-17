@@ -105,9 +105,13 @@ def main(launcher: Path, argv):
                 (args.output / 'failure.txt').write_text(traceback.format_exc(), encoding='utf-8')
                 code = 1
             window.statistics_page.stop_workers()
-            window.close()
             from PySide6.QtWidgets import QApplication
-            QApplication.instance().exit(code)
+            def finish():
+                if window.close():
+                    QApplication.instance().exit(code)
+                else:
+                    QTimer.singleShot(30, finish)
+            finish()
 
         QTimer.singleShot(0, begin)
         return window
@@ -687,6 +691,13 @@ def _exercise_city_period_inputs(win, page, settle, wait_until, capture):
     return evidence
 
 
+def _company_comparison_evidence(page):
+    available = len(page.companies) >= 2
+    assert page.analysis_mode_control._buttons['companies'].isEnabled() == available
+    assert page.network_mode_control._buttons['companies'].isEnabled() == available
+    return dict(company_count=len(page.companies), comparison_available=available)
+
+
 def _exercise(win, desktop_app, args):
     from dataclasses import replace
     from PySide6.QtCore import QEventLoop, QPoint, QTimer, Qt
@@ -787,8 +798,7 @@ def _exercise(win, desktop_app, args):
         win.on_completed(data)
         wait_until(lambda: not win._awaiting_dashboards)
     page = win.statistics_page
-    assert not page.analysis_mode_control._buttons['companies'].isEnabled()
-    assert not page.network_mode_control._buttons['companies'].isEnabled()
+    company_comparison = _company_comparison_evidence(page)
     for width, height in ((960, 680), (1600, 900)):
         _resize_for_workarea(win, width, height)
         for index, label in ((0, 'home'), (2, 'lines'), (3, 'stats')):
@@ -1198,6 +1208,7 @@ def _exercise(win, desktop_app, args):
               'current_demand':str(demand.value), 'raw_save':str(args.save) if args.save else None,
               'raw_save_sha256_unchanged':digest, 'synthetic_tooltip_style_probe':True,
               'comparison_bars':bar_evidence, 'exported_workbooks':workbooks, 'cases':records}
+    report['company_comparison'] = company_comparison
     report['home_structure'] = home_structure
     report['map'] = {'schema': map_page.query.snapshot.schema_version,
                      'route_id': route.id, 'single_facts': map_facts,

@@ -169,3 +169,16 @@ def test_smoke_city_period_records_current_real_snapshot_and_resets_mode(smoke_w
     assert len({tuple(item['window']) for item in evidence})==1
     assert len(captures)==4
     assert window.statistics_page.city_mode_control.currentKey()=='default'
+
+
+@pytest.mark.parametrize('company_count', [1, 2])
+def test_smoke_comparison_availability_uses_actual_company_count(smoke_window, company_count):
+    from package_smoke import _company_comparison_evidence
+    window,_=smoke_window
+    session=dict(window.data)
+    session['companies']=[{'公司标识':'owner','公司名称':'公司'}]
+    if company_count==2:
+        session['companies'].append({'公司标识':'other','公司名称':'另一家公司'})
+    window.statistics_page.set_session(session)
+    evidence=_company_comparison_evidence(window.statistics_page)
+    assert evidence==dict(company_count=company_count,comparison_available=company_count>=2)
