@@ -32,8 +32,8 @@ def test_overlapping_native_templates_merge_only_their_actual_windows():
 
 
 def test_exact_saved_weekdays_and_cross_midnight_are_not_relabelled_as_workdays():
-    assert summary((table(2,23,25),))=='周一23:00-次日01:00，周二、周三、周四、周五、周六、周日停运'
-    assert summary((table(-2147483647,6,8),))=='周一、周二、周三、周四、周五、周六停运，周日06:00-08:00'
+    assert summary((table(2,23,25),))=='周一23:00-次日01:00，周二至周日停运'
+    assert summary((table(-2147483647,6,8),))=='周一至周六停运，周日06:00-08:00'
 
 
 @pytest.mark.parametrize('tables,flags,want',[
@@ -61,3 +61,37 @@ def test_saved_session_template_metadata_is_used_without_presentation_group_dupl
     assert operating_time_text(session,1)=='06:00-22:00'
     line['原始字段'].pop('m_active')
     assert operating_time_text(session,1)=='—'
+
+
+def test_export_reuses_saved_query_segments_instead_of_native_template_bounds():
+    from map_service_time import operating_time_text
+    from line_schedule import prepare_schedule
+    def saved(times):
+        return prepare_schedule([{'time':time} for time in times])
+    # The real 963X pattern has two rush-hour windows. A native template can
+    # span the entire day, so its endpoints cannot supply the query summary.
+    weekday=saved(('06:55','08:00','09:30','16:25','18:00','19:30'))
+    friday=saved(('06:55','08:00','09:30','16:25','18:00','19:30','20:55'))
+    empty=saved(())
+    line={'对象ID':1,'日组':['周一至周四','周五','周六','周日'],
+          '时刻表':{'周一至周四':weekday,'周五':friday,'周六':empty,'周日':empty}}
+    route=MapRoute(1,'963X',963,'a','A','bus',(),(),service=RouteService(True,True,(table(127,0,23),)))
+    assert operating_time_text({'lines':[line]},1,route=route)==(
+        '周一至周四06:55-09:30、16:25-19:30，周五06:55-09:30、16:25-20:55，周末停运')
+
+
+def test_saved_query_all_day_and_shared_days_collapse_using_saved_values():
+    from map_service_time import operating_time_text
+    from line_schedule import prepare_schedule
+    schedule=prepare_schedule([{'time':f'{hour:02d}:00'} for hour in range(24)])
+    line={'对象ID':1,'时刻表':{day:schedule for day in ('周一至周四','周五','周六','周日')}}
+    assert operating_time_text({'lines':[line]},1)=='00:00-24:00'
+
+
+def test_partial_saved_query_schedule_does_not_fall_back_to_another_time_source():
+    from map_service_time import operating_time_text
+    from line_schedule import prepare_schedule
+    schedule=prepare_schedule([{'time':'06:00'},{'time':'invalid'}])
+    line={'对象ID':1,'时刻表':{day:schedule for day in ('周一至周四','周五','周六','周日')}}
+    route=MapRoute(1,'X',1,'a','A','bus',(),(),service=RouteService(True,True,(table(127,6,22),)))
+    assert operating_time_text({'lines':[line]},1,route=route)=='—'

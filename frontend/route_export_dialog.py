@@ -228,7 +228,8 @@ class RouteExportDialog(FluentDialog):
             self._timer.start()
 
     def sizeHint(self):
-        return QSize(1260, 928)
+        # Settings scroll independently; their full height must not size the window.
+        return QSize(1040, 720)
 
     def showEvent(self, event):
         if not self._initial_content_sized:

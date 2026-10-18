@@ -91,6 +91,56 @@ def test_small_window_keeps_fixed_actions_and_scrolls_settings(dialog):
     assert dialog.preview.width() < 600
 
 
+@pytest.mark.parametrize('workarea', [(1600, 1000), (960, 680)])
+def test_initial_dialog_is_compact_and_fits_available_workarea(dialog, monkeypatch, workarea):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QScreen
+    from PySide6.QtWidgets import QApplication
+    area = QRect(0, 0, *workarea)
+    monkeypatch.setattr(QScreen, 'availableGeometry', lambda _: area)
+    dialog.show()
+    QApplication.processEvents()
+    # Opening the settings must not create a nearly full-height desktop window.
+    assert 900 <= dialog.width() <= min(1100, area.width() - 32)
+    assert 600 <= dialog.height() <= min(760, area.height() - 32)
+    assert area.contains(dialog.geometry())
+    assert dialog.pages.widget(0).verticalScrollBar().maximum() > 0
+    assert dialog.preview.width() >= 500
+
+
+def test_compact_dialog_scrolls_to_last_settings_and_data_without_moving_actions(dialog):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    dialog._initial_content_sized = True
+    dialog.resize(960, 680)
+    dialog.show()
+    QTest.qWait(30)
+    action_rect = dialog.action_bar.geometry()
+    settings = dialog.pages.widget(0)
+    settings.ensureWidgetVisible(dialog.reset_colors)
+    QTest.qWait(30)
+    assert settings.verticalScrollBar().value() > 0
+    assert settings.viewport().rect().contains(dialog.reset_colors.mapTo(settings.viewport(), QPoint()))
+    assert settings.viewport().rect().contains(
+        dialog.reset_colors.mapTo(settings.viewport(), dialog.reset_colors.rect().bottomRight()))
+    dialog.color_edits[0].setText('#123456')
+    dialog.color_edits[0].textEdited.emit('#123456')
+    QTest.mouseClick(dialog.reset_colors, Qt.MouseButton.LeftButton)
+    assert dialog.options().brand_override is None
+    QTest.mouseClick(dialog.tabs.items['data'], Qt.MouseButton.LeftButton)
+    data = dialog.pages.widget(1)
+    last_field = next(reversed(dialog.field_checks.values()))
+    data.ensureWidgetVisible(last_field)
+    QTest.qWait(30)
+    assert data.viewport().rect().contains(last_field.mapTo(data.viewport(), last_field.rect().bottomRight()))
+    before = last_field.isChecked()
+    QTest.mouseClick(last_field, Qt.MouseButton.LeftButton, pos=QPoint(10, last_field.height() // 2))
+    assert last_field.isChecked() != before
+    assert dialog.action_bar.geometry() == action_rect
+    for button in (dialog.cancel_button, dialog.export_button):
+        assert dialog.rect().contains(button.mapTo(dialog, button.rect().bottomRight()))
+
+
 def test_tab_clicks_repeatedly_return_to_settings_with_matching_selection(dialog):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest

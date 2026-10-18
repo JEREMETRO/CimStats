@@ -47,6 +47,35 @@ def test_preview_dimensions_preserve_paper_aspect(qt_application):
     assert not image.isNull()
 
 
+def test_operating_groups_wrap_without_trailing_or_leading_comma(qt_application):
+    from route_export_render import _operating_time_display, _font, TextItem
+    from PySide6.QtGui import QFontMetricsF
+    first='工作日06:00-22:00';second='周末08:00-21:00'
+    width=max(QFontMetricsF(_font(TextItem('',(),22,500,'value'))).horizontalAdvance(v)
+              for v in (first,second))+1
+    assert _operating_time_display(first+'，'+second,width,22)==first+'\n'+second
+    assert _operating_time_display(first+'，'+second,width*3,22)==first+'，'+second
+
+
+def test_operating_wrap_keeps_nonconsecutive_weekday_labels_with_their_times(qt_application):
+    from route_export_render import _operating_time_display, _font, TextItem
+    from PySide6.QtGui import QFontMetricsF
+    first='周一、周三06:00-09:00';second='16:00-20:00'
+    width=QFontMetricsF(_font(TextItem('',(),22,500,'value'))).horizontalAdvance(first)+1
+    assert _operating_time_display(first+'、'+second,width,22)==first+'\n'+second
+
+
+def test_operating_wrap_prefers_a_complete_weekday_group(qt_application):
+    from route_export_render import _operating_time_display, _font, TextItem
+    from PySide6.QtGui import QFontMetricsF
+    first='周一至周四06:55-09:30、16:25-19:30'
+    second='周五06:55-09:30、16:25-20:55'
+    metrics=QFontMetricsF(_font(TextItem('',(),22,500,'value')))
+    width=metrics.horizontalAdvance(first+'，'+second.split('、')[0])+1
+    assert width<metrics.horizontalAdvance(first+'，'+second)
+    assert _operating_time_display(first+'，'+second,width,22)==first+'\n'+second
+
+
 @pytest.mark.parametrize('aspect,orientation',[(a,o) for a in ('16:9','16:10','3:2','A4')
                                              for o in ('landscape','portrait')])
 def test_native_operating_time_is_complete_in_all_fields_layout(qt_application,aspect,orientation):

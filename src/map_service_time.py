@@ -1,4 +1,4 @@
-"""Native timetable calendar queries, independent of display heuristics.
+"""Native calendar filtering and the saved query's operating-time summary.
 
 Day bit 0 is Sunday. Serialized departure ticks stay unfolded across midnight;
 their running-day mask belongs to the template's starting calendar day.
@@ -152,16 +152,73 @@ def route_operates(session, route_id, start: datetime, end: datetime | None = No
     return True if any(r is True for r in results) else None
 
 
-def operating_time_text(session, route_id, *, route=None):
-    """Saved weekly windows, grouped only when every listed day agrees.
+_QUERY_DAYS = {'周一至周四': (1,2,3,4), '周一': (1,), '周二': (2,),
+               '周三': (3,), '周四': (4,), '周五': (5,), '周六': (6,), '周日': (0,)}
 
-    Native table boundaries preserve shutdown gaps even below the presentation
-    schedule's three-hour threshold. Use actual departures, not a template's
-    requested end or a last vehicle's arrival time. Overnight spans stay on
-    their saved starting weekday and explicitly label the following day.
+
+def _group_operating_times(values):
+    """Merge equal summaries while retaining complete weekday ranges."""
+    if len(set(values)) == 1:
+        return values[0]
+    groups = {}
+    for day in (1,2,3,4,5,6,0):
+        groups.setdefault(values[day], []).append(day)
+    weekdays = ('周日','周一','周二','周三','周四','周五','周六')
+    def label(days):
+        if days == [1,2,3,4,5]:return '工作日'
+        if days == [6,0]:return '周末'
+        runs = []
+        for day in days:
+            if runs and (runs[-1][-1]+1) % 7 == day:
+                runs[-1].append(day)
+            else:runs.append([day])
+        return '、'.join(weekdays[run[0]] if len(run)==1 else
+                        weekdays[run[0]]+'至'+weekdays[run[-1]] for run in runs)
+    return '，'.join(label(days)+value for value,days in groups.items())
+
+
+def _saved_query_operating_time(line):
+    """Read the same prepared segments consumed by SchedulePanel.set_line.
+
+    None means this is a legacy report without prepared query groups. A
+    present but incomplete query remains unknown; never replace it with
+    independently calculated native-template endpoints.
+    """
+    schedules = (line or {}).get('时刻表')
+    if not isinstance(schedules, dict) or not any(day in schedules for day in _QUERY_DAYS):
+        return None
+    if line.get('运行日未知班次'):
+        return '—'
+    values = [None]*7
+    for group in line.get('日组', schedules):
+        if group not in _QUERY_DAYS:continue
+        schedule = schedules.get(group)
+        if not isinstance(schedule, dict) or schedule.get('data_complete') is not True:
+            return '—'
+        segments = schedule.get('segments')
+        if not isinstance(segments, (list,tuple)):
+            return '—'
+        if any(not isinstance(segment, dict) or not segment.get('text') for segment in segments):
+            return '—'
+        value = '、'.join(segment['text'].replace('–','-') for segment in segments)
+        if not value:
+            if schedule.get('count') != 0:return '—'
+            value = '停运'
+        for day in _QUERY_DAYS[group]:values[day] = value
+    return '—' if any(value is None for value in values) else _group_operating_times(values)
+
+
+def operating_time_text(session, route_id, *, route=None):
+    """Use the saved query summary, including its circular service segments.
+
+    Native metadata is a compatibility fallback for reports lacking prepared
+    query groups. Current exports reuse the query's already stored result.
     """
     if route is not None and route.id != route_id:
         return '—'
+    saved = _saved_query_operating_time(session_line(session, route_id))
+    if saved is not None:
+        return saved
     service = route.service if route is not None else service_from_session(session, route_id)
     # Old map snapshots may lack native service entirely; the shared legacy
     # reader can recover it only when the session retained complete metadata.
@@ -208,12 +265,4 @@ def operating_time_text(session, route_id, *, route=None):
         return '、'.join(f'{clock(a)}-{clock(b)}' for a,b in merged) or '停运'
 
     values=tuple(text(spans) for spans in windows)
-    if len(set(values))==1:
-        return values[0]
-    groups={}
-    for day in (1,2,3,4,5,6,0):
-        groups.setdefault(values[day],[]).append(day)
-    labels={frozenset((1,2,3,4,5)):'工作日',frozenset((6,0)):'周末'}
-    weekdays=('周日','周一','周二','周三','周四','周五','周六')
-    return '，'.join(labels.get(frozenset(days),'、'.join(weekdays[d] for d in days))+value
-                    for value,days in groups.items())
+    return _group_operating_times(values)

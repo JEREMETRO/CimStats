@@ -82,14 +82,20 @@ def _emit_text(items,value,x,y,width,size,role='label',weight=400,align='left',d
 
 
 def _operating_time_display(value,width,size):
-    """Wrap between saved periods, keeping a clock range on the same line."""
+    """Wrap whole periods; a line break replaces its separating punctuation."""
     metrics=QFontMetricsF(_font(TextItem(value,(),size,500,'value')))
     lines=[];line=''
-    for part in re.findall(r'[^，、]+[，、]?',value):
-        candidate=line+part
-        if line and metrics.horizontalAdvance(candidate)>width:
-            lines.append(line);line=part
-        else:line=candidate
+    # A weekday label can itself contain 、. Only time-range separators are
+    # wrap opportunities, so 周一、周三 remains attached to its first period.
+    for group in value.split('，'):
+        parts=([group] if metrics.horizontalAdvance(group)<=width else
+               re.split(r'(?<=\d{2}:\d{2})、',group))
+        for index,part in enumerate(parts):
+            separator='，' if index==0 else '、'
+            candidate=line+(separator if line else '')+part
+            if line and metrics.horizontalAdvance(candidate)>width:
+                lines.append(line);line=part
+            else:line=candidate
     if line:lines.append(line)
     return '\n'.join(lines)
 
