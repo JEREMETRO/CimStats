@@ -44,7 +44,7 @@ def probe_script():
 
 
 PROJECT = runtime_root()
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 SOCIAL_GROUPS = ('BlueCollar','WhiteCollar','Student','BusinessPeople','Pensioner','Tourist')
 
 
@@ -682,7 +682,8 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
                                tuple(s.get('arrival_offset_ticks') for s in operational),
                                depot_leg_paths=tuple(depot_leg_paths),depot_id=depot['id'] if depot else None,
                                depot_name=depot.get('name','') if depot else '',
-                               depot_position=tuple(depot['position']) if depot and depot.get('position') is not None else None))
+                               depot_position=tuple(depot['position']) if depot and depot.get('position') is not None else None,
+                               leg_duration_ticks=tuple(line.get('leg_duration_ticks',()))[1:-1] if has_depot else ()))
     if direction_jobs:
         if direction_worker_dir is None:
             directions={index:infer_direction(points,legs,names,lambda:_check(cancelled))
@@ -725,6 +726,7 @@ def _decode_snapshot(d):
                                       'leg_map_length_units':tuple(r.get('leg_map_length_units',())),
                                       'depot_map_length_units':tuple(r.get('depot_map_length_units',())),
                                       'stop_arrival_offsets_ticks':tuple(r.get('stop_arrival_offsets_ticks',())),
+                                      'leg_duration_ticks':tuple(r.get('leg_duration_ticks',())),
                                       'depot_leg_paths':tuple(paths(p) for p in r.get('depot_leg_paths',())),
                                       'depot_position':tuple(r['depot_position']) if r.get('depot_position') is not None else None})))
     return MapSnapshot(**(d|{'roads':roads,'buildings':buildings,'stops':stops,'routes':tuple(routes),
@@ -975,6 +977,10 @@ def _read_catalog(bundles):
         if generated is not None and generated.path_id:
             record['outline']=list(vars(generated.read()).get('m_collisionArea') or [])
         if class_name=='StopObject':
+            waypoint=values.get('m_waypoint')
+            # Unity serializes this Boolean as UInt8; UnityPy returns int 0/1.
+            record['waypoint']=(bool(waypoint) if type(waypoint) is int and waypoint in (0,1)
+                                else waypoint if type(waypoint) is bool else None)
             record['catchment_area']=values.get('m_catchmentArea')
             record['type_ids']=[str(vars(p.read()).get('m_id') or '') if p.path_id else None for p in values.get('m_types',[])]
             public=any(vars(p.read()).get('m_publicTransport') for p in values.get('m_types',[]) if p.path_id)
@@ -1054,6 +1060,8 @@ def _install_catalog(e,catalog):
         typ=e.ASM.GetType(r['class_name'])
         if typ is None or not typ.IsSubclassOf(base): continue
         prefab=new(typ); typ.GetField('m_id',flags).SetValue(prefab,r['id'])
+        if r['class_name']=='StopObject' and type(r.get('waypoint')) is bool:
+            typ.GetField('m_waypoint',flags).SetValue(prefab,e.System.Boolean(r['waypoint']))
         for name,key in (('m_homeCount','homes'),('m_workPlaceCount','work'),('m_recreationValue','recreation'),('m_areaType','area_type')):
             value=r.get(key); metadata=typ.GetField(name,flags)
             if metadata is not None and value is not None:
@@ -1317,6 +1325,11 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
     print('history_names:'+json.dumps(sorted({str(field(h,'m_name')) for h in histories}),ensure_ascii=True),flush=True)
     if line is not None:
         print('line_fields:'+','.join(str(f.Name) for f in line.GetType().GetFields(e.FLAGS)),flush=True)
+    frame_time_span = None
+    # Catalog-created CLR objects have default fields. Only a confirmed
+    # waypoint flag is authoritative; old catalogs fall back to saved counts.
+    waypoint_flags={str(record['id']):record.get('waypoint') for record in catalog.values()
+                    if record.get('class_name')=='StopObject'}
     while line is not None:
         oid=identity(line)
         if oid in seen: raise ValueError('Line linked list cycle')
@@ -1325,7 +1338,8 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
         owner_index=next((i for i,p in enumerate(players) if owner is not None and e.System.Object.ReferenceEquals(owner,field(p,'m_companyData'))),None)
         company_id=str(field(players[owner_index],'m_id') or '') if owner_index is not None else ''
         legs=[]; line_stops=[]
-        for i,stop in enumerate(array(field(line,'m_stops'))):
+        runtime_stops = array(field(line,'m_stops'))
+        for i,stop in enumerate(runtime_stops):
             actual=field(stop,'m_stop')
             line_stops.append(dict(id=identity(actual),name=str(field(actual,'m_name') or ''),
                                    position=vector(field(actual,'m_position')),
@@ -1339,9 +1353,18 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
                                        min_lane=int(field(segment,'m_minLane') or 0),max_lane=int(field(segment,'m_maxLane') or 0)))
             legs.append(dict(index=i,dirty=bool(field(stop,'m_pathDirty')),roads=references,
                              map_length_units=saved_leg_map_length(field(stop,'m_path'),field,array)))
+        offsets = [stop['arrival_offset_ticks'] for stop in line_stops[1:]]
+        calculated_times = ()
+        if len(offsets)>1 and (any(type(value) is not int or value<0 for value in offsets)
+                or any(a>=b for a,b in zip(offsets,offsets[1:]))):
+            if frame_time_span is None:
+                frame_time_span = e.simulation_frame_time_span(root)
+            calculated_times = e.recompute_runtime_leg_duration_ticks(
+                line,e.line_mode(line),frame_time_span,stops=runtime_stops,waypoint_flags=waypoint_flags)
         lines.append(dict(id=oid,name=str(field(line,'m_name') or ''),number=int(field(line,'m_number') or 0),
                           mode=str(field(field(line,'m_type'),'m_id') or ''),company=str(field(owner,'m_name') or ''),
                           company_id=company_id,company_index=owner_index,stops=line_stops,legs=legs,
+                          leg_duration_ticks=calculated_times,
                           previous_day_passengers=None,passenger_date=None,
                           passenger_diagnostic='no_serialized_previous_day_line_passengers',service=service_record(line)))
         line=field(line,'m_nextLine')

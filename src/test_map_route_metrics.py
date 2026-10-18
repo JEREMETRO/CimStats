@@ -71,6 +71,50 @@ def test_old_cache_never_uses_drawn_geometry_or_whole_fallback_for_single_direct
     assert selected.length_km is None and selected.duration_minutes is None
 
 
+def test_zero_saved_times_use_complete_game_calculated_legs_without_halving_whole():
+    r=route(stop_arrival_offsets_ticks=(0,0,0,0),leg_duration_ticks=(7*TICKS,19*TICKS,31*TICKS))
+    down=metrics(r,'down',whole_duration_minutes=90)
+    up=metrics(r,'up',whole_duration_minutes=90)
+    assert down.duration_minutes==26 and up.duration_minutes==31
+    assert down.speed_kmh==pytest.approx(.6/26*60)
+    assert up.speed_kmh==pytest.approx(.6/31*60)
+    assert 'approved_arrival_time_recomputed' in down.diagnostics
+    assert metrics(r,'down',True).duration_minutes==26
+    assert r.stop_arrival_offsets_ticks==(0,0,0,0)
+
+
+def test_valid_saved_times_take_priority_over_recomputed_legs():
+    r=route(leg_duration_ticks=(2*TICKS,3*TICKS,4*TICKS))
+    assert metrics(r,'down').duration_minutes==32
+    assert metrics(r,'up').duration_minutes==26
+    assert 'approved_arrival_time_recomputed' not in metrics(r,'up').diagnostics
+
+
+def test_a_flat_saved_interval_does_not_replace_an_otherwise_valid_direction_time():
+    # Arrival caches can repeat at zero-time calls. Road-count mileage alone
+    # does not prove that interval invalid, so the saved total remains primary.
+    r=route(stop_arrival_offsets_ticks=(0,0,32*TICKS,58*TICKS),
+            leg_duration_ticks=(7*TICKS,19*TICKS,31*TICKS))
+    assert metrics(r,'down').duration_minutes==32
+    assert 'approved_arrival_time_recomputed' not in metrics(r,'down').diagnostics
+
+
+@pytest.mark.parametrize('offsets',[(),(0,None,32*TICKS,58*TICKS),(0,40*TICKS,32*TICKS,58*TICKS)])
+def test_invalid_saved_direction_can_use_only_its_complete_calculated_legs(offsets):
+    r=route(stop_arrival_offsets_ticks=offsets,leg_duration_ticks=(8*TICKS,13*TICKS,None))
+    assert metrics(r,'down').duration_minutes==21
+    if not offsets:
+        assert metrics(r,'up').duration_minutes is None
+    else:
+        assert metrics(r,'up').duration_minutes==26
+
+
+@pytest.mark.parametrize('parts',[(),(TICKS,),(TICKS,None,TICKS),(TICKS,-1,TICKS),(TICKS,1.5,TICKS),(0,0,TICKS)])
+def test_incomplete_or_zero_calculated_time_stays_unknown(parts):
+    r=route(stop_arrival_offsets_ticks=(0,0,0,0),leg_duration_ticks=parts)
+    assert metrics(r,'down',whole_duration_minutes=80).duration_minutes is None
+
+
 @pytest.mark.parametrize('kind', ['circular','one_way','ring','oneway'])
 def test_nonsplit_routes_keep_effective_whole_and_full_line_time(kind):
     value=metrics(route(direction=RouteDirection(kind)),'up',whole_duration_minutes=65)
@@ -126,11 +170,13 @@ def test_extraction_preserves_stop_occurrence_offsets_depot_partition_and_cache_
            for index,(i,offset) in enumerate(((99,0),(1,0),(2,12),(1,32)))]
     raw=dict(roads={},buildings=[dict(id=99,kind='DepotData',position=[0,0,0])],
              lines=[dict(id=1,stops=stops,legs=[dict(roads=[],map_length_units=v)
-                                              for v in (10,100,200,20)])])
+                                              for v in (10,100,200,20)],
+                         leg_duration_ticks=(2*TICKS,8*TICKS,17*TICKS,3*TICKS))])
     snapshot=snapshot_from_data(raw)
     r=snapshot.routes[0]
     assert r.stop_ids == (1,2,1)
     assert r.stop_arrival_offsets_ticks == (0,12*TICKS,32*TICKS)
     assert r.leg_map_length_units == (100,200) and r.depot_map_length_units == (10,20)
+    assert r.leg_duration_ticks == (8*TICKS,17*TICKS)
     restored=_decode_snapshot(json.loads(json.dumps(asdict(snapshot))))
-    assert restored == snapshot and restored.schema_version == SCHEMA_VERSION == 12
+    assert restored == snapshot and restored.schema_version == SCHEMA_VERSION == 13

@@ -101,6 +101,16 @@ def selected_route_metrics(route: MapRoute, direction: str = 'whole', include_de
             if difference > 0 or (difference == 0 and operating == 0):
                 ticks = difference
                 duration = ticks / TICKS_PER_MINUTE
+        if duration is None:
+            calculated = route.leg_duration_ticks
+            parts = ([calculated[i] for i in indices]
+                     if len(calculated) == expected_legs else [])
+            if parts and all(type(value) is int and value >= 0 for value in parts):
+                difference = sum(parts)
+                if difference > 0 or (difference == 0 and operating == 0):
+                    ticks = difference
+                    duration = ticks / TICKS_PER_MINUTE
+                    issues.append('approved_arrival_time_recomputed')
     if duration is None:
         issues.append('approved_arrival_time_missing')
     # Business-stop offsets exclude depot travel. The display switch cannot

@@ -190,6 +190,9 @@ class MapRoute:
     depot_id: int | None = None
     depot_name: str = ''
     depot_position: Point | None = None
+    # Game-formula operating-leg times, independent of the saved arrival cache.
+    # Empty/None entries mean unavailable, never a proportional full-line split.
+    leg_duration_ticks: tuple[int | None, ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class MapSnapshot:
@@ -201,7 +204,7 @@ class MapSnapshot:
     asset_signature: str = ''
     diagnostics: tuple[str, ...] = ()
     bounds: tuple[float, float, float, float] = (0., 0., 1., 1.)
-    schema_version: int = 12
+    schema_version: int = 13
     junctions: tuple[MapJunction, ...] = ()
 
 class MapModel:

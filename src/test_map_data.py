@@ -381,3 +381,16 @@ def test_native_capacity_missing_area_is_unknown_except_known_zero():
     from map_geometry import native_function_capacities
     rows=native_function_capacities(dict(homes=20,work=0,recreation=4),512,{})
     assert all(r['home'] is None and r['work']==0 and r['leisure'] is None for r in rows)
+@pytest.mark.parametrize('waypoint,expected',[(False,False),(True,True),(0,False),(1,True),(None,None),('False',None),(2,None)])
+def test_stop_asset_catalog_keeps_confirmed_waypoint_boolean(tmp_path,monkeypatch,waypoint,expected):
+    from types import SimpleNamespace
+    import UnityPy
+    from map_geometry import _read_catalog
+    (tmp_path/'stops.bundle').touch()
+    script=SimpleNamespace(read=lambda:SimpleNamespace(m_ClassName='StopObject'))
+    values=SimpleNamespace(m_id='test-stop',m_Script=script,m_waypoint=waypoint)
+    obj=SimpleNamespace(type=SimpleNamespace(name='MonoBehaviour'),read=lambda:values)
+    monkeypatch.setattr(UnityPy,'load',lambda *args:SimpleNamespace(objects=[obj]))
+    record=_read_catalog(tmp_path)['test-stop']
+    assert 'waypoint' in record
+    assert record['waypoint'] is expected

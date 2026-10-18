@@ -265,3 +265,19 @@ def test_managed_coverage_keeps_full_unsigned_identity(native):
     native.set(native.e.field(transport,'m_firstLine'),'m_objectID',4294967295)
     result=NativeCoverageQuery(native.e,root,catalog).query(native.vector(0))
     assert result.known and result.complete and result.route_ids==(4294967295,)
+
+
+@pytest.mark.parametrize('waypoint',[False,True])
+def test_restored_stop_prefab_preserves_native_waypoint_flag(native,waypoint):
+    from map_geometry import _install_catalog
+    e=native.e;flags=e.FLAGS|e.System.Reflection.BindingFlags.Static
+    typ=e.ASM.GetType('DataStoreManager')
+    singleton=typ.BaseType.GetField('s_instance',flags)
+    previous=singleton.GetValue(None)
+    try:
+        _install_catalog(e,{'test-stop':dict(id='test-stop',class_name='StopObject',outline=[],waypoint=waypoint)})
+        store=singleton.GetValue(None)
+        prefabs=typ.GetField('m_placeableObjects',flags).GetValue(store)
+        assert e.field(prefabs['test-stop'],'m_waypoint') is waypoint
+    finally:
+        singleton.SetValue(None,previous)

@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from parse_events import ProgressReporter
+from line_duration import vehicle_duration_ticks
 
 import clr
 import System
@@ -280,18 +281,95 @@ def timetable_needed_vehicles(line, duration):
     return max(buffer) if buffer else 0
 
 
-def can_stop_here_serialized(stop_data):
-    """Reproduce StopData.CanStopHere when Unity prefab references are absent.
+def can_stop_here_serialized(stop_data, *, waypoint_flags=None):
+    """Reproduce StopData.CanStopHere, preserving unknown prefab metadata.
 
-    v1.6.3 returns ``m_prefabObject.m_waypoint == null``.  A deserialized
-    multiplayer save does not bind the prefab object, but every real stop on a
-    LineData route has a positive m_lineCount; waypoint-only entries do not.
+    v1.6.3 returns ``!m_prefabObject.m_waypoint``; m_waypoint is a Boolean.
+    A supplied asset mapping is authoritative over synthesized prefab defaults.
+    Without confirmed prefab evidence, positive m_lineCount identifies real
+    route stops; zero identifies waypoint-only entries. Missing evidence is unknown.
     """
     prefab = field(stop_data, "m_prefabObject")
-    if prefab is not None:
+    if waypoint_flags is not None:
+        asset_id = str(field(prefab, 'm_id') or '') if prefab is not None else ''
+        waypoint = waypoint_flags.get(asset_id)
+        if type(waypoint) is bool:
+            return not waypoint
+    elif prefab is not None:
         waypoint = field(prefab, "m_waypoint")
-        return waypoint is None
-    return int(field(stop_data, "m_lineCount") or 0) > 0
+        return not waypoint if type(waypoint) is bool else None
+    count = field(stop_data, "m_lineCount")
+    if count is None:
+        return None
+    return int(count) > 0
+
+
+def simulation_frame_time_span(root):
+    """Use the save's simulation clock, with the existing runtime default."""
+    start = field(root, 'm_simulationStart')
+    now = field(root, 'm_simulationTime')
+    frame = int(field(root, 'm_simulationFrame') or 0)
+    if start is not None and now is not None and frame:
+        try:
+            return max(1, int(round((int(now.Ticks) - int(start.Ticks)) / frame)))
+        except Exception:
+            pass
+    return 350000
+
+
+def recompute_runtime_leg_duration_ticks(line, mode, frame_time_span, *, stops=None, waypoint_flags=None):
+    """Return native current->next timing, retaining unknowns and depot legs.
+
+    Dwell belongs to the source stop, as in LineData's saved offset update.
+    Unlike the full-line panel result, these segment ticks are not slot-rounded.
+    """
+    stops = array_values(field(line, 'm_stops')) if stops is None else stops
+    unknown = (None,) * len(stops)
+    parameters = VEHICLE_TYPE_PARAMS.get(mode)
+    if parameters is None or type(frame_time_span) is not int or frame_time_span <= 0 or len(stops) < 2:
+        return unknown
+    try:
+        calculator = next((method for method in line.GetType().GetMethods(FLAGS)
+                           if method.Name == 'CalculateSegmentLength'), None)
+    except Exception:
+        return unknown
+    if calculator is None:
+        return unknown
+    speed, stop_time = parameters
+    result = []
+    for index, current in enumerate(stops):
+        ticks = None
+        try:
+            source = field(current, 'm_stop')
+            target = field(stops[(index + 1) % len(stops)], 'm_stop')
+            if source is None or target is None or field(current, 'm_pathDirty') is not False:
+                result.append(None)
+                continue
+            path = field(current, 'm_path')
+            if path is not None:
+                count = path.Length if hasattr(path, 'Length') else len(path)
+                if count == 0:
+                    result.append(None)
+                    continue
+            else:
+                positions = (field(source, 'm_position'), field(target, 'm_position'))
+                if any(position is None or any(field(position, axis) is None for axis in ('x', 'y', 'z'))
+                       for position in positions):
+                    result.append(None)
+                    continue
+            stoppable = can_stop_here_serialized(source, waypoint_flags=waypoint_flags) if index > 0 else False
+            if stoppable is None:
+                result.append(None)
+                continue
+            value = calculator.Invoke(line, [System.Int32(index)])
+            distance = int(value)
+            if value is not None and not isinstance(value, bool) and distance == value and distance >= 0:
+                dwell = int(stoppable)
+                ticks = vehicle_duration_ticks(distance, speed, stop_time, dwell, frame_time_span)
+        except Exception:
+            pass
+        result.append(ticks)
+    return tuple(result)
 
 
 def derive_runtime_line_values(line, mode, frame_time_span):
@@ -362,9 +440,8 @@ def recompute_runtime_line_values(line, mode, frame_time_span):
     duration = 0
     for index in range(len(stops)):
         distance = duration_segment_distance(line, index)
-        duration += ((distance * 16) // speed) * frame_time_span
-        if index > 0 and can_stop_here_serialized(field(stops[index], "m_stop")):
-            duration += (stop_time * 60) * frame_time_span
+        dwell = int(bool(index > 0 and can_stop_here_serialized(field(stops[index], "m_stop"))))
+        duration += vehicle_duration_ticks(distance, speed, stop_time, dwell, frame_time_span)
     slot_ticks = 3_000_000_000  # five in-game minutes
     if duration > 0:
         duration = max(slot_ticks * 2, ((duration + slot_ticks - 1) // slot_ticks) * slot_ticks)
@@ -610,15 +687,7 @@ def main():
     root, stream_position = load_root()
     reporter.finish('deserialize')
     players, company_info_rows, company_type_rows = company_rows(root)
-    simulation_start = field(root, "m_simulationStart")
-    simulation_time = field(root, "m_simulationTime")
-    simulation_frame = int(field(root, "m_simulationFrame") or 0)
-    frame_time_span = 350000
-    if simulation_start is not None and simulation_time is not None and simulation_frame:
-        try:
-            frame_time_span = max(1, int(round((simulation_time - simulation_start).Ticks / simulation_frame)))
-        except Exception:
-            pass
+    frame_time_span = simulation_frame_time_span(root)
     company_by_player = {row["公司序号"]: row for row in company_info_rows}
     transport = field(root, "m_transportManagerData")
     # Count every owned vehicle in every depot, including vehicles currently
