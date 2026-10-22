@@ -122,3 +122,30 @@ def test_batched_annotations_match_released_scalar_pixels(qt_application):
                     finally:painter.end()
                     images.append(np.frombuffer(image.constBits(),dtype=np.uint8).copy())
                 assert np.array_equal(*images),(width,height,ratio,zoom,numbers,names)
+
+
+def test_metric_legend_font_setup_preserves_released_label_pixels(qt_application):
+    from map_canvas import MapCanvas, _FrameSurface
+    from map_model import MapRoute, MapStop, MapSnapshot
+    from map_vector import build_vector_map
+    from semantic_colors import MetricLegend
+    canvas=MapCanvas();canvas.resize(600,400)
+    font=canvas.font();font.setPixelSize(22);canvas.setFont(font)
+    route=MapRoute(1,'Central',1,'a','A','bus',(1,),
+                   (((-100.,0.,0.),(100.,0.,0.)),))
+    canvas.set_snapshot(MapSnapshot(routes=(route,),stops=(MapStop(1,'Central Station',(0.,0.,0.)),),
+                                    bounds=(-100.,-100.,100.,100.)))
+    canvas.set_options(legend_items=MetricLegend('passengers','2026-10-22','today'),legend_external=False)
+    surface=_FrameSurface(canvas);canvas.close()
+    surface.center=(0.,0.);surface.zoom=1.
+    prepared=build_vector_map(surface)
+    reference=AnnotationCache(surface,prepared);reference.label=MethodType(_scalar_label,reference)
+    candidate=AnnotationCache(surface,prepared)
+    images=[]
+    for draw,cache in ((_scalar_paint,reference),(paint_annotations,candidate)):
+        image=QImage(600,400,QImage.Format.Format_ARGB32_Premultiplied);image.fill(QColor('#f1f4f6'))
+        painter=QPainter(image)
+        try:draw(painter,surface,prepared,cache)
+        finally:painter.end()
+        images.append(image)
+    assert images[0]==images[1]

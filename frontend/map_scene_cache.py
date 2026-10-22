@@ -21,7 +21,7 @@ def option_value(value):
     """Make option values immutable without conflating types or identities."""
     if isinstance(value,QColor):return QColor,value.spec(),value.getRgbF()
     if isinstance(value,Mapping):
-        return type(value),frozenset((option_value(k),option_value(v)) for k,v in value.items())
+        return Mapping,frozenset((option_value(k),option_value(v)) for k,v in value.items())
     if isinstance(value,(set,frozenset)):
         return frozenset,frozenset(option_value(v) for v in value)
     if isinstance(value,(tuple,list)):

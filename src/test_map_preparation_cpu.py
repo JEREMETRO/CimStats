@@ -369,3 +369,67 @@ def test_optional_cache_admission_failure_keeps_valid_gpu_scene_ready(qt_applica
         assert canvas._gpu_scene is not None and canvas._gpu_key==canvas._revision
         assert not canvas._vector_gl_failed
     finally:canvas.close()
+
+
+def test_real_page_query_proxy_options_prepare_a_complete_frame(qt_application,tmp_path):
+    from collections.abc import Mapping
+    from types import MappingProxyType
+    from PySide6.QtCore import QSettings
+    from map_page import MapPage
+    page=MapPage(QSettings(str(tmp_path/'proxy-query.ini'),QSettings.Format.IniFormat))
+    page.resize(960,680)
+    try:
+        page.set_snapshot(snapshot())
+        assert isinstance(page.canvas.options['route_colors'],MappingProxyType)
+        assert isinstance(page.canvas.options['building_colors'],Mapping)
+        page.canvas.prepare_frame()
+        assert page.canvas.can_export()
+    finally:page.close()
+
+
+def test_worker_option_clone_handles_nested_proxy_containers_colors_and_metric_legend(qt_application):
+    from types import MappingProxyType
+    from PySide6.QtGui import QColor
+    from semantic_colors import MetricLegend
+    color=QColor.fromRgbF(.12345,.23456,.34567,.45678)
+    original_rgba=color.getRgbF()
+    values=[color,{'bus'},('fixed',frozenset({'tram'}))]
+    nested={'list':values}
+    colors={3:'#123456'}
+    canvas=MapCanvas()
+    legend=MetricLegend('passengers','2026-10-22','today')
+    canvas.set_options(route_colors=MappingProxyType(colors),
+        mode_widths=MappingProxyType({'bus':7.,'nested':MappingProxyType(nested)}),legend_items=legend)
+    try:
+        surface=_FrameSurface(canvas)
+        colors[3]='#654321';values[1].add('metro');values.append('late')
+        color.setBlueF(.8)
+        copied=surface.options['mode_widths']['nested']['list']
+        assert len(copied)==3 and copied[1]=={'bus'}
+        assert copied[0].getRgbF()==original_rgba
+        assert copied[2]==('fixed',frozenset({'tram'}))
+        assert isinstance(copied[2],tuple) and isinstance(copied[2][1],frozenset)
+        assert surface.options['route_colors']=={3:'#123456'}
+        assert surface.options['legend_items']==legend
+    finally:canvas.close()
+
+
+def test_real_query_proxy_options_keep_live_detached_keys_and_recent_scene_identity(qt_application,tmp_path,monkeypatch):
+    from PySide6.QtCore import QSettings
+    from map_canvas import _scene_variant_key
+    from map_page import MapPage
+    page=MapPage(QSettings(str(tmp_path/'proxy-cache.ini'),QSettings.Format.IniFormat))
+    page.resize(960,680)
+    try:
+        page.set_snapshot(snapshot());canvas=page.canvas
+        monkeypatch.setattr(canvas,'prepare_frame',lambda:None)
+        surface=_FrameSurface(canvas)
+        assert _scene_variant_key(canvas.snapshot,canvas.options)==_scene_variant_key(surface.snapshot,surface.options)
+        assert canvas._prepare_vectors() and canvas._prepare_gpu()
+        whole=canvas._gpu_scene
+        canvas.set_options(direction='up')
+        assert canvas._prepare_vectors() and canvas._prepare_gpu()
+        canvas.set_options(direction='whole')
+        assert canvas._prepare_vectors() and canvas._prepare_gpu()
+        assert canvas._gpu_scene is whole
+    finally:page.close()

@@ -1,8 +1,9 @@
 """Native, read-only map rendering of immutable game geometry in metres."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from collections import OrderedDict
+from collections.abc import Mapping
 import copy
 import math
 import threading
@@ -956,6 +957,22 @@ class _MapDrawing:
 
 
 
+def _copy_frame_option(value):
+    """Detach option values without pickling read-only query mappings."""
+    if isinstance(value,Mapping):
+        return {key:_copy_frame_option(item) for key,item in value.items()}
+    if isinstance(value,QColor):return QColor(value)
+    if isinstance(value,list):return [_copy_frame_option(item) for item in value]
+    if isinstance(value,tuple):return tuple(_copy_frame_option(item) for item in value)
+    if isinstance(value,set):return {_copy_frame_option(item) for item in value}
+    if isinstance(value,frozenset):return frozenset(_copy_frame_option(item) for item in value)
+    if is_dataclass(value) and not isinstance(value,type):
+        return replace(value,**{field.name:_copy_frame_option(getattr(value,field.name))
+                               for field in fields(value) if field.init})
+    if isinstance(value,(str,int,float,bool,type(None))):return value
+    return copy.deepcopy(value)
+
+
 class _FrameSurface(_MapDrawing):
     """Detached values only: the worker never reads a QWidget."""
     def __init__(self,canvas):
@@ -973,7 +990,7 @@ class _FrameSurface(_MapDrawing):
         for name in ('snapshot','center','zoom','_indexes','_stops','_roads','_stop_symbols',
                      '_connection_boxes','_boxes','_highlight'):
             setattr(self,name,getattr(canvas,name))
-        self.options=copy.deepcopy(canvas.options)
+        self.options=_copy_frame_option(canvas.options)
         for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
             setattr(self,name,dict(getattr(canvas,name)))
 

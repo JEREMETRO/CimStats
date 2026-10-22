@@ -109,9 +109,9 @@ class AnnotationCache:
 def paint_annotations(painter,surface,prepared,cache):
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setFont(surface.font())
-    cache._prepare_labels(painter,surface)
     rectangles=[QRectF(10,surface.height()-55,180,45),QRectF(surface.width()-45,10,35,65)]
     rectangles.extend(rect.adjusted(-3,-3,3,3) for rect,_,_ in surface._legend_layout(painter))
+    cache._prepare_labels(painter,surface)
     occupied=_Occupied(rectangles)
     if surface.options['line_numbers']:
         count=0
