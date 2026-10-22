@@ -19,9 +19,18 @@ def qt_application():
 def clean_qt_test_windows(qt_application):
     original = set(qt_application.topLevelWidgets())
     yield
+    native = qt_application.platformName() == 'windows'
+    if native:
+        from PySide6.QtOpenGLWidgets import QOpenGLWidget
+        from startup_bootstrap import _dispose_window
     for window in qt_application.topLevelWidgets():
         if isValid(window) and window not in original:
-            window.close()
-            window.deleteLater()
+            if native and window.findChild(QOpenGLWidget) is not None:
+                # Match application shutdown: release Python-owned GL objects
+                # while their native widget/context is still alive.
+                _dispose_window(window)
+            else:
+                window.close()
+                window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     qt_application.processEvents()

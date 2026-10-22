@@ -370,6 +370,7 @@ class GpuMapRenderer:
         gl.glDisable(0x0B71)  # DEPTH_TEST
         gl.glDisable(0x0B44)  # CULL_FACE: signed fans need both faces
         gl.glDisable(0x0C11)  # SCISSOR_TEST
+        gl.glDisable(0x0B90)  # STENCIL_TEST: a painter clip may still be enabled
         gl.glEnable(0x0BE2)   # BLEND
         # The map's background is opaque. Preserve destination alpha=1 at
         # coverage edges, so Qt's premultiplied widget compositor sees the
