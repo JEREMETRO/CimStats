@@ -280,7 +280,7 @@ def _lane_polygons(template, zoom, start, end, casing):
             _qpolygon(np.concatenate((outer_left, outer_right[::-1]))))
 
 
-def _bulk_lane_polygons(requests, zoom):
+def _bulk_lane_polygons(requests, zoom, cancelled=None):
     """Evaluate saved lane ribbons in one array pass, preserving every vertex.
 
     The reference _lane_polygons remains the definition for a single curve.
@@ -290,6 +290,7 @@ def _bulk_lane_polygons(requests, zoom):
     detailed = []
     scale = QTransform.fromScale(zoom, zoom)
     for index, (template, start, end, casing) in enumerate(requests):
+        _check(cancelled)
         if start is None or end is None or not template.fractions[-1]:
             result[index] = (scale.map(template.polygon), None)
         else:
@@ -318,6 +319,7 @@ def _bulk_lane_polygons(requests, zoom):
     edge[left] = base + normals*(low-casing/2)[:, None]
     edge[right] = base + normals*(high+casing/2)[:, None]
     for (index, *_), first, last in zip(detailed, 2*starts, 2*ends):
+        _check(cancelled)
         result[index] = (_qpolygon(core[first:last]), _qpolygon(edge[first:last]))
     return result
 
@@ -524,26 +526,30 @@ def build_vector_map(surface, cancelled=None) -> PreparedVectorMap:
     return prepared
 
 
-def _visible_items(items, buckets, box):
+def _visible_items(items, buckets, box, cancelled=None):
     seen = set()
     for tile in _query_tiles(buckets,box):
+        _check(cancelled)
         for index in buckets.get(tile, ()):
             seen.add(index)
     for index in sorted(seen):
+        _check(cancelled)
         item = items[index]
         if _intersects(item.bounds, box):
             yield item
 
 
-def _visible_connections(prepared, box, zoom):
+def _visible_connections(prepared, box, zoom, cancelled=None):
     # The original overview draws only saved curves spanning at least 1.5 px.
     # Sorted tile spans avoid even visiting tiny curves at city-wide scales.
     minimum = 1.5/zoom if zoom < .15 else 0.
     seen = set()
     for tile in _query_tiles(prepared.connection_tiles,box):
+        _check(cancelled)
         spans, indices = prepared.connection_tiles.get(tile, ((), ()))
         seen.update(indices[bisect_left(spans, minimum):])
     for index in sorted(seen):
+        _check(cancelled)
         item = prepared.connections[index]
         if _intersects(item.bounds, box):
             yield item
@@ -570,7 +576,8 @@ def _paint_buildings(painter, surface, prepared, viewport):
     painter.save()
     painter.setWorldTransform(surface._transform(), False)
     pen = _cosmetic_pen(QColor('#C4CDD3'), .45 if surface.zoom < .15 else .7)
-    for item in _visible_items(prepared.buildings, prepared.building_tiles, viewport):
+    for item in _visible_items(prepared.buildings, prepared.building_tiles, viewport, surface._cooperate):
+        surface._cooperate()
         scale = surface.zoom*surface.zoom
         if item.area_max*scale < .8:
             continue
@@ -580,6 +587,7 @@ def _paint_buildings(painter, surface, prepared, viewport):
             painter.drawPath(item.path)
         else:
             for area, path in item.members:
+                surface._cooperate()
                 if area*scale >= .8:
                     painter.drawPath(path)
     painter.restore()
@@ -603,12 +611,14 @@ def _connection_cache(surface, prepared):
 
 
 def _connection_paints(surface, prepared, viewport, road_style, cancelled=None):
+    if cancelled is None:
+        cancelled=surface._cooperate
     result = {0: [], 1: [], 2: []}
     cache = _connection_cache(surface, prepared)
     styles_by_road = cache.setdefault('__road_styles__', {})
     margins_by_lane = cache.setdefault('__lane_margins__', {})
     overview = surface.zoom < .15
-    visible = tuple(_visible_connections(prepared, viewport, surface.zoom))
+    visible = tuple(_visible_connections(prepared, viewport, surface.zoom, cancelled))
     pending = []
     requests = []
     for connection in visible:
@@ -640,7 +650,7 @@ def _connection_paints(surface, prepared, viewport, road_style, cancelled=None):
         start, end = margins if not overview else (None, None)
         pending.append((connection, styles, style, width, casing))
         requests.extend((template, start, end, casing) for template in connection.templates)
-    polygons = iter(_bulk_lane_polygons(requests, surface.zoom))
+    polygons = iter(_bulk_lane_polygons(requests, surface.zoom, cancelled))
     for connection, styles, style, width, casing in pending:
         _check(cancelled)
         paints = []
@@ -681,12 +691,13 @@ def _road_pen(road, zoom, road_style, shell=False):
     return _cosmetic_pen(QColor('#E3E9ED' if road.tunnel else style.fill), width, cap)
 
 
-def _connection_runs(items, shell, layer):
+def _connection_runs(items, shell, layer, cancelled=None):
     """Batch adjacent same-style saved curves while retaining their draw order."""
     runs = []
     run_count = 0
     cap = Qt.PenCapStyle.RoundCap if layer == 1 else Qt.PenCapStyle.FlatCap
     for item in items:
+        _check(cancelled)
         if item.edge is not None:
             polygon = item.edge if shell else item.core
             brush = (QBrush(QColor('#C6D0D7' if item.tunnel else item.shell)) if shell else
@@ -728,7 +739,7 @@ def _cached_connection_runs(surface, prepared, items, shell, layer, rank):
     key = (layer, rank, shell, items[0].tile, tuple(id(item) for item in items))
     value = runs.get(key)
     if value is None:
-        value = tuple(_connection_runs(items, shell, layer))
+        value = tuple(_connection_runs(items, shell, layer, surface._cooperate))
         runs[key] = value
         if len(runs) > 2048:
             runs.popitem(last=False)
@@ -791,6 +802,7 @@ def _route_outline(surface, prepared, path, offset, width, dashed):
     if polygon:
         line.moveTo(polygon[0])
         for index in range(1, len(polygon)):
+            if index%256==0:surface._cooperate()
             line.lineTo(polygon[index])
     stroker = QPainterPathStroker()
     stroker.setWidth(width)
@@ -831,7 +843,8 @@ def _paint_roads(painter, surface, prepared, viewport, profile=None):
     from map_canvas import road_style
     started = time.perf_counter() if profile is not None else None
     roads = {layer: defaultdict(list) for layer in (0, 1, 2)}
-    for road in _visible_items(prepared.roads, prepared.road_tiles, viewport):
+    for road in _visible_items(prepared.roads, prepared.road_tiles, viewport, surface._cooperate):
+        surface._cooperate()
         path = road.path
         if surface.zoom < .15 and road.level in ('local', 'pedestrian', 'unknown'):
             if road.span_max*surface.zoom < 1.5:
@@ -839,6 +852,7 @@ def _paint_roads(painter, surface, prepared, viewport, profile=None):
             if road.span_min*surface.zoom < 1.5:
                 path = QPainterPath()
                 for span, member in road.members:
+                    surface._cooperate()
                     if span*surface.zoom >= 1.5:
                         path.addPath(member)
         roads[road.layer][road.rank].append((road, path))
@@ -864,6 +878,7 @@ def _paint_roads(painter, surface, prepared, viewport, profile=None):
                 painter.setWorldTransform(surface._transform(), False)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 for road, path in roads[layer].get(rank, ()):
+                    surface._cooperate()
                     painter.setPen(_road_pen(road, surface.zoom, road_style, shell))
                     painter.drawPath(path)
                 painter.restore()
@@ -878,11 +893,13 @@ def _paint_roads(painter, surface, prepared, viewport, profile=None):
                     for item in materials:
                         by_tile[item.tile].append(item)
                     for tile_items in by_tile.values():
+                        surface._cooperate()
                         run_started = time.perf_counter() if profile is not None else None
                         runs = _cached_connection_runs(surface, prepared, tile_items, shell, layer, rank)
                         if profile is not None:
                             run_ms += 1000*(time.perf_counter()-run_started)
                         for _, path, pen, brush in runs:
+                            surface._cooperate()
                             if pen is None:
                                 painter.setPen(Qt.PenStyle.NoPen)
                                 painter.setBrush(brush)
@@ -929,6 +946,7 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
     painter.translate(route_origin)
     if surface.options['deadhead']:
         for route in routes:
+            surface._cooperate()
             muted = QColor(colors[route.id]); muted.setAlpha(95)
             for path in surface._continuous_paths(route.depot_paths):
                 if surface._path_visible(path, viewport):
@@ -940,6 +958,7 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
         profile['route_deadhead_ms'] = 1000*(time.perf_counter()-started)
         started = time.perf_counter()
     for route in routes:
+        surface._cooperate()
         # Repeated source pieces within a route are redundant. Later routes
         # must still paint in query order, including a repeated earlier colour.
         drawn_strokes = set()
@@ -949,6 +968,7 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
         for paths, dashed in groups[route.id]:
             batches = []
             for path in paths:
+                surface._cooperate()
                 if len(path) < 2 or not surface._path_visible(path, viewport):
                     batches.append((None, [])); continue
                 offset = offsets[(route.id, id(path), dashed)]
@@ -984,6 +1004,7 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
     if surface.options['line_numbers']:
         count = 0
         for route, color, drawings in decorations:
+            surface._cooperate()
             if count >= number_limit:
                 break
             label = surface.route_label(route)
@@ -1008,6 +1029,7 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
     stop_cells = set()
     displayed_stops=surface._display_stops(routes)
     for stop,position in displayed_stops:
+        surface._cooperate()
         point = surface.world_to_screen(position)
         if surface.options['stops']:
             cell = (int(point.x()/6), int(point.y()/6))
@@ -1046,6 +1068,7 @@ def _paint_routes_and_stops(painter, surface, prepared, profile=None):
 def paint_vector_map(painter: QPainter, surface, prepared: PreparedVectorMap, overlays: bool = True) -> None:
     """Paint vector geometry at the current centre and zoom on any QPaintDevice."""
     from map_canvas import MAP_BACKGROUND
+    surface._cooperate()
     profile = {} if _PROFILE else None
     started = time.perf_counter() if profile is not None else None
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)

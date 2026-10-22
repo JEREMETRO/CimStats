@@ -7,7 +7,7 @@ a full-screen dialog and an exported PNG always agree.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from math import atan2, ceil, cos, degrees, floor, hypot, log10, radians, sin
 
@@ -22,6 +22,83 @@ from stats_typography import emphasis_font, tooltip_font, ui_font
 
 KINDS = ('line', 'bar', 'hbar', 'donut')
 COMPARISON_ALPHA = tokens.CHART_COMPARISON_OPACITY
+
+
+class _PaintStateOverflow(ValueError):
+    """An input tree exceeds the bounded retained-signature budget."""
+
+
+def _paint_state(value, budget=None, depth=0):
+    """Snapshot at most 4096 entries, checking container lengths before traversal."""
+    if budget is None:
+        budget = [4096]
+    if depth > 32:
+        raise _PaintStateOverflow
+    if isinstance(value, QColor):
+        return value.spec(), value.getRgbF()
+    if is_dataclass(value):
+        members = fields(value)
+        budget[0] -= len(members)
+        if budget[0] < 0:
+            raise _PaintStateOverflow
+        return tuple(_paint_state(getattr(value, item.name), budget, depth + 1) for item in members)
+    if isinstance(value, (list, tuple)):
+        budget[0] -= len(value)
+        if budget[0] < 0:
+            raise _PaintStateOverflow
+        return tuple(_paint_state(item, budget, depth + 1) for item in value)
+    return value
+
+
+class _RecordingPainter:
+    """Draw live while retaining bounded, full-precision Qt value arguments.
+
+    QPicture serialization changes some gradient colors. Replaying the original
+    QBrush/QPainterPath objects uses exactly the normal widget paint operations.
+    """
+    def __init__(self, painter):
+        self.painter = painter
+        self.commands = []
+        self.bytes = 0
+        self.cacheable = True
+
+    def __getattr__(self, name):
+        draw = getattr(self.painter, name)
+        def record(*args):
+            if self.cacheable:
+                # Conservative accounting includes Python/Qt object overhead,
+                # path coordinates and string payloads. Never retain >2 MiB.
+                self.bytes += 1024 + sum(
+                    arg.elementCount() * 64 if isinstance(arg, QPainterPath) else
+                    len(arg) * 4 if isinstance(arg, str) else 256 for arg in args)
+                if self.bytes <= 2 * 1024 * 1024:
+                    copies = tuple(type(arg)(arg) if isinstance(arg, (
+                        QBrush, QColor, QFont, QPen, QPainterPath, QPointF, QRectF, QLinearGradient))
+                                   else arg for arg in args)
+                    self.commands.append((name, copies))
+                else:
+                    self.commands.clear()
+                    self.cacheable = False
+            return draw(*args)
+        return record
+
+    def dynamic(self, name, draw):
+        if self.cacheable:
+            self.bytes += 1024
+            if self.bytes <= 2 * 1024 * 1024:
+                self.commands.append((None, name))
+            else:
+                self.commands.clear()
+                self.cacheable = False
+        draw(self.painter)
+
+
+def _dynamic_paint(painter, canvas, name):
+    draw = getattr(canvas, name)
+    if isinstance(painter, _RecordingPainter):
+        painter.dynamic(name, draw)
+    else:
+        draw(painter)
 
 
 @dataclass(frozen=True)
@@ -248,6 +325,9 @@ class ChartCanvas(QWidget):
         self._drag_origin: tuple[float, tuple[int, int]] | None = None
         self._plot = QRectF()
         self._slices: list[dict] = []
+        self._body_commands = None
+        self._body_signature = None
+        self._body_hover_slice = None
         self.setMouseTracking(True)
         self.setMinimumHeight(140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -412,11 +492,70 @@ class ChartCanvas(QWidget):
         return [float(lower + index * step) for index in range(count + 1)]
 
     # ------------------------------------------------------------- painting
+    def _body_key(self):
+        # The entire input tree shares one budget, including titles/notes and
+        # nested containers; large metadata must not allocate or scan a key.
+        data = self.data
+        try:
+            state = _paint_state(data)
+        except _PaintStateOverflow:
+            return None
+        colors = tuple(getattr(tokens, name) for name in (
+            'ACCENT', 'AXIS_COLOR', 'BORDER_STRONG', 'CARD_BG', 'GRID_COLOR',
+            'TEXT_DISABLED', 'TEXT_PRIMARY', 'TEXT_SECONDARY', 'CHART_BAR_GRADIENT_TOP_FACTOR'))
+        renderers = tuple(getattr(method, '__func__', method) for method in (
+            self._paint_body, self._paint_cartesian, self._paint_bars, self._paint_lines, self._paint_hbar,
+            self._paint_donut, self._paint_x_labels, self._paint_value_labels,
+            self._paint_donut_value_labels, self._paint_cartesian_highlight,
+            self._paint_line_highlight, self._paint_hbar_highlight,
+            self.slot_count, self.window, self.has_values, self.visible_series,
+            self._metrics, self._value_range_values, self._resolve_axis,
+            self._x, self._y, self._slot_center, self._ticks,
+            self._unit_caption, self.axis_tick_budget, self._stack_layout))
+        return (state, frozenset(self.hidden), self.axis_override,
+                self.width(), self.height(), self.devicePixelRatioF(),
+                self.logicalDpiX(), self.logicalDpiY(), self._font.key(), self._strong.key(),
+                self.font().key(), self.palette().cacheKey(), colors, COMPARISON_ALPHA,
+                self.detailed, self.show_values, self._window,
+                self._hover_slice if data is not None and data.kind == 'donut' else None, renderers)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setFont(self._font)
+        if (self.data is not None and self.data.kind == 'donut'
+                and self._hover_slice != self._body_hover_slice):
+            # Sector transitions always paint live; skip signature traversal.
+            self._body_hover_slice = self._hover_slice
+            self._body_commands = self._body_signature = None
+            self._paint_body(painter)
+            self._paint_current_tooltip(painter)
+            return
+        signature = self._body_key()
+        if signature is None:
+            self._body_commands = self._body_signature = None
+            self._paint_body(painter)
+        elif self._body_commands is None or signature != self._body_signature:
+            if self.data is not None and self.data.kind == 'donut' and signature != self._body_signature:
+                # A changing donut reshapes the hovered sector. Draw transitions
+                # live and record only after it settles on a repeated sector.
+                self._paint_body(painter)
+                self._body_signature, self._body_commands = signature, None
+            else:
+                body = _RecordingPainter(painter)
+                self._paint_body(body)
+                self._body_signature = signature if body.cacheable else None
+                self._body_commands = body.commands if body.cacheable else None
+        else:
+            for name, args in self._body_commands:
+                if name is None:
+                    getattr(self, args)(painter)
+                else:
+                    getattr(painter, name)(*args)
+        self._paint_current_tooltip(painter)
+
+    def _paint_body(self, painter):
         self._slices = []
         self._bar_hits = []
         data = self.data
@@ -431,6 +570,23 @@ class ChartCanvas(QWidget):
             self._paint_hbar(painter)
         else:
             self._paint_cartesian(painter)
+
+    def _paint_current_tooltip(self, painter):
+        data = self.data
+        if data is None or not self.has_values():
+            return
+        if data.kind == 'donut':
+            hovered = next((part for part in self._slices if part['key'] == self._hover_slice), None)
+            if hovered is not None:
+                item = data.series[0]
+                self._paint_tooltip(painter, hovered['name'], [(
+                    hovered['color'], item.name if data.unit == '%' else format_number(hovered['percent'], 1, fixed=True) + '%',
+                    f"{format_value(hovered['value'], data.decimal_places)} {data.unit}".strip(), '')])
+        elif self._hover is not None:
+            if data.kind == 'hbar':
+                self._paint_tooltip(painter, str(data.labels[self._hover]), self._tooltip_rows(self._hover))
+            else:
+                self._paint_slot_tooltip(painter, self._hover)
 
     def _unit_caption(self) -> str:
         return (self.axis.unit_suffix + self.data.unit) if self.axis else self.data.unit
@@ -478,15 +634,7 @@ class ChartCanvas(QWidget):
 
         self._paint_x_labels(painter, bottom + 6, line_height)
         highlight = self._hover if self._hover is not None else self._linked
-        first, last = self.window()
-        if highlight is not None and first <= highlight < last:
-            slot = plot.width() / max(1, last - first)
-            band = QRectF(self._slot_center(highlight) - slot / 2, plot.top(), slot, plot.height())
-            if data.kind == 'bar':
-                painter.fillRect(band, _alpha(QColor(tokens.ACCENT), .07))
-            else:
-                painter.setPen(QPen(QColor(tokens.BORDER_STRONG), 1, Qt.PenStyle.DashLine))
-                painter.drawLine(QPointF(band.center().x(), plot.top()), QPointF(band.center().x(), plot.bottom()))
+        _dynamic_paint(painter, self, '_paint_cartesian_highlight')
 
         painter.save()
         painter.setClipRect(plot.adjusted(-6, -6, 6, 6))
@@ -497,8 +645,19 @@ class ChartCanvas(QWidget):
         painter.restore()
         if self.detailed and self.show_values:
             self._paint_value_labels(painter, labels)
-        if self._hover is not None:
-            self._paint_slot_tooltip(painter, self._hover)
+
+    def _paint_cartesian_highlight(self, painter):
+        plot, data = self._plot, self.data
+        highlight = self._hover if self._hover is not None else self._linked
+        first, last = self.window()
+        if highlight is not None and first <= highlight < last:
+            slot = plot.width() / max(1, last - first)
+            band = QRectF(self._slot_center(highlight) - slot / 2, plot.top(), slot, plot.height())
+            if data.kind == 'bar':
+                painter.fillRect(band, _alpha(QColor(tokens.ACCENT), .07))
+            else:
+                painter.setPen(QPen(QColor(tokens.BORDER_STRONG), 1, Qt.PenStyle.DashLine))
+                painter.drawLine(QPointF(band.center().x(), plot.top()), QPointF(band.center().x(), plot.bottom()))
 
     def _paint_x_labels(self, painter, y, line_height):
         data, plot, metrics = self.data, self._plot, self._metrics()
@@ -651,8 +810,14 @@ class ChartCanvas(QWidget):
                 for index, point in segment:
                     labels.append(dict(text=format_value(item.values[index], self.data.decimal_places), x=point.x(), y=point.y(),
                                        above=True, slot_width=self._plot.width() / max(1, last - first)))
+        _dynamic_paint(painter, self, '_paint_line_highlight')
+        return labels
+
+    def _paint_line_highlight(self, painter):
+        highlight = self._hover if self._hover is not None else self._linked
+        first, last = self.window()
         if highlight is not None and first <= highlight < last:
-            for item in visible:
+            for item in self.visible_series():
                 value = item.values[highlight] if highlight < len(item.values) else None
                 if value is None:
                     continue
@@ -660,7 +825,6 @@ class ChartCanvas(QWidget):
                 painter.setPen(QPen(QColor(tokens.CARD_BG), 2))
                 painter.setBrush(color)
                 painter.drawEllipse(QPointF(self._slot_center(highlight), self._y(float(value))), 4.5, 4.5)
-        return labels
 
     def _paint_value_labels(self, painter, labels):
         painter.save()
@@ -894,9 +1058,7 @@ class ChartCanvas(QWidget):
         bar = min(14., max(3., (row * .72 - gap * (bands - 1)) / bands))
         block = bar * bands + gap * (bands - 1)
         baseline = self._x(0)
-        if self._hover is not None:
-            painter.fillRect(QRectF(rect.left(), plot.top() + self._hover * row, rect.width(), row),
-                             _alpha(QColor(tokens.ACCENT), .06))
+        _dynamic_paint(painter, self, '_paint_hbar_highlight')
         for index, name in enumerate(data.labels):
             center = plot.top() + (index + .5) * row
             painter.setPen(QColor(tokens.TEXT_PRIMARY))
@@ -930,8 +1092,14 @@ class ChartCanvas(QWidget):
                                      (Qt.AlignmentFlag.AlignLeft if end >= baseline else Qt.AlignmentFlag.AlignRight)
                                      | Qt.AlignmentFlag.AlignVCenter, text)
                     painter.setFont(self._font)
+
+    def _paint_hbar_highlight(self, painter):
         if self._hover is not None:
-            self._paint_tooltip(painter, str(data.labels[self._hover]), self._tooltip_rows(self._hover))
+            rect = QRectF(self.rect()).adjusted(2, 4, -10, -2)
+            plot = self._plot
+            row = plot.height() / max(1, len(self.data.labels))
+            painter.fillRect(QRectF(rect.left(), plot.top() + self._hover * row, rect.width(), row),
+                             _alpha(QColor(tokens.ACCENT), .06))
 
     def _paint_donut(self, painter):
         data = self.data
@@ -1051,11 +1219,6 @@ class ChartCanvas(QWidget):
                                  Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, percent)
                 painter.setFont(self._font)
             part['legend'] = QRectF(x, y, column_width, line)
-        hovered = next((part for part in self._slices if part['key'] == self._hover_slice), None)
-        if hovered is not None:
-            self._paint_tooltip(painter, hovered['name'], [(
-                hovered['color'], item.name if data.unit == '%' else format_number(hovered['percent'], 1, fixed=True) + '%',
-                f"{format_value(hovered['value'], data.decimal_places)} {data.unit}".strip(), '')])
 
     def _paint_donut_value_labels(self, painter, rect):
         font = QFont(self._strong)

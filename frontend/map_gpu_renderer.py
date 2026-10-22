@@ -13,6 +13,7 @@ from PySide6.QtGui import QOpenGLContext
 from PySide6.QtOpenGL import (QOpenGLBuffer, QOpenGLShader, QOpenGLShaderProgram,
                               QOpenGLTexture, QOpenGLVertexArrayObject)
 from map_gpu_visibility import cull_commands as _cull_commands
+from map_gpu_visibility import BoundsCandidates
 
 
 VERTEX_SHADER = r'''#version 330
@@ -279,6 +280,12 @@ class GpuMapRenderer:
         self._member_bounds=np.ascontiguousarray(data[:,2:6])
         self._member_span=data[:,6]
         self._member_material=data[:,7].astype(np.int64)
+        self._command_candidates=BoundsCandidates(self._bounds)
+        self._member_candidates=BoundsCandidates(self._member_bounds)
+        self._first=np.empty(len(commands),dtype=np.int64)
+        self._tile_first=np.empty(self._tile_count,dtype=np.int64)
+        self._ordinary=np.flatnonzero(self._command_rank<0)
+        self._submit_rows=np.empty((len(commands),7),dtype=np.int64)
 
     def _ranks(self,zoom):
         if self._rank_zoom!=zoom:
@@ -300,33 +307,43 @@ class GpuMapRenderer:
 
     def _visible_indices(self,zoom,bounds):
         zoom=float(np.float32(zoom))
-        boxes=self._bounds
-        mask=(self._minimum<=zoom)&(zoom<self._maximum)
+        candidates=self._command_candidates.query(bounds)
+        dense=len(candidates)>len(self._bounds)//2
+        if dense:
+            boxes=self._bounds
+            mask=(self._minimum<=zoom)&(zoom<self._maximum)
+        else:
+            boxes=self._bounds[candidates]
+            mask=(self._minimum[candidates]<=zoom)&(zoom<self._maximum[candidates])
         mask&=(boxes[:,0]<=bounds[2])&(boxes[:,2]>=bounds[0])
         mask&=(boxes[:,1]<=bounds[3])&(boxes[:,3]>=bounds[1])
-        commands=getattr(self,'_commands',self.scene.commands)
-        ordinary=self._command_rank<0
-        first=np.full(len(commands),np.iinfo(np.int64).max,dtype=np.int64)
-        first[ordinary]=np.flatnonzero(ordinary)
-        member_boxes=self._member_bounds
+        ordinary=(self._command_rank if dense else self._command_rank[candidates])<0
+        first=self._first;first.fill(np.iinfo(np.int64).max)
+        first[self._ordinary]=self._ordinary
+        members=self._member_candidates.query(bounds)
+        dense_members=len(members)>len(self._member_bounds)//2
+        member_boxes=self._member_bounds if dense_members else self._member_bounds[members]
+        member_commands=self._member_command if dense_members else self._member_command[members]
         visible=(member_boxes[:,0]<=bounds[2])&(member_boxes[:,2]>=bounds[0])
         visible&=(member_boxes[:,1]<=bounds[3])&(member_boxes[:,3]>=bounds[1])
         if len(self.scene.materials):
             self._ranks(zoom)
-            actual=self._material_rank_masks[self._member_material]
-            visible&=(actual&(1<<self._command_rank[self._member_command]))!=0
+            mids=self._member_material if dense_members else self._member_material[members]
+            actual=self._material_rank_masks[mids]
+            visible&=(actual&(1<<self._command_rank[member_commands]))!=0
         if zoom<.15:
-            span=self._member_span*zoom
+            span=(self._member_span if dense_members else self._member_span[members])*zoom
             visible&=span+32*np.finfo(np.float32).eps*(1+abs(span))>=1.5
-        np.minimum.at(first,self._member_command[visible],self._member_order[visible])
-        mask&=ordinary|(first!=np.iinfo(np.int64).max)
-        tile_first=np.full(self._tile_count,np.iinfo(np.int64).max,dtype=np.int64)
-        connection=np.flatnonzero(~ordinary)
-        np.minimum.at(tile_first,self._tile_groups[connection],first[connection])
-        tiles=np.zeros(len(commands),dtype=np.int64)
-        tiles[connection]=tile_first[self._tile_groups[connection]]
-        selected=np.flatnonzero(mask)
-        order=np.lexsort((selected,first[selected],tiles[selected],self._blocks[selected]))
+        members=np.flatnonzero(visible) if dense_members else members[visible]
+        np.minimum.at(first,self._member_command[members],self._member_order[members])
+        mask&=ordinary|((first if dense else first[candidates])!=np.iinfo(np.int64).max)
+        tile_first=self._tile_first;tile_first.fill(np.iinfo(np.int64).max)
+        np.minimum.at(tile_first,self._tile_groups[self._member_command[members]],self._member_order[members])
+        selected=np.flatnonzero(mask) if dense else candidates[mask]
+        tiles=np.zeros(len(selected),dtype=np.int64)
+        selected_connection=self._command_rank[selected]>=0
+        tiles[selected_connection]=tile_first[self._tile_groups[selected[selected_connection]]]
+        order=np.lexsort((selected,first[selected],tiles,self._blocks[selected]))
         return selected[order]
 
     def _visible_commands(self,zoom,bounds):
@@ -389,7 +406,9 @@ class GpuMapRenderer:
         offsets=self._draw_offsets
         visible=self._visible_indices(zoom,bounds)
         if self._submitter is not None:
-            self._submitter(np.ascontiguousarray(self._draw_table[visible]),rank_location,shell_location)
+            rows=self._submit_rows[:len(visible)]
+            np.take(self._draw_table,visible,axis=0,out=rows)
+            self._submitter(rows,rank_location,shell_location)
         for index in (() if self._submitter is not None else visible):
             command=self._commands[index]
             if shell_pass!=command.shell_pass:
@@ -438,6 +457,15 @@ class GpuMapRenderer:
         self.program=None
         self.scene=None
         self._submitter=None
+        # Context-owned caches have the same lifetime as the uploaded buffers.
+        for name in ('_commands','_bounds','_minimum','_maximum','_command_rank',
+                     '_rank_material','_rank_parameters','_rank_inverse',
+                     '_material_ranks','_material_rank_masks','_draw_offsets',
+                     '_draw_table','_blocks','_tile_groups','_member_command',
+                     '_member_order','_member_bounds','_member_span','_member_material',
+                     '_command_candidates','_member_candidates','_first','_tile_first',
+                     '_ordinary','_submit_rows'):
+            self.__dict__.pop(name,None)
 
 
 def _road_widths(parameters,zoom):

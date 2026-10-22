@@ -31,10 +31,12 @@ class VectorMapViewport(QOpenGLWidget):
     def initializeGL(self):
         self._context_generation += 1
         self._painted_stamp = None
+        self.canvas._vector_presented_key = self.canvas._vector_presented_view = None
         self.canvas._vector_context_ready = True
         self.canvas._vector_gl_failed = False
         self.canvas._vector_gl_error = None
         self.context().aboutToBeDestroyed.connect(self._release_gpu)
+        self.canvas._notify_export_availability()
 
     def _release_gpu(self):
         if self._gpu_renderer is not None:
@@ -43,6 +45,8 @@ class VectorMapViewport(QOpenGLWidget):
             self._gpu_renderer=None
             self.doneCurrent()
         self._painted_stamp=None
+        self.canvas._vector_presented_key = self.canvas._vector_presented_view = None
+        self.canvas._notify_export_availability()
 
     def resizeGL(self, width, height):
         self._painted_stamp = None

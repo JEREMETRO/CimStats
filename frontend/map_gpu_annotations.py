@@ -56,31 +56,50 @@ class AnnotationCache:
             self.label_candidates.append((route,tuple(candidates)))
         self.glyphs={}
         self.font_key=None
+        self._halo=QPen(QColor('#FFFFFF'),3.,Qt.PenStyle.SolidLine,
+                       Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin)
+        self._label_points=np.asarray([point for _,paths in self.label_candidates
+                                      for candidates in paths for point in candidates],dtype=float).reshape(-1,2)
+        self._label_ranges=[];offset=0
+        for route,paths in self.label_candidates:
+            ranges=[]
+            for candidates in paths:
+                ranges.append((offset,offset+len(candidates)));offset+=len(candidates)
+            self._label_ranges.append((route,tuple(ranges)))
+
+    def _prepare_labels(self,painter,surface):
+        font=painter.font();device=painter.device()
+        font_key=(font.toString(),device.logicalDpiX(),device.logicalDpiY(),device.devicePixelRatioF())
+        if self.font_key!=font_key:
+            self.font_key=font_key;self.glyphs.clear()
+        self._font=font;self._metrics=painter.fontMetrics()
+        self._width=surface.width();self._height=surface.height()
+        self._rect=QRectF(surface.rect())
 
     def label(self,painter,surface,point,text,occupied,color=tokens.TEXT_PRIMARY):
-        if point.x() < -250 or point.x()>surface.width() or point.y()<0 or point.y()>surface.height()+12:
+        self._prepare_labels(painter,surface)
+        return self._paint_label(painter,point,text,occupied,color)
+
+    def _paint_label(self,painter,point,text,occupied,color=tokens.TEXT_PRIMARY):
+        if point.x() < -250 or point.x()>self._width or point.y()<0 or point.y()>self._height+12:
             return False
         text=str(text)
         if not text.strip():
             return False
-        font_key=painter.font().toString()
-        if self.font_key!=font_key:
-            self.font_key=font_key;self.glyphs.clear()
         glyph=self.glyphs.get(text)
         if glyph is None:
-            metrics=painter.fontMetrics();path=QPainterPath()
-            path.addText(0,metrics.ascent()+2,painter.font(),text)
+            metrics=self._metrics;path=QPainterPath()
+            path.addText(0,metrics.ascent()+2,self._font,text)
             glyph=(metrics.horizontalAdvance(text)+12,path)
             self.glyphs[text]=glyph
         width,path=glyph
         rect=QRectF(point.x()+7,point.y()-12,width,22)
-        if not QRectF(surface.rect()).contains(rect) or occupied.intersects(rect):
+        if not self._rect.contains(rect) or occupied.intersects(rect):
             return False
         occupied.add(rect.adjusted(-3,-3,3,3))
         painter.save();painter.translate(rect.x()+6,rect.y())
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor('#FFFFFF'),3.,Qt.PenStyle.SolidLine,
-                            Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
+        painter.setPen(self._halo)
         painter.drawPath(path)
         painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(QColor(color))
         painter.drawPath(path);painter.restore()
@@ -90,19 +109,22 @@ class AnnotationCache:
 def paint_annotations(painter,surface,prepared,cache):
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setFont(surface.font())
+    cache._prepare_labels(painter,surface)
     rectangles=[QRectF(10,surface.height()-55,180,45),QRectF(surface.width()-45,10,35,65)]
     rectangles.extend(rect.adjusted(-3,-3,3,3) for rect,_,_ in surface._legend_layout(painter))
     occupied=_Occupied(rectangles)
     if surface.options['line_numbers']:
         count=0
         limit=max(3,int(surface.width()*surface.height()/(48000-28000*detail_fraction(surface.zoom,.25))))
-        for route,paths in cache.label_candidates:
+        label_points=_screen_points(cache._label_points,surface)
+        for route,paths in cache._label_ranges:
             if count>=limit:
                 break
             color=surface._route_color(route).name()
-            for candidates in paths:
-                if any(cache.label(painter,surface,surface.world_to_screen(point),
-                                   surface.route_label(route),occupied,color) for point in candidates):
+            text=surface.route_label(route)
+            for start,end in paths:
+                if any(cache._paint_label(painter,QPointF(*point),text,occupied,color)
+                       for point in label_points[start:end]):
                     count+=1;break
     bounds=surface._viewport_bounds(40.)
     positions=cache.positions
@@ -111,16 +133,19 @@ def paint_annotations(painter,surface,prepared,cache):
     pen=QPen(QColor(tokens.TEXT_SECONDARY),stop_outline(surface.zoom))
     brush=QColor(tokens.CARD_BG)
     cells=set();radius=stop_radius(surface.zoom)
-    for index in selected:
+    screen_points=_screen_points(positions[selected],surface)
+    if surface.options['stops']:
+        painter.setPen(pen);painter.setBrush(brush)
+    for index,screen in zip(selected,screen_points):
         stop,position=cache.stops[index]
-        point=surface.world_to_screen(position)
+        point=QPointF(*screen)
         if surface.options['stops']:
             cell=(int(point.x()/6),int(point.y()/6))
             if surface.zoom>=.15 or cell not in cells:
-                cells.add(cell);painter.setPen(pen);painter.setBrush(brush)
+                cells.add(cell)
                 painter.drawEllipse(point,radius,radius)
             if surface.options['stop_names'] and surface.zoom>=.15:
-                cache.label(painter,surface,point,stop.name,occupied)
+                cache._paint_label(painter,point,stop.name,occupied)
     if surface._highlight and surface._highlight[0]!='route':
         kind,identity=surface._highlight
         if kind=='stop':
@@ -136,3 +161,11 @@ def paint_annotations(painter,surface,prepared,cache):
                     painter.drawRoundedRect(QRectF(a,b).normalized().adjusted(-7,-7,7,7),5,5)
     surface._draw_scale(painter)
     surface._draw_legend(painter)
+
+
+def _screen_points(positions,surface):
+    """Same double operations and axis convention as world_to_screen."""
+    points=(positions-np.asarray(surface.center))*surface.zoom
+    points[:,0]=surface.width()/2+points[:,0]
+    points[:,1]=surface.height()/2-points[:,1]
+    return points

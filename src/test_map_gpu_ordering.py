@@ -86,3 +86,36 @@ def test_lod_boundary_uses_the_same_float32_zoom_as_shader():
     r._maximum=np.array([.15,np.inf]);r._command_rank=np.array([-1,-1])
     r._prepare_ordering()
     assert list(r._visible_commands(.149999999,(-1.,-1.,1.,1.)))==[commands[1]]
+
+
+def test_python_fallback_and_reused_native_rows_keep_identical_command_ranges(monkeypatch):
+    from types import SimpleNamespace
+    from shiboken6 import VoidPtr
+    import map_gpu_renderer as module
+    from test_map_gpu_candidates import _renderer
+    commands=(GpuCommand(0,3,'triangles'),GpuCommand(3,3,'winding',6,3),
+              GpuCommand(9,3,'triangles'))
+    r=_renderer(commands,np.empty((0,40),np.float32))
+    class GL:
+        def __init__(self):self.draws=[]
+        def glDrawElements(self,mode,count,kind,offset):self.draws.append((int(offset)//4,count))
+        def __getattr__(self,name):return lambda *a:None
+    gl=GL();resource=GL()
+    monkeypatch.setattr(module,'QOpenGLContext',SimpleNamespace(currentContext=lambda:
+                        SimpleNamespace(functions=lambda:gl)))
+    r.vertex_array=r.vertex_buffer=r.index_buffer=r.texture=r.program=resource
+    r.upload=lambda scene:None;r._texture_width=1024;r._screen_margin=40.
+    r._uniforms={key:i for i,key in enumerate(('materials','materialTextureWidth','center',
+                'viewport','zoom','connectionRank','shellPass'))}
+    r._draw_offsets={i:VoidPtr(i*4) for i in (0,3,6,9)}
+    r._draw_table=module._draw_command_table(commands,12)
+    r._submitter=None
+    r.paint(r.scene,(0.,0.),1.,100,100,1.)
+    assert gl.draws==[(0,3),(3,3),(6,3),(9,3)]
+    received=[]
+    r._submitter=lambda rows,*locations:received.append((rows.copy(),rows.ctypes.data))
+    for center in ((0.,0.),(1.,1.)):
+        r.paint(r.scene,center,1.,100,100,1.)
+    expected=[[0,3,0,0,0,-1,-1],[3,3,1,6,3,-1,-1],[9,3,0,0,0,-1,-1]]
+    assert received[0][0].tolist()==received[1][0].tolist()==expected
+    assert received[0][1]==received[1][1]

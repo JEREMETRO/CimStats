@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QDateTime, QEvent, QEasingCurve, QSize, Qt, QThread, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QAction, QColor, QPalette
 from shiboken6 import isValid
 from PySide6.QtWidgets import (QBoxLayout, QDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
@@ -543,6 +543,10 @@ class StatisticsPage(QWidget):
         self._build_city()
         self._build_company_controls()
         self.company_dashboard.satisfaction_changed.connect(self._group_satisfaction_changed)
+        self._surface_reflow_keys = {}
+        self._surface_reflow_pending = False
+        for scroll in (self.scroll, self.network_scroll, self.city_scroll):
+            scroll.installEventFilter(self)
         self.reflow(1100)
 
     def _board(self, title, icon):
@@ -701,8 +705,7 @@ class StatisticsPage(QWidget):
         self.confirm_filters_button.setEnabled(True)
         self.expand_filters_button.setEnabled(True)
         self.reflow(self.width())
-        QTimer.singleShot(0, self._reflow_company)
-        QTimer.singleShot(0, self._reflow_network)
+        self._request_surface_reflow()
 
     def set_filters_collapsed(self, collapsed: bool, *, animate: bool = False):
         collapsed = bool(collapsed)
@@ -765,9 +768,7 @@ class StatisticsPage(QWidget):
             # caching must not keep the outer card at its expanded size mid-flight.
             self.filter_card.setFixedHeight(round(start_card_height +
                 (end_card_height - start_card_height) * progress))
-            QTimer.singleShot(0, self._reflow_company)
-            QTimer.singleShot(0, self._reflow_network)
-            QTimer.singleShot(0, self._reflow_city)
+            self._request_surface_reflow()
 
         animation.valueChanged.connect(advance)
         animation.finished.connect(self._finish_filter_transition)
@@ -1301,7 +1302,35 @@ class StatisticsPage(QWidget):
     def _reflow_company(self):
         self._reflow_surface('scroll', 'company_dashboard')
 
-    def _reflow_surface(self, scroll_name, dashboard_name):
+    def _request_surface_reflow(self):
+        """One pending viewport fit for the current page, including filter ticks."""
+        if self._closing or getattr(self, '_surface_reflow_pending', False):
+            return
+        self._surface_reflow_pending = True
+        QTimer.singleShot(0, self, self._flush_surface_reflow)
+
+    def _flush_surface_reflow(self):
+        self._surface_reflow_pending = False
+        if not isValid(self) or self._closing:
+            return
+        for scroll, dashboard in (('scroll', 'company_dashboard'),
+                                  ('network_scroll', 'network_dashboard'),
+                                  ('city_scroll', 'city_dashboard')):
+            self._reflow_surface(scroll, dashboard, reuse=True)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Show and hasattr(self, '_surface_reflow_keys'):
+            for scroll, dashboard in (('scroll', 'company_dashboard'),
+                                      ('network_scroll', 'network_dashboard'),
+                                      ('city_scroll', 'city_dashboard')):
+                if watched is getattr(self, scroll, None):
+                    # The stack has assigned geometry; fit before its first paint.
+                    self._reflow_surface(scroll, dashboard)
+                    self._request_surface_reflow()
+                    break
+        return super().eventFilter(watched, event)
+
+    def _reflow_surface(self, scroll_name, dashboard_name, *, reuse=False):
         if not isValid(self) or self._closing:
             return
         scroll = getattr(self, scroll_name, None)
@@ -1309,9 +1338,20 @@ class StatisticsPage(QWidget):
         if (scroll is None or dashboard is None or
                 not isValid(scroll) or not isValid(dashboard)):
             return
+        keys = getattr(self, '_surface_reflow_keys', {})
+        if not scroll.isVisibleTo(self):
+            keys.pop(scroll_name, None)
+            return
         viewport = scroll.viewport()
         if viewport is not None and isValid(viewport):
+            key = (viewport.width(), viewport.height(), getattr(self, '_layout_signature', None),
+                   id(dashboard), self.font().key(), self.devicePixelRatioF())
+            # Reuse only the coalesced filter/resize request. Direct content and
+            # query refreshes always run, even at an unchanged viewport size.
+            if reuse and keys.get(scroll_name) == key:
+                return
             dashboard.reflow(viewport.width(), viewport.height())
+            keys[scroll_name] = key
 
     def _retry_company_fit(self, _minimum, maximum):
         if maximum > 0 and self.analysis_mode == 'default':
@@ -1415,9 +1455,7 @@ class StatisticsPage(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.reflow(self.width())
-        QTimer.singleShot(0, self._reflow_company)
-        QTimer.singleShot(0, self._reflow_network)
-        QTimer.singleShot(0, self._reflow_city)
+        self._request_surface_reflow()
 
     def stop_workers(self):
         self._closing = True

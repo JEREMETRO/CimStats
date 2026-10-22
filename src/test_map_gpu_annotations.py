@@ -52,3 +52,27 @@ def test_font_change_redraws_current_view_without_compiling_gpu_geometry(qt_appl
     assert canvas._gpu_scene is scene and canvas._gpu_annotations is annotations
     assert canvas._gpu_job is None
     canvas.close()
+
+
+def test_glyph_metrics_invalidate_when_paint_device_dpi_changes(qt_application):
+    from types import SimpleNamespace
+    from PySide6.QtCore import QPointF, QRect
+    from PySide6.QtGui import QImage, QPainter, QFont
+    from map_gpu_annotations import AnnotationCache
+    surface=SimpleNamespace(options={'layer_modes':None,'routes':False},
+        _display_stops=lambda *a,**k:(),width=lambda:800,height=lambda:400,
+        rect=lambda:QRect(0,0,800,400))
+    cache=AnnotationCache(surface,SimpleNamespace(routes=()))
+    widths=[]
+    for dpi in (96,192,96):
+        image=QImage(800,400,QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDotsPerMeterX(round(dpi/0.0254));image.setDotsPerMeterY(round(dpi/0.0254))
+        painter=QPainter(image);painter.setFont(QFont('Arial',10))
+        try:
+            expected=painter.fontMetrics().horizontalAdvance('Station 503E')+12
+            assert cache.label(painter,surface,QPointF(10,80),'Station 503E',_Occupied(()))
+            actual=cache.glyphs['Station 503E'][0]
+            assert actual==expected
+            widths.append(actual)
+        finally:painter.end()
+    assert widths[0]==widths[2] and widths[1]>widths[0]

@@ -65,7 +65,20 @@ EXPORT int map_submit(const int64_t *rows, size_t count, const uintptr_t *functi
             draw(4,(int)r[4],0x1405,(const void *)((uintptr_t)r[3]*4));
         } else {
             if (stencil) { disable(0x0B90);stencil=0; }
-            draw(4,(int)r[1],0x1405,(const void *)((uintptr_t)r[0]*4));
+            /* Consecutive complete triangle lists with the same uniforms are
+             * the identical ordered primitive stream. Never cross winding,
+             * a state change, an index gap or an incomplete final triangle.
+             * Keep the public seven-column ABI and old-helper fallback.
+             */
+            int64_t draw_count=r[1];
+            while (draw_count>0 && draw_count%3==0 && i+1<count) {
+                const int64_t *next=rows+(i+1)*7;
+                if (next[2] || next[5]!=r[5] || next[6]!=r[6] || next[1]<=0 || next[1]%3 ||
+                    next[1]>2147483647-draw_count || r[0]>INT64_MAX-draw_count ||
+                    next[0]!=r[0]+draw_count) break;
+                draw_count+=next[1];i++;
+            }
+            draw(4,(int)draw_count,0x1405,(const void *)((uintptr_t)r[0]*4));
         }
     }
     if (stencil) disable(0x0B90);

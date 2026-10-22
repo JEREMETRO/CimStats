@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import OrderedDict
+import copy
 import math
 import threading
 from pathlib import Path
@@ -22,6 +23,7 @@ from map_visibility import (operating_paths, visible_route_stop_ids,
 from display_rules import format_line_name
 from semantic_colors import MetricLegend, is_non_social_building
 from background_work import CooperativeCancellation
+from map_scene_cache import SceneVariantCache, option_value, retained_resources
 
 # Public visual interpretation, not Apple-internal style constants. Widths
 # below are logical pixel symbols when a measured full road width is missing.
@@ -47,6 +49,12 @@ def _gpu_base_key(snapshot,options):
             id(snapshot.roads),id(snapshot.junctions),id(snapshot.buildings),
             options['roads'],options['buildings'],*filters,
             frozenset(options['building_colors'].items()))
+
+
+def _scene_variant_key(snapshot, options):
+    return (_index_key(snapshot), option_value(options),
+            option_value(ROAD_STYLES), MAP_BACKGROUND,
+            tokens.CARD_BG, tokens.TEXT_PRIMARY, tokens.TEXT_SECONDARY, tokens.ACCENT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -953,6 +961,7 @@ class _FrameSurface(_MapDrawing):
     def __init__(self,canvas):
         self._ui_thread = canvas._ui_thread if isinstance(canvas, _FrameSurface) else threading.get_ident()
         self._cpu_budget = CooperativeCancellation()
+        self._cancelled = lambda: False
         self._size=QSize(canvas.width(),canvas.height())
         self._font=canvas.font()
         self.ratio=canvas.ratio if isinstance(canvas,_FrameSurface) else canvas.devicePixelRatioF()
@@ -964,7 +973,7 @@ class _FrameSurface(_MapDrawing):
         for name in ('snapshot','center','zoom','_indexes','_stops','_roads','_stop_symbols',
                      '_connection_boxes','_boxes','_highlight'):
             setattr(self,name,getattr(canvas,name))
-        self.options=dict(canvas.options)
+        self.options=copy.deepcopy(canvas.options)
         for name in ('_world_polygons','_continuous_cache','_path_keys','_path_bounds'):
             setattr(self,name,dict(getattr(canvas,name)))
 
@@ -974,8 +983,10 @@ class _FrameSurface(_MapDrawing):
     def font(self):return self._font
 
     def _cooperate(self):
-        if threading.get_ident() != self._ui_thread:
-            self._cpu_budget()
+        if self._cancelled():
+            raise InterruptedError()
+        if threading.get_ident() != self._ui_thread and self._cpu_budget():
+            raise InterruptedError()
 
     def _paint(self, painter, overlays=True):
         if self._vector_prepared is not None:
@@ -989,11 +1000,35 @@ class _FrameSignals(QObject):
     failed=Signal(object,object,str)
 
 
+class _FramePainter(QPainter):
+    """Unwind paint state after a cooperative worker cancellation."""
+    def __init__(self,image):
+        super().__init__(image)
+        self.depth=0
+
+    def save(self):
+        super().save();self.depth+=1
+
+    def restore(self):
+        super().restore();self.depth-=1
+
+    def finish(self):
+        while self.depth>0:
+            self.restore()
+        self.end()
+
+
 class _FrameJob(QRunnable):
     def __init__(self,surface,key,view):
         super().__init__()
         self.surface,self.key,self.view=surface,key,view
         self.signals=_FrameSignals()
+        self.cancelled=threading.Event()
+        surface._cancelled=self.cancelled.is_set
+        surface._cpu_budget=CooperativeCancellation(self.cancelled.is_set)
+
+    def cancel(self):
+        self.cancelled.set()
 
     def _emit(self,name,*values):
         # Application teardown can destroy the signal receiver/source while
@@ -1006,17 +1041,27 @@ class _FrameJob(QRunnable):
 
     def run(self):
         surface=self.surface
+        if self.cancelled.is_set():
+            self._emit('completed',self.key,self.view,None,surface)
+            return
         image=QImage(round(surface.width()*surface.ratio),round(surface.height()*surface.ratio),QImage.Format.Format_ARGB32_Premultiplied)
         image.setDevicePixelRatio(surface.ratio)
-        painter=QPainter(image)
+        painter=_FramePainter(image)
         try:
             surface._paint(painter,overlays=False)
+        except InterruptedError:
+            self._emit('completed',self.key,self.view,None,surface)
+            return
         except Exception as error:
-            self._emit('failed',self.key,self.view,str(error))
+            if self.cancelled.is_set():
+                self._emit('completed',self.key,self.view,None,surface)
+            else:
+                self._emit('failed',self.key,self.view,str(error))
             return
         finally:
-            painter.end()
-        self._emit('completed',self.key,self.view,image,surface)
+            painter.finish()
+        self._emit('completed',self.key,self.view,
+                   None if self.cancelled.is_set() else image,surface)
 
 
 class _VectorSignals(QObject):
@@ -1056,10 +1101,11 @@ class _VectorJob(QRunnable):
 
 class _GpuJob(_VectorJob):
     """Compile retained buffers off the GUI thread, once per map revision."""
-    def __init__(self,surface,key,prepared,base=None):
+    def __init__(self,surface,key,prepared,base=None,resource_sizes=None):
         super().__init__(surface,key)
         self.prepared=prepared
         self.base=base
+        self.resource_sizes=resource_sizes
 
     def run(self):
         from map_gpu_geometry import compile_gpu_layers
@@ -1068,6 +1114,20 @@ class _GpuJob(_VectorJob):
             cancelled=CooperativeCancellation(self.cancelled.is_set,budget=.004,pause=.0001)
             scene=compile_gpu_layers(self.surface,self.prepared,cancelled,base=self.base)
             annotations=AnnotationCache(self.surface,self.prepared)
+            if hasattr(self.surface,'_scene_variant_key'):
+                sources=tuple(getattr(self.surface.snapshot,name) for name in _INDEX_LAYERS)
+                variant=(scene,self.prepared,sources)
+                try:
+                    resources=retained_resources(variant,cancelled,self.resource_sizes)
+                except InterruptedError:
+                    raise
+                except Exception:
+                    # Cache admission is optional; a valid compiled scene
+                    # must remain usable if its size cannot be established.
+                    pass
+                else:
+                    self.surface._scene_variant=variant
+                    self.surface._scene_resources=resources
             self._emit('completed',self.key,
                        None if self.cancelled.is_set() else (scene,annotations),self.surface)
         except InterruptedError:
@@ -1142,6 +1202,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._gpu_job = None
         self._gpu_base_signature = None
         self._gpu_base_sources = ()
+        self._scene_variants = SceneVariantCache()
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self.update)
@@ -1174,6 +1235,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._revision += 1
         self._invalidate_vectors()
         if new_source or empty:
+            self._scene_variants.clear()
             self._gpu_scene=self._gpu_annotations=None
             self._gpu_key=self._gpu_base_signature=None
             self._gpu_base_sources=()
@@ -1261,6 +1323,8 @@ class MapCanvas(_MapDrawing, QWidget):
             self._vector_job.cancel()
         if self._gpu_job is not None:
             self._gpu_job.cancel()
+        self._cancel_frame_job()
+        self._scene_variants.clear()
         super().closeEvent(event)
 
     def showEvent(self, event):
@@ -1303,6 +1367,7 @@ class MapCanvas(_MapDrawing, QWidget):
 
     def _changed(self,interactive=False):
         self._fit_pending = False
+        self._cancel_stale_frame_job()
         self._notify_export_availability()
         if interactive:
             self._render_timer.start(100)
@@ -1404,6 +1469,7 @@ class MapCanvas(_MapDrawing, QWidget):
             self._vector_viewport.setGeometry(self.rect())
         if self._fit_pending:
             self.fit_to_map()
+        self._cancel_stale_frame_job()
         self._notify_export_availability()
 
     def search(self,text):
@@ -1479,6 +1545,16 @@ class MapCanvas(_MapDrawing, QWidget):
             self._vector_job.cancel()
         if self._gpu_job is not None:
             self._gpu_job.cancel()
+        self._cancel_frame_job()
+
+    def _cancel_frame_job(self):
+        if self._frame_job is not None:
+            self._frame_job.cancel()
+
+    def _cancel_stale_frame_job(self):
+        job=self._frame_job
+        if job is not None and (job.key!=self._render_key() or job.view!=(*self.center,self.zoom)):
+            job.cancel()
 
     def _prepare_vectors(self):
         if self._vector_key == self._revision and self._vector_prepared is not None:
@@ -1488,6 +1564,12 @@ class MapCanvas(_MapDrawing, QWidget):
         if self._vector_job is not None:
             return False
         surface = _FrameSurface(self)
+        cached=self._scene_variants.get(_scene_variant_key(self.snapshot,self.options))
+        if cached is not None:
+            self._vector_key,self._vector_prepared=self._revision,cached[1]
+            surface._vector_prepared=cached[1]
+            self._vector_surface=surface
+            return True
         surface._vector_prepared = None
         if not self._async_render:
             from map_vector import build_vector_map
@@ -1553,9 +1635,17 @@ class MapCanvas(_MapDrawing, QWidget):
         surface=_FrameSurface(self)
         signature=_gpu_base_key(surface.snapshot,surface.options)
         surface._gpu_base_signature=signature
+        surface._scene_variant_key=_scene_variant_key(surface.snapshot,surface.options)
+        cached=self._scene_variants.get(surface._scene_variant_key)
+        if cached is not None:
+            from map_gpu_annotations import AnnotationCache
+            self._gpu_completed(self._revision,
+                (cached[0],AnnotationCache(surface,self._vector_prepared)),surface)
+            return True
         base=(self._gpu_scene.base if self._gpu_scene is not None
               and self._gpu_base_signature==signature else None)
-        job=_GpuJob(surface,self._revision,self._vector_prepared,base=base)
+        job=_GpuJob(surface,self._revision,self._vector_prepared,base=base,
+                    resource_sizes=self._scene_variants.resource_sizes())
         job.signals.completed.connect(self._gpu_completed)
         job.signals.failed.connect(self._gpu_failed)
         self._gpu_job=job
@@ -1575,6 +1665,13 @@ class MapCanvas(_MapDrawing, QWidget):
             self.prepare_frame()
             return
         self._gpu_scene,self._gpu_annotations=result
+        if hasattr(surface,'_scene_variant'):
+            try:
+                self._scene_variants.put(surface._scene_variant_key,surface._scene_variant,
+                                         surface._scene_resources)
+            except Exception:
+                # Never let cache bookkeeping fail an already valid frame.
+                self._scene_variants.clear()
         # Publish cache identity only with an accepted completed layer pair.
         # Strong source references make the identity signature safe across
         # route queries, even after their former snapshots are released.
@@ -1583,7 +1680,7 @@ class MapCanvas(_MapDrawing, QWidget):
         self._gpu_base_sources=(snapshot.roads,snapshot.junctions,snapshot.buildings)
         self._gpu_key=key
         self.prepare_frame()
-        if not self.isVisible() and self.can_export():
+        if not self.isVisible() and self.is_prepared():
             self.frame_ready.emit()
         self.update()
 
@@ -1630,6 +1727,7 @@ class MapCanvas(_MapDrawing, QWidget):
         if self._vector_viewport is not None:
             self._vector_viewport.hide()
         self._notify_export_availability()
+        self.prepare_frame()
         self.update()
 
     def _check_vector_context(self):
@@ -1642,6 +1740,7 @@ class MapCanvas(_MapDrawing, QWidget):
     def prepare_frame(self):
         """Prewarm hidden map pages using their current layout, without blocking."""
         self._notify_export_availability()
+        self._cancel_stale_frame_job()
         if not self._indexes_ready:
             self._start_index_job()
             return
@@ -1651,9 +1750,9 @@ class MapCanvas(_MapDrawing, QWidget):
             return
         if self._vector_viewport is not None and not self._vector_gl_failed:
             self._prepare_gpu()
-        if (self._vector_viewport is not None and not self._vector_gl_failed
-                and self.isVisible()):
-            if (self._vector_presented_key != self._render_key()
+        if self._vector_viewport is not None and not self._vector_gl_failed:
+            self._cancel_frame_job()
+            if self.isVisible() and (self._vector_presented_key != self._render_key()
                     or self._vector_presented_view != (*self.center,self.zoom)):
                 self._vector_viewport.update()
             return
@@ -1718,12 +1817,19 @@ class MapCanvas(_MapDrawing, QWidget):
 
     @Slot(object,object,object,object)
     def _frame_completed(self,key,view,frame,surface):
-        self._frame_job=None
+        if self._frame_job is not None and (self._frame_job.key,self._frame_job.view)==(key,view):
+            self._frame_job=None
+        if self._index_closed:
+            return
+        if frame is None:
+            self._notify_export_availability()
+            self.prepare_frame()
+            return
         if (self._vector_viewport is not None and self.isVisible()
                 and self._vector_presented_key == self._render_key()
                 and self._vector_presented_view == (*self.center, self.zoom)):
             return
-        if key==self._render_key():
+        if key==self._render_key() and view==(*self.center,self.zoom):
             self._frame,self._frame_key,self._frame_view=frame,key,view
             if (self._vector_prepared is not None
                     and surface._vector_prepared is self._vector_prepared
@@ -1747,7 +1853,8 @@ class MapCanvas(_MapDrawing, QWidget):
 
     @Slot(object,object,str)
     def _frame_failed(self,key,view,message):
-        self._frame_job=None
+        if self._frame_job is not None and (self._frame_job.key,self._frame_job.view)==(key,view):
+            self._frame_job=None
         if self._index_closed:
             return
         if (self._vector_presented_key == self._render_key()
@@ -1776,12 +1883,24 @@ class MapCanvas(_MapDrawing, QWidget):
 
 
 
+    def is_prepared(self):
+        """Current data is ready; a viable GPU still requires presentation."""
+        if self._vector_viewport is None or self._vector_gl_failed:
+            return self.can_export()
+        return (not self._index_closed and self._indexes_ready
+                and self.width()>0 and self.height()>0
+                and self._vector_key==self._revision and self._vector_prepared is not None
+                and self._gpu_key==self._revision and self._gpu_scene is not None
+                and self._index_failed_key!=_index_key(self.snapshot)
+                and any((self.snapshot.roads,self.snapshot.buildings,self.snapshot.routes,
+                         self.snapshot.stops,self.snapshot.junctions)))
+
     def can_export(self):
         """Whether a complete frame exists for the exact current viewport."""
         if (self._vector_viewport is not None and not self._vector_gl_failed
                 and (self._gpu_key!=self._revision or self._gpu_scene is None)):
             return False
-        if self._vector_viewport is not None and self.isVisible():
+        if self._vector_viewport is not None and (self.isVisible() or not self._vector_gl_failed):
             key, view = self._render_key(), (*self.center, self.zoom)
             return (not self._index_closed and self._indexes_ready
                     and self.width()>0 and self.height()>0

@@ -81,6 +81,7 @@ def test_page_keeps_loading_until_current_frame_ready(tmp_path, monkeypatch):
     page.surface.set_loading(True)
     page.set_snapshot(MapSnapshot(buildings=(MapBuilding(1, '', '', (0., 0., 0.)),)))
     assert page.surface.loading.isVisible()
+    monkeypatch.setattr(page.canvas, 'can_export', lambda: True)
     page.canvas.frame_ready.emit()
     assert page.surface.loading.isHidden()
     page.surface.set_loading(True)

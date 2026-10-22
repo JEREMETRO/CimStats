@@ -57,7 +57,7 @@ def profile_loading(win, args):
         statistics.append(timing)
     page.statistics_preparation_finished.connect(statistics_ready)
     canvas.frame_ready.connect(lambda: marks.setdefault('first_frame', time.monotonic()-started)
-                               if page.result is not None else None)
+                               if page.result is not None and canvas.can_export() else None)
     page.failed.connect(errors.append)
     timer = QTimer(); timer.timeout.connect(tick); timer.start(10)
     monitor = QTimer(); monitor.timeout.connect(resources); monitor.start(250)

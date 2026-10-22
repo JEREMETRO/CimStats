@@ -76,7 +76,12 @@ def test_hidden_cpu_preview_is_not_ready_while_native_geometry_is_pending(qt_app
     canvas._frame_key=canvas._render_key();canvas._frame_view=(*canvas.center,canvas.zoom)
     try:
         assert not canvas.can_export()
+        assert not canvas.is_prepared()
         canvas._gpu_scene=object();canvas._gpu_key=canvas._revision
+        canvas._vector_prepared=object();canvas._vector_key=canvas._revision
+        assert canvas.is_prepared()
+        assert not canvas.can_export()
+        canvas._vector_presented(canvas._render_key(),(*canvas.center,canvas.zoom))
         assert canvas.can_export()
     finally:
         canvas._vector_viewport=original;canvas.close()

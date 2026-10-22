@@ -44,9 +44,11 @@ class PresetStore:
         self.current = selected if selected in PRESETS else 'network'
         self.save_key = ''
         self._states = {}
+        self._dirty = False
         self.load('')
 
     def load(self, save_key):
+        self.flush()
         self.save_key = str(save_key or '')
         saved = _read(self.settings, 'map/presets/' + self.save_key, {}) if self.save_key else {}
         legacy = _read(self.settings, 'map/query/' + self.save_key, {}) if self.save_key else {}
@@ -68,7 +70,7 @@ class PresetStore:
     def state(self, preset):
         return deepcopy(self._states[preset])
 
-    def update(self, preset, *, query=None, view=None, layout=None):
+    def update(self, preset, *, query=None, view=None, layout=None, persist=True):
         record = self._states[preset]
         if query is not None:
             record['query'].update(deepcopy(query))
@@ -77,11 +79,19 @@ class PresetStore:
         if layout is not None:
             record['layout'] = deepcopy(layout)
             self.settings.setValue('map/presets/layout/' + preset, _json(layout))
-        self._persist()
+        self._dirty = True
+        if persist:
+            self._persist()
+
+    def flush(self):
+        """Persist pending camera state while it still belongs to this save."""
+        if self._dirty:
+            self._persist()
 
     def activate(self, preset):
         if preset not in PRESETS:
             raise ValueError('Unknown map preset: ' + str(preset))
+        self.flush()
         self.current = preset
         self.settings.setValue('map/preset', preset)
 
@@ -90,3 +100,4 @@ class PresetStore:
             self.settings.setValue('map/presets/' + self.save_key, _json({
                 key: {field: value for field, value in record.items() if field != 'layout'}
                 for key, record in self._states.items()}))
+        self._dirty = False

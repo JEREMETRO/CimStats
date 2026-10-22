@@ -8,7 +8,7 @@ from __future__ import annotations
 import weakref
 import sys
 from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QRegion
 from PySide6.QtWidgets import QWidget, QGraphicsDropShadowEffect, QAbstractScrollArea, QGraphicsOpacityEffect
 from qfluentwidgets import CardWidget
 from qfluentwidgets.components.widgets.card_widget import DropShadowAnimation
@@ -97,7 +97,7 @@ class _ElevationLayer(_InputTransparentDecoration):
         return False
 
     def refresh(self):
-        if not self._pending:
+        if (self.active or self.dirty) and not self._pending:
             self._pending=True
             QTimer.singleShot(0,self._refresh_now)
 
@@ -107,8 +107,8 @@ class _ElevationLayer(_InputTransparentDecoration):
         controllers=[c for c in self.active | self.dirty if isValid(c) and getattr(c,'widget',None) is not None and isValid(c.widget)]
         self.dirty.clear()
         if not controllers:return
-        self.raise_()
         suppressed=set()
+        damage=QRegion()
         for controller in controllers:
             if not controller.hovered:continue
             ancestor=controller.widget.parentWidget()
@@ -120,7 +120,6 @@ class _ElevationLayer(_InputTransparentDecoration):
             card=controller.widget
             nested=card in suppressed
             visible=card.isVisible() and controller.level>0 and not nested
-            source.setVisible(visible)
             if visible:
                 p=card.mapTo(self.parentWidget(),QPoint())
                 ancestor=card;clip=self.rect();opacity=1.;draw_offset=0
@@ -135,12 +134,32 @@ class _ElevationLayer(_InputTransparentDecoration):
                         draw_offset+=getattr(effect,'offset',0)
                     ancestor=parent
                 p+=QPoint(0,round(draw_offset))
-                source.setGeometry(p.x(),p.y(),card.width(),card.height())
-                source.visible_clip=QRectF(clip.translated(-p))
+                geometry=card.rect().translated(p)
+                visible=clip.intersects(geometry)
+                local_clip=QRectF(clip.translated(-p))
+                state=(visible,geometry,local_clip,opacity,controller.level)
+            else:
+                state=(False,)
+            if state==getattr(controller,'_shadow_state',None):continue
+            old_damage=getattr(controller,'_shadow_damage',None)
+            if old_damage is not None:damage|=QRegion(old_damage)
+            controller._shadow_state=state
+            controller._shadow_damage=None
+            if visible:
+                if source.geometry()!=geometry:source.setGeometry(geometry)
+                source.visible_clip=local_clip
                 source.surface_opacity=opacity
-                if not clip.intersects(source.geometry()):source.hide()
+                # The real effect determines its blur extent; damage includes
+                # both the old and new shadow, clipped to the actual viewport.
+                bounds=source.graphicsEffect().boundingRectFor(QRectF(source.rect()))
+                bounds=bounds.translated(p).toAlignedRect().intersected(clip).intersected(self.rect())
+                controller._shadow_damage=bounds
+                damage|=QRegion(bounds)
                 source.update()
-        self.update()
+            if source.isHidden()==visible:source.setVisible(visible)
+        if not damage.isEmpty():
+            self.raise_()
+            self.update(damage)
 
 class CardElevation(QObject):
     def __init__(self,widget,radius=8):
@@ -164,6 +183,8 @@ class CardElevation(QObject):
             self.layer=layer;layer.controllers.add(self)
             if self.carrier is not None and isValid(self.carrier):self.carrier.deleteLater()
             self.carrier=_ShadowSource(layer,self.radius)
+            self._shadow_state=None
+            self._shadow_damage=None
             self.animation=_StableDropShadowAnimation(self.carrier)
             self.animation.valueChanged.connect(self._advance)
             self.widget.destroyed.connect(self.carrier.deleteLater)

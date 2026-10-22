@@ -386,6 +386,10 @@ class MapPage(QWidget):
         for key in ('manual_line_ids','company_ids','modes','layer_modes','road_levels','building_classes','building_uses','profit_statuses'):
             self._network_defaults[key]=None
         self.presets=PresetStore(settings,self._network_defaults)
+        self._view_save_timer=QTimer(self)
+        self._view_save_timer.setSingleShot(True)
+        self._view_save_timer.setInterval(300)
+        self._view_save_timer.timeout.connect(self._flush_view_save)
         self.preset='network'
         self.dock=MapDockHost(self.surface,self.panel_set.panels,self)
         self.docks={'network':self.dock}
@@ -432,7 +436,12 @@ class MapPage(QWidget):
 
     def _save_view(self,x,z,zoom):
         if not self._switching and self.query is not None:
-            self.presets.update(self.preset,view=[x,z,zoom])
+            self.presets.update(self.preset,view=[x,z,zoom],persist=False)
+            self._view_save_timer.start()
+
+    def _flush_view_save(self):
+        self._view_save_timer.stop()
+        self.presets.flush()
 
     def _ensure_dock(self,preset):
         if preset in self.docks:return self.docks[preset]
@@ -469,6 +478,7 @@ class MapPage(QWidget):
     def set_preset(self,preset):
         if preset not in PRESETS:raise ValueError('Unknown map preset: '+str(preset))
         if preset==self.preset:return
+        self._flush_view_save()
         if self.query is not None:
             self.presets.update(self.preset,view=[*self.canvas.center,self.canvas.zoom])
         host=self._ensure_dock(preset)
@@ -667,6 +677,7 @@ class MapPage(QWidget):
             self.planning_panel.building_menu.hide()
 
     def set_session(self, session):
+        self._flush_view_save()
         if self._route_export_dialog is not None:
             self._route_export_dialog.reject()
         self._close_building_menu()
@@ -886,6 +897,9 @@ class MapPage(QWidget):
 
     def _frame_ready(self):
         if self._awaiting_frame:
+            # A queued hidden-preparation signal may arrive after this page opens.
+            ready=self.canvas.can_export() if self.isVisible() else self.canvas.is_prepared()
+            if not ready:return
             self._awaiting_frame=False
             self.surface.set_loading(False)
 
@@ -961,10 +975,15 @@ class MapPage(QWidget):
         self.ensure_loaded()
 
     def stop_workers(self):
+        self._flush_view_save()
         if self._route_export_dialog is not None:
             self._route_export_dialog.reject()
         for worker in self.workers:worker.requestInterruption()
         return not any(worker.isRunning() for worker in self.workers)
+
+    def closeEvent(self,event):
+        self._flush_view_save()
+        super().closeEvent(event)
 
     def can_export(self):
         if self.result is None or not self.canvas.can_export():return False
