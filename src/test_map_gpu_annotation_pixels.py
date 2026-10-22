@@ -129,6 +129,8 @@ def test_metric_legend_font_setup_preserves_released_label_pixels(qt_application
     from map_model import MapRoute, MapStop, MapSnapshot
     from map_vector import build_vector_map
     from semantic_colors import MetricLegend
+    from stats_style import initialize_theme
+    initialize_theme(qt_application)
     canvas=MapCanvas();canvas.resize(600,400)
     font=canvas.font();font.setPixelSize(22);canvas.setFont(font)
     route=MapRoute(1,'Central',1,'a','A','bus',(1,),
@@ -141,11 +143,15 @@ def test_metric_legend_font_setup_preserves_released_label_pixels(qt_application
     prepared=build_vector_map(surface)
     reference=AnnotationCache(surface,prepared);reference.label=MethodType(_scalar_label,reference)
     candidate=AnnotationCache(surface,prepared)
+    warmup=AnnotationCache(surface,prepared);warmup.label=MethodType(_scalar_label,warmup)
     images=[]
-    for draw,cache in ((_scalar_paint,reference),(paint_annotations,candidate)):
+    # On Windows the first outline can differ from the cached outline even
+    # when the released scalar painter is compared with itself. Prime the
+    # same glyphs before either measured path; keep exact pixel equality.
+    for draw,cache in ((_scalar_paint,warmup),(_scalar_paint,reference),(paint_annotations,candidate)):
         image=QImage(600,400,QImage.Format.Format_ARGB32_Premultiplied);image.fill(QColor('#f1f4f6'))
         painter=QPainter(image)
         try:draw(painter,surface,prepared,cache)
         finally:painter.end()
-        images.append(image)
+        if cache is not warmup:images.append(image)
     assert images[0]==images[1]
