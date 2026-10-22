@@ -565,7 +565,12 @@ class ChartCanvas(QWidget):
                              data.empty_text if data else '暂无可用数据')
             return
         if data.kind == 'donut':
-            self._paint_donut(painter)
+            previous = getattr(self, '_donut_body_only', False)
+            self._donut_body_only = True
+            try:
+                self._paint_donut(painter)
+            finally:
+                self._donut_body_only = previous
         elif data.kind == 'hbar':
             self._paint_hbar(painter)
         else:
@@ -1219,6 +1224,8 @@ class ChartCanvas(QWidget):
                                  Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, percent)
                 painter.setFont(self._font)
             part['legend'] = QRectF(x, y, column_width, line)
+        if not getattr(self, '_donut_body_only', False):
+            self._paint_current_tooltip(painter)
 
     def _paint_donut_value_labels(self, painter, rect):
         font = QFont(self._strong)
