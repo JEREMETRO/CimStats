@@ -48,6 +48,7 @@ class GpuScene:
     materials: np.ndarray
     commands: tuple[GpuCommand, ...]
     indices: np.ndarray | None = None
+    visibility: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,8 +295,10 @@ class _Builder:
         for values in (vertices, materials, indices):
             values.setflags(write=False)
         scene = GpuScene(vertices, materials, tuple(self.commands), indices)
-        from map_gpu_visibility import cull_commands
-        return replace(scene, commands=cull_commands(scene))
+        from map_gpu_visibility import cull_commands, SceneVisibility
+        commands=cull_commands(scene)
+        visibility=SceneVisibility.build(commands,self.cancelled)
+        return replace(scene,commands=commands,visibility=visibility)
 
 
 def _material(mode, source=None, target=None, *, fill=None, shell=None, gradient=None,

@@ -433,3 +433,21 @@ def test_real_query_proxy_options_keep_live_detached_keys_and_recent_scene_ident
         assert canvas._prepare_vectors() and canvas._prepare_gpu()
         assert canvas._gpu_scene is whole
     finally:page.close()
+
+def test_scene_cache_charges_worker_visibility_summary_without_traversing_tree(monkeypatch):
+    import numpy as np
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from map_gpu_geometry import GpuScene, GpuLayers
+    from map_scene_cache import retained_resources, SceneVariantCache
+    empty=GpuScene(np.empty((0,2)),np.empty((0,4)),())
+    baseline=retained_resources(GpuLayers(empty,empty))
+    tree_bytes=2*1024*1024
+    prepared=replace(empty,visibility=SimpleNamespace(estimated_bytes=tree_bytes))
+    checkpoints=[]
+    actual=retained_resources(GpuLayers(prepared,prepared),lambda:checkpoints.append(True))
+    assert sum(size for _,size in actual.values())==sum(size for _,size in baseline.values())+tree_bytes
+    assert len(actual)==1 and len(checkpoints)<3
+    cache=SceneVariantCache(byte_budget=tree_bytes//2)
+    cache.put('oversize-tree',GpuLayers(prepared,prepared))
+    assert not len(cache) and cache.retained_bytes==0

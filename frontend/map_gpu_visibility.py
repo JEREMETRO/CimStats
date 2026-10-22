@@ -1,37 +1,97 @@
 """Prepare bounded index ranges off the GUI thread; never alter geometry."""
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import numpy as np
 
 
+def _checkpoint(cancelled):
+    if cancelled is not None and (cancelled() if callable(cancelled) else cancelled.is_set()):
+        raise InterruptedError()
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class BoundsTree:
+    """CPU-only immutable tree, prepared before a scene reaches its renderer."""
+    boxes: np.ndarray
+    nodes: tuple
+    all_indices: np.ndarray
+    estimated_bytes: int
+
+    @classmethod
+    def build(cls, boxes, cancelled=None):
+        _checkpoint(cancelled)
+        # Own the bounds: legacy callers can keep mutable input arrays without
+        # changing the shared scene metadata underneath another GL context.
+        values=np.asarray(boxes,dtype=float).reshape(-1,4)
+        boxes=np.empty(values.shape,dtype=float);boxes[:]=values
+        boxes.setflags(write=False)
+        all_indices=np.arange(len(boxes),dtype=np.int64)
+        all_indices.setflags(write=False)
+        nodes=[]
+
+        def build(ids):
+            _checkpoint(cancelled)
+            selected=boxes[ids]
+            bounds=(*np.min(selected[:,:2],axis=0),*np.max(selected[:,2:],axis=0))
+            index=len(nodes);nodes.append(None)
+            if len(ids)<=128:
+                nodes[index]=(bounds,ids,None)
+            else:
+                centers=selected[:,:2]+(selected[:,2:]-selected[:,:2])*.5
+                axis=int(np.argmax(np.ptp(centers,axis=0)))
+                ids=ids[np.argsort(centers[:,axis],kind='stable')]
+                ids.setflags(write=False)
+                _checkpoint(cancelled)
+                middle=len(ids)//2
+                left=build(ids[:middle]);right=build(ids[middle:])
+                nodes[index]=(bounds,left,right)
+            return index
+
+        if len(boxes):build(all_indices)
+        _checkpoint(cancelled)
+        # Leaf slices can keep their sorting parent's full owner alive. Twice
+        # the leaf payload bounds that storage even for uneven subdivisions;
+        # the node allowance includes tuples, scalar bounds and array headers.
+        estimated=4096+boxes.nbytes+all_indices.nbytes*3+len(nodes)*1024
+        return cls(boxes,tuple(nodes),all_indices,estimated)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class SceneVisibility:
+    command_tree: BoundsTree
+    member_tree: BoundsTree
+
+    @property
+    def estimated_bytes(self):
+        return 256+self.command_tree.estimated_bytes+self.member_tree.estimated_bytes
+
+    @classmethod
+    def build(cls, commands, cancelled=None):
+        command_boxes=[];member_boxes=[]
+        for index,command in enumerate(commands):
+            if index%256==0:_checkpoint(cancelled)
+            command_boxes.append(command.bounds)
+            if command.connection_rank>=0:
+                for offset,member in enumerate(command.connection_members):
+                    if offset%256==0:_checkpoint(cancelled)
+                    member_boxes.append(member[1])
+        return cls(BoundsTree.build(command_boxes,cancelled),
+                   BoundsTree.build(member_boxes,cancelled))
+
+
 class BoundsCandidates:
-    """Immutable AABB tree and one bounded, conservative view neighbourhood.
+    """Private view neighbourhood around a shareable immutable AABB tree.
 
     Only membership is cached: callers still apply exact bounds, LOD and draw
     order on every frame. Storage is linear in the source boxes; distant or
     city-wide views traverse existing nodes rather than empty spatial cells.
     """
     def __init__(self, boxes):
-        self.boxes=np.asarray(boxes,dtype=float).reshape(-1,4)
-        self.nodes=[]
+        self.tree=boxes if isinstance(boxes,BoundsTree) else BoundsTree.build(boxes)
+        self.boxes=self.tree.boxes
+        self.nodes=self.tree.nodes
         self._region=None
         self._candidates=np.empty(0,dtype=np.int64)
-        self._all=np.arange(len(self.boxes),dtype=np.int64)
-        if len(self.boxes):self._build(self._all)
-
-    def _build(self, ids):
-        boxes=self.boxes[ids]
-        bounds=(*np.min(boxes[:,:2],axis=0),*np.max(boxes[:,2:],axis=0))
-        index=len(self.nodes);self.nodes.append(None)
-        if len(ids)<=128:
-            self.nodes[index]=(bounds,ids,None)
-        else:
-            centers=boxes[:,:2]+(boxes[:,2:]-boxes[:,:2])*.5
-            axis=int(np.argmax(np.ptp(centers,axis=0)))
-            ids=ids[np.argsort(centers[:,axis],kind='stable')]
-            middle=len(ids)//2
-            left=self._build(ids[:middle]);right=self._build(ids[middle:])
-            self.nodes[index]=(bounds,left,right)
-        return index
+        self._all=self.tree.all_indices
 
     def query(self, bounds):
         x0,y0,x1,y1=bounds

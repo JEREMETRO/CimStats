@@ -228,7 +228,9 @@ class GpuMapRenderer:
         commands=scene.commands
         self._commands=commands
         self._screen_margin=max(40.,float(materials[:,29].max(initial=0))*.5+2.)
-        self._bounds=np.asarray([c.bounds for c in commands],dtype=float).reshape(-1,4)
+        visibility=getattr(scene,'visibility',None)
+        self._bounds=(visibility.command_tree.boxes if visibility is not None else
+                      np.asarray([c.bounds for c in commands],dtype=float).reshape(-1,4))
         self._minimum=np.asarray([c.min_zoom for c in commands],dtype=np.float32)
         self._maximum=np.asarray([c.max_zoom for c in commands],dtype=np.float32)
         self._command_rank=np.asarray([c.connection_rank for c in commands],dtype=int)
@@ -277,11 +279,13 @@ class GpuMapRenderer:
         data=np.asarray(members,dtype=float).reshape(-1,8)
         self._member_command=data[:,0].astype(np.int64)
         self._member_order=data[:,1].astype(np.int64)
-        self._member_bounds=np.ascontiguousarray(data[:,2:6])
+        visibility=getattr(self.scene,'visibility',None)
+        self._member_bounds=(visibility.member_tree.boxes if visibility is not None else
+                             np.ascontiguousarray(data[:,2:6]))
         self._member_span=data[:,6]
         self._member_material=data[:,7].astype(np.int64)
-        self._command_candidates=BoundsCandidates(self._bounds)
-        self._member_candidates=BoundsCandidates(self._member_bounds)
+        self._command_candidates=BoundsCandidates(visibility.command_tree if visibility is not None else self._bounds)
+        self._member_candidates=BoundsCandidates(visibility.member_tree if visibility is not None else self._member_bounds)
         self._first=np.empty(len(commands),dtype=np.int64)
         self._tile_first=np.empty(self._tile_count,dtype=np.int64)
         self._ordinary=np.flatnonzero(self._command_rank<0)

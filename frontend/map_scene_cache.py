@@ -130,6 +130,8 @@ def _scene_bytes(scene,cancelled):
     # allowances deliberately overcount shared scalar/bounds Python objects.
     total=(sys.getsizeof(scene)+sys.getsizeof(scene.commands)
            +_array_bytes((scene.vertices,scene.materials,scene.indices)))
+    visibility=getattr(scene,'visibility',None)
+    if visibility is not None:total+=visibility.estimated_bytes
     for start in range(0,len(scene.commands),1024):
         if cancelled is not None and cancelled():raise InterruptedError()
         total+=sum(1024+384*len(command.connection_members) for command in scene.commands[start:start+1024])
