@@ -219,6 +219,8 @@ def _quantity_trend(source: Result, ids: tuple[str, ...], include_comparison: bo
 
 def _quantity_bar(source: Result, ids: tuple[str, ...], mode: str) -> Result:
     """One latest observed value per category, within each requested period."""
+    if source.query.metric == 'vehicles-running':
+        return _vehicle_result(source, ids, mode, distribution=True)
     def at_end(series, window):
         output = {}
         groups = sorted({group for company, group in series if company in ids})
@@ -258,6 +260,56 @@ def _quantity_bar(source: Result, ids: tuple[str, ...], mode: str) -> Result:
                   if include_comparison and source.comparison_window else {},
                   source.current_window,
                   source.comparison_window if include_comparison else None)
+
+
+def _vehicle_result(source: Result, ids: tuple[str, ...], mode: str, *,
+                    distribution: bool = False) -> Result:
+    """Average the same complete company/category hours in both chart modes."""
+    owners = (SELECTED_KEY,) if mode == 'overall' and len(ids) > 1 else ids
+
+    def average(series, window):
+        output = {}
+        for owner in owners:
+            selected = ids if owner == SELECTED_KEY else (owner,)
+            groups = sorted({group for company, group in source.series.keys() | source.comparison.keys()
+                             if company in selected})
+            required = [(company, group) for company in selected for group in groups]
+            records = {key: {record.time: record for bucket in series.get(key, ())
+                             for record in bucket.raw if window[0] <= record.time < window[1]}
+                       for key in required}
+            common = set.intersection(*(set(records[key]) for key in required)) if required else set()
+            templates = next((buckets for key, buckets in series.items()
+                              if key[0] in selected and buckets), [])
+            intervals = ([(window[0], window[1], False)] if distribution else
+                         [(bucket.start, bucket.end, bucket.partial_period) for bucket in templates])
+            categories = groups if distribution else ['总计'] if groups else []
+            for category in categories:
+                keys = [key for key in required if category == '总计' or key[1] == category]
+                buckets = []
+                for start, end, partial in intervals:
+                    aligned = {time for time in common if start <= time < end}
+                    raw = sorted((record for key in keys for time, record in records[key].items()
+                                  if start <= time < end), key=lambda record: record.time)
+                    numerator = (sum(records[key][time].value for key in keys for time in aligned)
+                                 if aligned else None)
+                    value = (Decimal(numerator) / source.metric.scale / len(aligned)
+                             if aligned else None)
+                    expected = int((end - start) / timedelta(hours=1))
+                    complete = (value is not None and not partial and len(aligned) == expected
+                                and all(not record.current for record in raw))
+                    buckets.append(Bucket(start, end, value, complete, partial,
+                                          max(aligned) if aligned else None, numerator, None,
+                                          len(aligned), raw))
+                output[(owner, category)] = buckets
+        return output
+
+    compared = mode == 'period'
+    query = replace(source.query, companies=ids, group=None if distribution else '__total__',
+                    comparison=source.query.comparison if compared else None)
+    return Result(query, source.metric, average(source.series, source.current_window),
+                  average(source.comparison, source.comparison_window)
+                  if compared and source.comparison_window else {},
+                  source.current_window, source.comparison_window if compared else None)
 
 
 def _last_day_result(result: Result) -> Result:
@@ -423,6 +475,14 @@ def _chart_result(snapshot: DashboardResult, key: str, ids: tuple[str, ...],
                                                    'coverage', 'transfer-coefficient')
               else snapshot.breakdowns[key])
     include_comparison = options.mode == 'period'
+    if key == 'vehicles-running':
+        result = _vehicle_result(snapshot.breakdowns[key], ids, options.mode)
+        if options.mode == 'period' and result.comparison_window is None:
+            return result, '请选择对比周期'
+        buckets = [bucket for series in result.series.values() for bucket in series]
+        reason = (('数据不完整' if any(bucket.raw for bucket in buckets) else NO_HISTORY)
+                  if not buckets or all(bucket.value is None for bucket in buckets) else '')
+        return result, reason
     if key == 'stopcount':
         source = _quantity_trend(source, ids, include_comparison)
     if (options.mode in ('companies', 'period') or key == 'company-passengers' or
@@ -543,7 +603,7 @@ def build_network_snapshot(snapshot: DashboardResult, options: NetworkOptions,
                           if key in ('linecount', 'stopcount', 'vehicles-running') and
                           result is not None else None)
             title = ('分公司客流' if key == 'company-passengers' else
-                     '公司参与行程次数' if key == 'trip-types' else
+                     '公共交通出行量' if key == 'trip-types' else
                      snapshot.results[key].metric.label)
             charts.append(NetworkChart(key, title,
                                        selected[0] if options.mode == 'period' else None,

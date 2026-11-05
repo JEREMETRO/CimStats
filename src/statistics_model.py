@@ -16,7 +16,7 @@ HOUR = timedelta(hours=1)
 class Metric:
     label: str
     scope: str  # city or company
-    kind: str  # flow, stock, average, ratio_flow, ratio_stock
+    kind: str  # flow, stock, average, weighted, ratio_flow, ratio_stock
     unit: str
     scale: int = 1
     confirmed: bool = True
@@ -38,7 +38,7 @@ METRICS = {
     'coverage': Metric('覆盖率', 'company', 'ratio_flow', '%'),
     'transport-by-group': Metric('分群体客流', 'company', 'flow', '人次'),
     'transport-by-type': Metric('分制式客流', 'company', 'flow', '人次'),
-    'trip-types': Metric('公司参与行程次数', 'company', 'flow', '人次'),
+    'trip-types': Metric('公共交通出行量', 'company', 'flow', '人次'),
     'transfer-coefficient': Metric('平均换乘系数', 'company', 'coefficient', '倍'),
     'population': Metric('人口', 'city', 'stock', '人'),
     'economy': Metric('经济增长／利率', 'city', 'ratio_stock', '%'),
@@ -334,6 +334,13 @@ def calculate_transfer_coefficient(segments, journeys, segment_scope, journey_sc
 
 def summarize_buckets(buckets: list[Bucket], metric: Metric) -> Decimal | None:
     """One interval value, preserving numerator/denominator and hour weights."""
+    if metric.kind == 'weighted':
+        observed = [b for b in buckets if b.observed is not None]
+        if any(b.value is None and (b.numerator or b.denominator) for b in observed):
+            return None
+        denominator = sum(b.denominator or 0 for b in observed)
+        return (Decimal(sum(b.numerator or 0 for b in observed)) / denominator
+                if denominator > 0 else None)
     if metric.kind == 'coefficient':
         observed = [b for b in buckets if b.numerator is not None or b.denominator is not None]
         # Missing inputs cannot silently become zero or disappear from a ratio.

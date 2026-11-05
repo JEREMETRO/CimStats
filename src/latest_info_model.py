@@ -447,7 +447,7 @@ def build_latest_info(data: dict, company_id: str = '', mode: str = '综合', *,
                               (f'公司：{company_scope}' if company_id else '全市公共交通') + f'    全部制式    {day_scope}',
                               coefficient_reason, coefficient_complete)))
     def highlight(title, field, maximum):
-        valid = [s for s in summaries if getattr(s, field) is not None]
+        valid = [s for s in summaries if s.departures != 0 and getattr(s, field) is not None]
         selected = (max if maximum else min)(valid, key=lambda s: getattr(s, field), default=None)
         return LineHighlight(title, selected)
     highlights = (highlight('当日最大客流线路', 'passengers', True),

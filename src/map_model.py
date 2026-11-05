@@ -123,6 +123,7 @@ class MapStop:
     id: int
     name: str
     position: Point
+    can_stop: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,7 +205,7 @@ class MapSnapshot:
     asset_signature: str = ''
     diagnostics: tuple[str, ...] = ()
     bounds: tuple[float, float, float, float] = (0., 0., 1., 1.)
-    schema_version: int = 13
+    schema_version: int = 14
     junctions: tuple[MapJunction, ...] = ()
 
 class MapModel:

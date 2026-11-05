@@ -65,3 +65,7 @@
 默认、多公司、同期互斥；同期比较各公司自己的两个周期，非同期提交空比较窗口。不等长周期按相对时间对齐并显示真实时间，不截掉较长周期尾部，也不计算不可比增长。
 
 百分点与相对百分比区分，缺基准不能显示涨跌或触发提醒；颜色不是通用经营评价。测试入口：[test_history_contract.py](../../src/test_history_contract.py)、[test_statistics_model.py](../../src/test_statistics_model.py)、[test_network_model.py](../../src/test_network_model.py)、[test_city_model.py](../../src/test_city_model.py)。
+
+车辆分类分布使用整个所选窗口的有效小时均值；趋势使用相同的公司、分类及共同有效小时，按时间桶汇总。分类分布之和与整窗趋势的小时加权均值一致，最后日摘要沿用上文规则。
+
+平均出行时间以到达次数为分母、累计分钟为分子。跨日、跨周和跨月摘要汇总两项原始量后相除；普通图、放大摘要及导出共用该口径。

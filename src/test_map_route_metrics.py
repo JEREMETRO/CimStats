@@ -179,4 +179,4 @@ def test_extraction_preserves_stop_occurrence_offsets_depot_partition_and_cache_
     assert r.leg_map_length_units == (100,200) and r.depot_map_length_units == (10,20)
     assert r.leg_duration_ticks == (8*TICKS,17*TICKS)
     restored=_decode_snapshot(json.loads(json.dumps(asdict(snapshot))))
-    assert restored == snapshot and restored.schema_version == SCHEMA_VERSION == 13
+    assert restored == snapshot and restored.schema_version == SCHEMA_VERSION == 14

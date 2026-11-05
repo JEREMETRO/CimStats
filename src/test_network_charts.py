@@ -363,7 +363,7 @@ def test_city_coefficient_legend_and_enlarged_summary_never_use_selected_company
 
     item = next(c for c in state.charts if c.key == 'trip-types')
     cards = summary_cards(item.result, state.companies)
-    assert cards[0]['display_values'][0][0] == '区间参与行程次数'
+    assert cards[0]['display_values'][0][0] == '区间公共交通出行量'
 
 
 def test_shared_axis_override_controls_line_horizontal_and_stacked_charts():

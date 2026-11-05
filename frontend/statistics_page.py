@@ -313,6 +313,7 @@ class StatisticsPage(QWidget):
         self.token, self.workers = 0, []
         self._requested_query_key = None
         self._closing, self._layout_mode, self._layout_signature = False, None, None
+        self._pending_date_picker = None
         self._filters_collapsed = False
         self._filter_animation = None
         self._filter_animating = False
@@ -927,45 +928,90 @@ class StatisticsPage(QWidget):
             self.network_workers.remove(worker)
         worker.deleteLater()
 
+    def _queue_date_picker(self, combo, open_picker):
+        # The dropdown deletes its menu on close. Entering a modal event loop
+        # from the item signal can destroy that menu while its click is active.
+        self._pending_date_picker = (combo, open_picker)
+        QTimer.singleShot(0, self, self._open_pending_date_picker)
+
+    def _open_pending_date_picker(self):
+        pending, self._pending_date_picker = self._pending_date_picker, None
+        if pending is None or self._closing:
+            return
+        combo, open_picker = pending
+        if combo.currentData() != 'custom':
+            return
+        if combo.isVisible():
+            open_picker()
+            return
+        preset = (self.range_preset if combo is self.range_combo else
+                  self._comparison_state(self.tab_bar.currentRouteKey())[1])
+        self._restore_combo(combo, preset)
+
+    def _pick_dates(self, start, end, title='自定义时间'):
+        timed = any(value.hour or value.minute or value.second for value in (start, end))
+        # Use the existing native owner; a child statistics page must not
+        # acquire a new native window when the modal is constructed.
+        picker = RangePicker(start, end if timed else end - timedelta(days=1),
+                             title=title, parent=self.window())
+        selected = picker.selected_range() if picker.exec() == QDialog.DialogCode.Accepted else None
+        picker.deleteLater()
+        return selected
+
     def _range_changed(self, *_):
         choice = self.range_combo.currentData()
         if choice == 'custom':
-            if self.simulation_time is None:
-                self._restore_combo(self.range_combo, self.range_preset)
-                return
-            start, end = self._range_window or preset_window(self.simulation_time, 'previous_full_week')
-            timed = any(value.hour or value.minute or value.second for value in (start, end))
-            picker = RangePicker(start, end if timed else end - timedelta(days=1), parent=self)
-            if picker.exec() != QDialog.DialogCode.Accepted:
-                self._restore_combo(self.range_combo, self.range_preset)
-                return
-            self._custom_window = picker.selected_range()
+            self._queue_date_picker(self.range_combo, self._choose_custom_range)
+            return
+        self._apply_range_preset(choice)
+
+    def _choose_custom_range(self):
+        if self.simulation_time is None:
+            self._restore_combo(self.range_combo, self.range_preset)
+            return
+        start, end = self._range_window or preset_window(self.simulation_time, 'previous_full_week')
+        window = self._pick_dates(start, end)
+        if window is None:
+            self._restore_combo(self.range_combo, self.range_preset)
+            return
+        self._custom_window = window
+        self._apply_range_preset('custom')
+
+    def _apply_range_preset(self, choice):
         self.range_preset = choice
         self._refresh_range_summary()
         self.schedule_query()
 
     def _compare_changed(self, *_):
         route = self.tab_bar.currentRouteKey()
-        _, preset, custom = self._comparison_state(route)
         choice = self.compare_combo.currentData()
         if choice == 'custom':
-            if self._range_window is None:
-                self._restore_combo(self.compare_combo, preset)
-                return
-            start, end = self._range_window
-            previous = custom or (start - (end - start), start)
-            timed = any(value.hour or value.minute or value.second for value in previous)
-            picker = RangePicker(previous[0], previous[1] if timed else previous[1] - timedelta(days=1),
-                                 title='自定义对比周期', parent=self)
-            if picker.exec() != QDialog.DialogCode.Accepted:
-                self._restore_combo(self.compare_combo, preset)
-                return
-            if route == 'network':
-                self._network_custom_comparison = picker.selected_range()
-            elif route == 'city':
-                self._city_custom_comparison = picker.selected_range()
-            else:
-                self._custom_comparison = picker.selected_range()
+            self._queue_date_picker(self.compare_combo, lambda: self._choose_custom_comparison(route))
+            return
+        self._apply_comparison_preset(route, choice)
+
+    def _choose_custom_comparison(self, route):
+        if self.tab_bar.currentRouteKey() != route:
+            return
+        _, preset, custom = self._comparison_state(route)
+        if self._range_window is None:
+            self._restore_combo(self.compare_combo, preset)
+            return
+        start, end = self._range_window
+        previous = custom or (start - (end - start), start)
+        window = self._pick_dates(*previous, title='自定义对比周期')
+        if window is None:
+            self._restore_combo(self.compare_combo, preset)
+            return
+        if route == 'network':
+            self._network_custom_comparison = window
+        elif route == 'city':
+            self._city_custom_comparison = window
+        else:
+            self._custom_comparison = window
+        self._apply_comparison_preset(route, 'custom')
+
+    def _apply_comparison_preset(self, route, choice):
         if route == 'network':
             self.network_comparison_preset = choice
             if self.settings:

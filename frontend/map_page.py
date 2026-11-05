@@ -504,6 +504,7 @@ class MapPage(QWidget):
             if self.query is not None:
                 self._apply_current()
                 self._restore_view()
+                self._wait_for_current_frame()
         finally:self._switching=False
         self.export_context_changed.emit()
 
@@ -903,6 +904,12 @@ class MapPage(QWidget):
             self._awaiting_frame=False
             self.surface.set_loading(False)
 
+    def _wait_for_current_frame(self):
+        snapshot=self.canvas.snapshot
+        self._awaiting_frame=bool(any((snapshot.roads,snapshot.buildings,snapshot.routes,
+            snapshot.stops,snapshot.junctions)) and not self.canvas.can_export())
+        self.surface.set_loading(self._awaiting_frame)
+
     def _render_failed(self, message):
         self._failed(self._generation,message)
 
@@ -948,7 +955,8 @@ class MapPage(QWidget):
             lines=self.session.get('lines',())
             metrics=(selected_route_metrics(route,state['direction'],state['deadhead'],
                 whole_duration_minutes=optional_number(line_display_value(line,'单程时间',lines)) if line else None,
-                whole_length_km=optional_number(line_display_value(line,'地图里程',lines)) if line else None)
+                whole_length_km=optional_number(line_display_value(line,'地图里程',lines)) if line else None,
+                waypoint_ids={stop.id for stop in self.query.snapshot.stops if stop.can_stop is False})
                 if route is not None else None)
             self.single_panel.set_state(dict(self.presets.state('single')['query'],selected_route_id=identity))
             self.single_panel.set_route(route,facts,
@@ -963,6 +971,7 @@ class MapPage(QWidget):
         modes=state.get('layer_modes')
         visible=sum(1 for route in self.result.routes if state.get('routes',True) and (modes is None or route.mode in modes))
         self.status.setText('   ·   '.join(str(v) for v in (city,day,f'显示 {visible} 条线路',f'已选 {len(self.result.routes)} 条') if v))
+        self._wait_for_current_frame()
         self.export_context_changed.emit()
 
     def showEvent(self,event):

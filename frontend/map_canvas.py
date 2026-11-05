@@ -44,8 +44,12 @@ _GPU_BASE_OPTIONS = {'roads','road_levels','buildings','building_classes',
 
 def _gpu_base_key(snapshot,options):
     """Value snapshots for base options; identity for immutable saved geometry."""
-    filters=tuple(None if options[key] is None else frozenset(options[key])
-                  for key in ('road_levels','building_classes','building_uses'))
+    levels=options['road_levels']
+    if levels is not None and all(road_display_level(road) in levels for road in snapshot.roads):
+        levels=None
+    filters=(None if levels is None else frozenset(levels),
+             *(None if options[key] is None else frozenset(options[key])
+               for key in ('building_classes','building_uses')))
     return (snapshot.source_hash,snapshot.asset_signature,
             id(snapshot.roads),id(snapshot.junctions),id(snapshot.buildings),
             options['roads'],options['buildings'],*filters,
@@ -321,6 +325,8 @@ class _MapDrawing:
             legs=set(operating_leg_indices(route,direction))
             stop_ids=visible_route_stop_ids(route,direction)
             for leg,sid,position in self._stop_symbols.get(route.id,()):
+                if self._stops[sid].can_stop is False:
+                    continue
                 if sid not in stop_ids or (leg!=-1 and leg not in legs):
                     continue
                 if viewport and not (viewport[0]<=position[0]<=viewport[2] and
@@ -1267,11 +1273,11 @@ class MapCanvas(_MapDrawing, QWidget):
             self._path_bounds={}
         if _index_key(snapshot) != _index_key(previous):
             self._pending_focus = None
-            self._index_failed_key = None
             if (snapshot.source_hash, snapshot.asset_signature) != (previous.source_hash, previous.asset_signature):
                 self._highlight = None
             if self._index_job is not None:
                 self._index_job.cancel()
+        self._index_failed_key = None
         self._indexes_ready = False
         state = _prepare_indexes(snapshot, self._index_cache, self._index_state,
                                  cached_only=self._async_render)
@@ -1499,12 +1505,17 @@ class MapCanvas(_MapDrawing, QWidget):
         for kind,name in (('route','routes'),('stop','stops'),('building','buildings')):
             boxes = {item.id:box for item,box in self._indexes.get(name,_SpatialIndex([],self.snapshot.bounds)).entries}
             for item in getattr(self.snapshot,name):
+                if kind=='stop' and item.can_stop is False:
+                    continue
                 label = self.route_label(item) if kind == 'route' else item.name
                 if needle in label.casefold() or needle == str(item.id) or (kind=='route' and needle==str(item.number)):
                     results.append(MapSearchResult(kind,item.id,label,boxes.get(item.id,self.snapshot.bounds)))
         return results
 
     def focus_result(self,result):
+        if result.kind=='stop' and any(stop.id==result.id and stop.can_stop is False
+                                       for stop in self.snapshot.stops):
+            return False
         if not self._indexes_ready:
             if any(item.id == result.id for item in getattr(self.snapshot, result.kind+'s', ())):
                 self._pending_focus = (_index_key(self.snapshot), result)

@@ -348,7 +348,10 @@ class MapQuery:
                     continue
             buildings.append(building)
             colors[building.id] = color
-        result = (tuple(buildings), MappingProxyType(colors))
+        # Equivalent full selections share the saved geometry owner, so preset
+        # switches can reuse the compiled base without duplicating its buffers.
+        visible = self.snapshot.buildings if len(buildings) == len(self.snapshot.buildings) else tuple(buildings)
+        result = (visible, MappingProxyType(colors))
         self._building_cache[key] = result
         if len(self._building_cache) > 8:
             self._building_cache.popitem(last=False)

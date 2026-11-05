@@ -259,6 +259,7 @@ class CityChartPanel(ChartPanel):
         clone = CityChartPanel(self.city_key, dialog)
         clone.city_controller = self.city_controller
         clone._hidden_groups = set(self._hidden_groups)
+        clone._category_choices = dict(self._category_choices)
         clone.set_comparison_label(self._comparison_label)
         clone.set_mode(self.mode)
         clone.set_result(self.result)
@@ -354,7 +355,9 @@ class CityDashboard(QWidget):
         valid = bool(self.snapshot and self.snapshot.pie_valid)
         panel.mode_control.setItemEnabled('pie', valid)
         panel.mode_control.setToolTip(self.snapshot.pie_reason if self.snapshot else '尚未载入数据')
+        panel.mode_control.blockSignals(True)
         panel.mode_control.setCurrentKey(panel.mode)
+        panel.mode_control.blockSignals(False)
 
     def _time_result(self):
         # Keep hidden series in the result so their legend buttons remain available.
@@ -378,9 +381,6 @@ class CityDashboard(QWidget):
 
     def _mode_for_panel(self, mode, panel, fullscreen):
         self.set_mode(mode)
-        if fullscreen and self.snapshot:
-            panel.set_mode(self.panels['city-mode-share'].mode)
-            panel.set_result(self.snapshot.pie_result if panel.mode == 'pie' else self.snapshot.charts['city-mode-share'])
 
     def set_mode(self, mode):
         if not self.snapshot:
@@ -391,9 +391,15 @@ class CityDashboard(QWidget):
         if self.settings:
             self.settings.setValue('city/mode', mode)
         panel = self.panels['city-mode-share']
-        panel.set_mode(mode)
-        panel.set_result(self.snapshot.pie_result if mode == 'pie' else self.snapshot.charts['city-mode-share'])
-        self._sync_mode_control(panel)
+        targets = [panel]
+        surface = panel._fullscreen_dialog
+        if surface is not None and surface.isVisible():
+            panel._adopt_hidden(surface.panel)
+            targets.append(surface.panel)
+        result = self.snapshot.pie_result if mode == 'pie' else self.snapshot.charts['city-mode-share']
+        for target in targets:
+            target.set_presentation(mode, result)
+            self._sync_mode_control(target)
         panel.motion.reveal()
 
     def set_snapshot(self, snapshot, comparison_label='对比期'):
@@ -411,7 +417,13 @@ class CityDashboard(QWidget):
             selected = ('平均',)
         self.panels['trip-time'].set_result(self._time_result())
         self.set_curves(selected)
-        self.set_mode(self.mode_preference or ('pie' if snapshot.pie_valid else 'line'))
+        mode = self.mode_preference or ('pie' if snapshot.pie_valid else 'line')
+        if mode == 'pie' and not snapshot.pie_valid:
+            mode = 'line'
+        # New data replaces the detail; chart-type switches above do not.
+        self.panels['city-mode-share'].set_result(
+            snapshot.pie_result if mode == 'pie' else snapshot.charts['city-mode-share'])
+        self.set_mode(mode)
         self.panels['trip-time'].setToolTip(snapshot.kpis['trip-time'].reason)
         self.panels['energy-prices'].setToolTip('')
 

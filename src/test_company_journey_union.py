@@ -167,7 +167,7 @@ def test_query_cancellation_is_preserved():
         overall_transfer(snapshot, lambda: True)
 
 
-def test_export_keeps_city_scope_and_truthful_company_detail_name(tmp_path):
+def test_export_keeps_city_scope_and_names_company_detail(tmp_path):
     from stats_exports import export_xlsx
     from openpyxl import load_workbook
     snapshot = source(counters(), ('a',))
@@ -177,7 +177,8 @@ def test_export_keeps_city_scope_and_truthful_company_detail_name(tmp_path):
     assert any(r[7] == '出行量' and r[8] == 1 and '全市公共交通' in (r[16] or '')
                and r[3] is None and r[4] is None and not r[14]
                for r in list(book['网络摘要'].values)[1:])
-    assert any('公司参与行程' in str(r[0]) for sheet in book for r in sheet.values)
+    assert any(r[:6] == ('公共交通出行量', 'a', 'A', '单线', '分组', '人次') and r[9] == 1
+               for r in book['客流数据看板'].values)
     missing = source([r for r in counters() if r['指标'] != 'public-transport'])
     export_xlsx(missing, path, NAMES, network(missing))
     assert any(r[7] == '出行量' and r[8] is None and r[11] == '公共交通行程数据不完整'

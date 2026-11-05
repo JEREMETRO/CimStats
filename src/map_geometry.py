@@ -44,7 +44,7 @@ def probe_script():
 
 
 PROJECT = runtime_root()
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 SOCIAL_GROUPS = ('BlueCollar','WhiteCollar','Student','BusinessPeople','Pensioner','Tourist')
 
 
@@ -597,7 +597,7 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
                                                      c['source_lane'],c['target_lane'],c['type_mask'],paths))
         junctions.append(MapJunction(j['id'],tuple(j['position']),tuple(j.get('road_ids',())),tuple(connections),
                                      j.get('bridge',False),j.get('tunnel',False),';'.join(issues) or None))
-    stops={int(s['id']):MapStop(int(s['id']),s.get('name',''),tuple(s['position']))
+    stops={int(s['id']):MapStop(int(s['id']),s.get('name',''),tuple(s['position']),s.get('can_stop'))
            for s in data.get('stops',{}).values() if s.get('position') is not None}
     depots={b['id']:b for b in data.get('buildings',()) if b.get('kind')=='DepotData'}
     routes=[]; direction_jobs=[]
@@ -608,7 +608,8 @@ def snapshot_from_data(data, source_hash='', asset_signature='', cancelled=None,
         operational=records[1:] if has_depot else records
         for s in operational:
             if s.get('position') is not None:
-                stops[s['id']]=MapStop(s['id'],s.get('name',''),tuple(s['position']))
+                stops[s['id']]=MapStop(s['id'],s.get('name',''),tuple(s['position']),
+                                      s.get('can_stop',getattr(stops.get(s['id']),'can_stop',None)))
         issues=[]; legs=[]; analysis_legs=[]; depot_paths=[];depot_leg_paths=[]
         raw_legs=line.get('legs',())
         # Solve all operating legs together. The same saved road at a stop
@@ -1153,6 +1154,14 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
             except AttributeError: pass
         return metadata.GetValue(obj) if metadata is not None else None
     array=e.array_values
+    # Synthesized CLR prefabs have default False fields. Use only confirmed
+    # catalog flags, falling back to saved evidence through the shared helper.
+    waypoint_flags={str(record['id']):record.get('waypoint') for record in catalog.values()
+                    if record.get('class_name')=='StopObject'}
+    def stop_record(obj):
+        return dict(id=identity(obj),name=str(field(obj,'m_name') or ''),
+                    position=vector(field(obj,'m_position')),
+                    can_stop=e.can_stop_here_serialized(obj,waypoint_flags=waypoint_flags))
     def optional_int(obj, name):
         value = field(obj, name)
         return int(value) if value is not None else None
@@ -1284,7 +1293,7 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
                                   function_capacities=native_function_capacities(metadata,multiplier,tables),
                                   service_lines=dict(known=False,route_ids=[],unresolved_refs=[],source=None)))
         elif kind=='StopData':
-            stops[str(oid)]=dict(id=oid,name=str(field(obj,'m_name') or ''),position=vector(field(obj,'m_position')))
+            stops[str(oid)]=stop_record(obj)
         elif kind=='JunctionData':
             junction_record(obj)
     # JunctionData has no serialized footprint. Its actual turning geometry
@@ -1326,10 +1335,6 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
     if line is not None:
         print('line_fields:'+','.join(str(f.Name) for f in line.GetType().GetFields(e.FLAGS)),flush=True)
     frame_time_span = None
-    # Catalog-created CLR objects have default fields. Only a confirmed
-    # waypoint flag is authoritative; old catalogs fall back to saved counts.
-    waypoint_flags={str(record['id']):record.get('waypoint') for record in catalog.values()
-                    if record.get('class_name')=='StopObject'}
     while line is not None:
         oid=identity(line)
         if oid in seen: raise ValueError('Line linked list cycle')
@@ -1341,9 +1346,7 @@ def _extract_objects(e,root,catalog,*,distribution_tables=None):
         runtime_stops = array(field(line,'m_stops'))
         for i,stop in enumerate(runtime_stops):
             actual=field(stop,'m_stop')
-            line_stops.append(dict(id=identity(actual),name=str(field(actual,'m_name') or ''),
-                                   position=vector(field(actual,'m_position')),
-                                   arrival_offset_ticks=optional_int(stop,'m_timeOffset')))
+            line_stops.append(stop_record(actual)|dict(arrival_offset_ticks=optional_int(stop,'m_timeOffset')))
             references=[]
             for segment in array(field(stop,'m_path')):
                 road=field(segment,'m_road')

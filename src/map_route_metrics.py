@@ -50,7 +50,8 @@ def _km(parts):
 
 def selected_route_metrics(route: MapRoute, direction: str = 'whole', include_depot: bool = False, *,
                            whole_duration_minutes: float | None = None,
-                           whole_length_km: float | None = None) -> RouteMetrics:
+                           whole_length_km: float | None = None,
+                           waypoint_ids=frozenset()) -> RouteMetrics:
     """Only whole views may use the original information-page fallback values."""
     if direction not in ('whole', 'up', 'down'):
         raise ValueError(direction)
@@ -64,8 +65,10 @@ def selected_route_metrics(route: MapRoute, direction: str = 'whole', include_de
     expected_legs = len(route.stop_ids)-1
     # Business calls retain repeated station identities and the shared terminal.
     # Whole-route information keeps its original line-page availability rules.
-    station_count = (terminal+1 if effective == 'down' else len(route.stop_ids)-terminal
-                     if effective == 'up' else None)
+    station_count = None
+    if effective != 'whole':
+        start, end = (0, terminal) if effective == 'down' else (terminal, len(route.stop_ids)-1)
+        station_count = sum(identity not in waypoint_ids for identity in route.stop_ids[start:end+1])
     indices = tuple(operating_leg_indices(route, effective, leg_count=max(0,expected_legs)))
     lengths = route.leg_map_length_units
     selected_lengths = ([lengths[i] for i in indices]
@@ -93,7 +96,6 @@ def selected_route_metrics(route: MapRoute, direction: str = 'whole', include_de
             ticks = int(duration * TICKS_PER_MINUTE)
     else:
         offsets = route.stop_arrival_offsets_ticks
-        start, end = (0, terminal) if effective == 'down' else (terminal, len(route.stop_ids)-1)
         selected = offsets[start:end+1] if len(offsets) == len(route.stop_ids) else ()
         if (selected and all(type(v) is int and v >= 0 for v in selected)
                 and all(a <= b for a,b in zip(selected,selected[1:]))):

@@ -89,7 +89,7 @@ def test_new_route_query_reuses_base_despite_new_routes_and_stops(cached_canvas)
 
 
 @pytest.mark.parametrize('options', [
-    {'roads': False}, {'road_levels': {'local'}}, {'buildings': False},
+    {'roads': False}, {'road_levels': {'express'}}, {'buildings': False},
     {'building_classes': {'Student'}}, {'building_uses': {'work'}},
     {'building_colors': {2: '#123456'}},
 ])

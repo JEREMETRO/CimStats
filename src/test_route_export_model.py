@@ -131,6 +131,24 @@ def test_station_count_uses_the_selected_business_stop_sequence_even_when_hidden
     assert row==('站点数',label,count)
 
 
+@pytest.mark.parametrize('direction,station_ids,station_count', [
+    ('down', (1,), 1), ('up', (3,), 1), ('whole', (1, 3), None),
+])
+def test_path_control_point_is_not_an_export_station(direction, station_ids, station_count):
+    from route_export_model import ExportOptions, build_export_request
+    session, snapshot = source()
+    options = ExportOptions(direction=direction)
+    baseline = build_export_request(session, snapshot, 42, options)
+    classified = replace(snapshot, stops=tuple(replace(stop, can_stop=stop.id != 2)
+                                               for stop in snapshot.stops))
+    request = build_export_request(session, classified, 42, options)
+    assert tuple(stop.id for stop in request.stops) == station_ids
+    assert request.metrics.station_count == station_count
+    assert request.paths == baseline.paths
+    assert request.metrics.operating_km == baseline.metrics.operating_km
+    assert request.metrics.approved_duration_ticks == baseline.metrics.approved_duration_ticks
+
+
 def test_direction_station_count_keeps_repeated_business_calls_and_shared_terminal():
     from route_export_model import ExportOptions,build_export_request
     session,snapshot=source();a,b,c=(0.,0.,0.),(100.,0.,100.),(200.,0.,0.)

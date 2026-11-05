@@ -387,7 +387,7 @@ def test_quantity_bar_marks_category_with_older_endpoint_incomplete():
     assert (tram.value, tram.observed, tram.complete) == (4, D(2024, 1, 2), False)
 
 
-def test_vehicle_bar_uses_last_observed_hour_not_interval_average():
+def test_vehicle_bar_uses_interval_average_not_last_observed_hour():
     from network_model import NetworkOptions, build_network_snapshot
 
     rows = [history('vehicles-running', 'a', 0, 2 * 1024),
@@ -396,7 +396,7 @@ def test_vehicle_bar_uses_last_observed_hour_not_interval_average():
                                      NetworkOptions(), NAMES)
     descriptor = chart(network, 'vehicles-running')
     assert descriptor.result.series[('a', '总计')][0].value == Decimal(5)
-    assert descriptor.bar_result.series[('a', 'bus')][0].value == Decimal(8)
+    assert descriptor.bar_result.series[('a', 'bus')][0].value == Decimal(5)
     assert descriptor.bar_result.series[('a', 'bus')][0].observed == D(2024, 1, 2, 1)
 
 

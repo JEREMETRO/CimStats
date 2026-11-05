@@ -260,7 +260,21 @@ class ChartPanel(QFrame):
 
     # --------------------------------------------------------- data in
     def set_result(self, result, companies: dict[str, str] | None = None):
+        self._set_result(result, companies, cancel_detail=True)
+
+    def set_presentation(self, mode: str, result, companies: dict[str, str] | None = None):
+        """Switch representations of the current snapshot without leaving detail.
+
+        New query/session data must continue to enter through ``set_result``.
+        The controller owns synchronising an active detail's representation.
+        """
+        self.set_mode(mode)
+        self._set_result(result, companies, cancel_detail=False)
+
+    def _set_result(self, result, companies, *, cancel_detail):
         from chart_content_key import result_key
+        if cancel_detail and result is not self.result:
+            self._cancel_detail()
         content_key = (result_key(result), tuple((companies or {}).items()))
         if getattr(self, '_result_content_key', None) == content_key:
             self.result = result
@@ -269,8 +283,6 @@ class ChartPanel(QFrame):
         self._result_content_key = content_key
         from stats_motion import settle_surface_motion
         settle_surface_motion(self)
-        if result is not self.result:
-            self._cancel_detail()
         self.result = result
         self.companies = companies or {}
         self._render()

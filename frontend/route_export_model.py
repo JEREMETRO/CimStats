@@ -150,16 +150,18 @@ def build_export_request(session,map_snapshot,route_id,options,*,branding=None):
     line=session_line(session,route_id)
     if len(matches)!=1 or line is None:raise ExportError('选中线路不存在或身份不唯一')
     route=matches[0]
+    waypoint_ids={stop.id for stop in map_snapshot.stops if stop.can_stop is False}
     metrics=selected_route_metrics(route,options.direction,options.include_deadhead,
         whole_duration_minutes=_number(line_display_value(line,'单程时间',session.get('lines',()))),
-        whole_length_km=_number(line_display_value(line,'地图里程',session.get('lines',()))))
+        whole_length_km=_number(line_display_value(line,'地图里程',session.get('lines',()))),
+        waypoint_ids=waypoint_ids)
     direction=metrics.effective_direction
     paths=tuple(operating_paths(route,direction))
     if not usable_paths(paths):raise ExportError('当前线路没有可导出的运营路径')
     if options.include_deadhead:
         paths+=_depot_paths(route,direction)
     ids=visible_route_stop_ids(route,direction)
-    stops=tuple(s for s in map_snapshot.stops if s.id in ids)
+    stops=tuple(s for s in map_snapshot.stops if s.id in ids and s.id not in waypoint_ids)
     source=line_information(session,route_id,direction_metrics=metrics)
     suffix={'whole':'全线','up':'上行','down':'下行'}[direction]
     sections=[]

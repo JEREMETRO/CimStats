@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from PySide6.QtCore import Qt, QRect, QPoint, QEvent
+from PySide6.QtCore import Qt, QRect, QPoint, QEvent, QPropertyAnimation, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QApplication, QDialog, QWidget, QLabel, QVBoxLayout,
-                               QHBoxLayout, QPlainTextEdit, QScrollArea, QFrame)
+                               QHBoxLayout, QPlainTextEdit, QScrollArea, QFrame,
+                               QGraphicsOpacityEffect)
 from qfluentwidgets import PushButton, MessageBoxBase
 from shiboken6 import isValid
 
@@ -27,6 +28,9 @@ class _CompactDialog(MessageBoxBase):
         clear_secondary_window_icon(self)
         self.motion = SurfaceMotion(self)
         self._closing_surface = False
+        self._close_generation = 0
+        self._close_animation = None
+        self._close_effect = None
         self._return_focus = None
         self.yesButton.setText('关闭')
         self.yesButton.setFixedWidth(104)
@@ -64,6 +68,8 @@ class _CompactDialog(MessageBoxBase):
         self.widget.setFixedHeight(min(natural, max(1, available_height)))
 
     def showEvent(self, event):
+        self._close_generation += 1
+        self._clear_close_animation()
         self._closing_surface = False
         self._fit_surface()
         QDialog.showEvent(self, event)
@@ -75,10 +81,42 @@ class _CompactDialog(MessageBoxBase):
             return
         self._closing_surface = True
         self.motion.finish()
+        self._close_generation += 1
+        generation = self._close_generation
+        finish = lambda: self._finish_close(code, generation)
         if animations_enabled():
-            super().done(code)
+            # Keep Fluent's 100ms fade, but do not make closing depend on its
+            # target surviving: replacing an effect stops Qt's animation.
+            self.widget.setGraphicsEffect(None)
+            effect = QGraphicsOpacityEffect(self)
+            self._close_effect = effect
+            self.setGraphicsEffect(effect)
+            animation = QPropertyAnimation(effect, b'opacity', self)
+            self._close_animation = animation
+            animation.setStartValue(1.)
+            animation.setEndValue(0.)
+            animation.setDuration(100)
+            animation.finished.connect(finish)
+            animation.start()
+            QTimer.singleShot(100, self, finish)
         else:
-            QDialog.done(self, code)
+            finish()
+
+    def _clear_close_animation(self):
+        animation, self._close_animation = self._close_animation, None
+        effect, self._close_effect = self._close_effect, None
+        if animation is not None and isValid(animation):
+            animation.stop()
+            animation.deleteLater()
+        if effect is not None and isValid(effect) and self.graphicsEffect() is effect:
+            self.setGraphicsEffect(None)
+
+    def _finish_close(self, code, generation):
+        if generation != self._close_generation:
+            return
+        self._close_generation += 1
+        self._clear_close_animation()
+        QDialog.done(self, code)
 
     def eventFilter(self, watched, event):
         if (watched is self.parentWidget() and self.isVisible() and
