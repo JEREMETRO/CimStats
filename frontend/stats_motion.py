@@ -334,12 +334,13 @@ def send_surface_input(target, event):
 
 
 class CollapseMotion(QObject):
-    def __init__(self, widget, finished, surface=None):
+    def __init__(self, widget, finished, surface=None, *, collapsed_surface_height=None):
         super().__init__(widget)
         self.widget, self.finished = widget, finished
         self.animation = None
         self.collapsed = False
         self.surface = surface
+        self.collapsed_surface_height = collapsed_surface_height
         self.surface_start = 0
         self.surface_end = 0
         self.on_progress = None
@@ -381,6 +382,8 @@ class CollapseMotion(QObject):
             content_height = self.widget.sizeHint().height()
             self.surface_end = (natural_height - content_height - self.surface.layout().spacing()
                                 if collapsed else natural_height)
+            if collapsed and self.collapsed_surface_height is not None:
+                self.surface_end = self.collapsed_surface_height
             outer = self.surface.layout()
             if self._frozen_surface_layout is None and outer.isEnabled():
                 if start == 0:

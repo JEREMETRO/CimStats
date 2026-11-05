@@ -173,6 +173,7 @@ class NetworkSummaryCard(QFrame):
         super().__init__(parent)
         self.summary = summary
         self.overview = options.mode == 'overall'
+        self.collapsed_height = 46 if tight else 50
         self.setObjectName('networkSummaryCard')
         attach_card_elevation(self)
         self.setStyleSheet(f'QFrame#networkSummaryCard {{ background: {CARD_BG}; '
@@ -211,7 +212,8 @@ class NetworkSummaryCard(QFrame):
             tile.option_changed.connect(self.option_changed)
             self.tiles.append(tile)
         box.addWidget(self.tile_host)
-        self.summary_motion = CollapseMotion(self.tile_host, self._summary_finished, self)
+        self.summary_motion = CollapseMotion(self.tile_host, self._summary_finished, self,
+                                             collapsed_surface_height=self.collapsed_height)
         self.summary_motion.on_progress = self._summary_finished
         self.reflow(3)
 
@@ -490,7 +492,7 @@ class NetworkDashboard(QWidget):
                 self.summary_cards[index].reflow(summary_columns)
                 if self._viewport_height > 0:
                     card = self.summary_cards[index]
-                    target = 46 if card.summary_motion.collapsed else 160 if summary_columns == 6 else 248
+                    target = card.collapsed_height if card.summary_motion.collapsed else 160 if summary_columns == 6 else 248
                     summary_height = self._summary_height(card, target)
                     chart_width = (section_width - (chart_columns - 1) * CONTROL_GAP) // chart_columns
                     chart_rows = (len(self._sections[index][2]) + chart_columns - 1) // chart_columns
@@ -524,7 +526,7 @@ class NetworkDashboard(QWidget):
                 summary_tile_columns = (wide_columns if width >= wide_minimum else
                                         3 if width >= 760 else 2)
                 summary_rows = (len(card.tiles) + summary_tile_columns - 1) // summary_tile_columns
-                target = 50 if card.summary_motion.collapsed else 52 + summary_rows * 96 + (summary_rows - 1) * CONTROL_GAP + 2
+                target = card.collapsed_height if card.summary_motion.collapsed else 52 + summary_rows * 96 + (summary_rows - 1) * CONTROL_GAP + 2
                 summary_height = self._summary_height(card, target)
                 if self._viewport_height > 0:
                     chart_rows = (len(charts) + chart_columns - 1) // chart_columns
@@ -538,7 +540,7 @@ class NetworkDashboard(QWidget):
                 expanded_height = max(card.minimumSizeHint().height() + 2 for card in self.summary_cards)
                 summary_heights = []
                 for card in self.summary_cards:
-                    target = 50 if card.summary_motion.collapsed else expanded_height
+                    target = card.collapsed_height if card.summary_motion.collapsed else expanded_height
                     summary_heights.append(self._summary_height(card, target))
                 summary_rows = (len(self.summary_cards) + summary_columns - 1) // summary_columns
                 summary_height = sum(max(summary_heights[row * summary_columns:(row + 1) * summary_columns])

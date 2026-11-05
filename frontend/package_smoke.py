@@ -280,33 +280,49 @@ def _assert_map_composition(widget, captured, canvas):
     if viewport is None or canvas._vector_gl_failed:
         return None
     import numpy as np
-    from PySide6.QtCore import QPoint, Qt
-    from PySide6.QtGui import QImage
+    from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSizeF, Qt
+    from PySide6.QtGui import QImage, QPainter
     from PySide6.QtWidgets import QWidget
     ratio = captured.devicePixelRatioF()
     origin = canvas.mapTo(widget, QPoint())
-    width, height = round(canvas.width()*ratio), round(canvas.height()*ratio)
-    actual = captured.toImage().copy(round(origin.x()*ratio), round(origin.y()*ratio), width, height)
-    expected = viewport.grabFramebuffer()
+    crop = QRectF(QPointF(origin)*ratio, QSizeF(canvas.size())*ratio).toAlignedRect()
+    width, height = crop.width(), crop.height()
+    framebuffer = viewport.grabFramebuffer()
+    assert framebuffer.size() == canvas.size()*ratio, 'vector frame has the wrong dimensions'
+    # QWidget's non-backing-store capture draws the framebuffer into the
+    # viewport's logical rectangle. A fractional origin or extent changes
+    # which physical rows are sampled, so reproduce that exact projection.
+    if framebuffer.format() == QImage.Format.Format_RGB32:
+        framebuffer.reinterpretAsFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    projected = QImage(captured.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    projected.setDevicePixelRatio(ratio)
+    projected.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(projected)
+    try:
+        painter.drawImage(QRect(origin, canvas.size()), framebuffer)
+    finally:
+        painter.end()
     def pixels(image):
         image = image.convertToFormat(QImage.Format.Format_RGBA8888)
         return np.frombuffer(image.bits(), np.uint8).reshape(
-            image.height(), image.bytesPerLine()//4, 4)[:, :image.width(), :3].copy()
-    actual, expected = pixels(actual), pixels(expected)
+            image.height(), image.bytesPerLine()//4, 4)[:, :image.width()].copy()
+    actual = pixels(captured.toImage().copy(crop))
+    expected = pixels(projected.copy(crop))
     assert actual.shape == expected.shape, 'composited map has the wrong dimensions'
-    mask = np.ones((height, width), dtype=bool)
+    mask = expected[:, :, 3] != 0
     # Search, zoom and loading controls are siblings deliberately over the map.
     for overlay in canvas.parentWidget().findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
         if overlay is canvas or not overlay.isVisible():
             continue
-        top = overlay.geometry().topLeft()-canvas.geometry().topLeft()
-        left, upper = round(top.x()*ratio), round(top.y()*ratio)
-        right, lower = left+round(overlay.width()*ratio), upper+round(overlay.height()*ratio)
+        bounds = QRectF(QPointF(overlay.mapTo(widget, QPoint()))*ratio,
+                        QSizeF(overlay.size())*ratio).toAlignedRect()
+        left, upper = bounds.x()-crop.x(), bounds.y()-crop.y()
+        right, lower = left+bounds.width(), upper+bounds.height()
         if right <= 0 or lower <= 0 or left >= width or upper >= height:
             continue
         mask[max(0, upper-2):min(height, lower+2), max(0, left-2):min(width, right+2)] = False
     assert np.any(mask), 'no uncovered map pixels to verify'
-    mismatch = _map_composition_mismatch(actual, expected)
+    mismatch = _map_composition_mismatch(actual[:, :, :3], expected[:, :, :3])
     fraction = float(np.count_nonzero(mismatch & mask)/np.count_nonzero(mask))
     assert fraction < .001, ('composited map differs from its current vector frame', fraction)
     return dict(pixels_compared=int(np.count_nonzero(mask)), mismatch_fraction=fraction)
