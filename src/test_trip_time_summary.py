@@ -33,6 +33,25 @@ def test_trip_time_detail_weights_completed_journeys_across_buckets(grain):
     assert summarize_buckets(result.series[('', '平均')], result.metric) == Decimal(72)
 
 
+@pytest.mark.parametrize(('grain', 'observed_buckets'), [
+    ('hour', [(30, 60, 2, 1), (100, 300, 3, 1), (16, 80, 5, 1)]),
+    ('day', [(72, 360, 5, 2), (16, 80, 5, 1)]),
+    ('week', [(44, 440, 10, 3)]),
+    ('month', [(44, 440, 10, 3)]),
+])
+def test_trip_time_curve_points_weight_all_observations_in_each_bucket(grain, observed_buckets):
+    state = snapshot([
+        row('trip-time', 'WhiteCollar', D(2024, 1, 1), 60, 2),
+        row('trip-time', 'WhiteCollar', D(2024, 1, 1, 23), 300, 3),
+        row('trip-time', 'WhiteCollar', D(2024, 1, 2, 12), 80, 5),
+    ], grain=grain)
+    result = state.charts['trip-time']
+    for group in ('平均', 'WhiteCollar'):
+        buckets = result.series[('', group)]
+        assert [(b.value, b.numerator, b.denominator, b.effective_hours)
+                for b in buckets if b.value is not None] == observed_buckets
+
+
 def test_seven_day_duration_summary_uses_arrivals_instead_of_summing_day_means():
     # Native hourly records aggregated into daily numerator/denominator pairs,
     # from Eixeia's [2013-05-20, 2013-05-27) history. No private save required.

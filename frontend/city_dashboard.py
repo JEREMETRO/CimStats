@@ -256,7 +256,9 @@ class CityChartPanel(ChartPanel):
 
     def _point_note(self, company, group, bucket, previous):
         parts = []
-        if bucket.observed:
+        if self.city_key == 'trip-time':
+            parts.append(f'统计时段 {bucket.start:%Y-%m-%d %H:%M} 至 {bucket.end:%Y-%m-%d %H:%M}')
+        elif bucket.observed:
             parts.append(f'实际观测 {bucket.observed:%Y-%m-%d %H:%M}')
         if not bucket.complete:
             parts.append('数据不完整')

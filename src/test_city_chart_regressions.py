@@ -12,7 +12,7 @@ from statistics_model import HistoryStore
 from test_city_model import r
 
 
-def city_snapshot(comparison=False, public=3):
+def city_snapshot(comparison=False, public=3, grain='hour'):
     rows = [r(name, 'A', hour, amount, 10) for hour in range(3)
             for name, amount in [('walking', 5), ('public-transport', public), ('private-motoring', 5-public)]]
     rows += [r('trip-time', 'WhiteCollar', hour, amount, 2)
@@ -22,7 +22,7 @@ def city_snapshot(comparison=False, public=3):
         rows += [{**row, '模拟时间': (D.strptime(row['模拟时间'], '%Y-%m-%d %H:%M:%S')
                  - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')} for row in list(rows)]
     return build_city_snapshot(HistoryStore(rows, D(2024, 1, 4)),
-        FilterState((), D(2024, 1, 2), D(2024, 1, 2, 3), 'hour', before))
+        FilterState((), D(2024, 1, 2), D(2024, 1, 2, 3), grain, before))
 
 
 def city_window(monkeypatch, comparison=False):
@@ -111,6 +111,25 @@ def test_new_city_snapshot_cancels_detail_without_adopting_old_selection(monkeyp
     assert '步行' not in source._hidden_groups
     assert source.result is dashboard.snapshot.pie_result
     window.close()
+
+
+@pytest.mark.parametrize(('grain', 'end_hour', 'value', 'suffix'), [
+    ('hour', 1, 30, ''), ('day', 3, 40, ' · 数据不完整'),
+    ('week', 3, 40, ' · 数据不完整'), ('month', 3, 40, ' · 数据不完整'),
+])
+def test_trip_time_chart_points_show_own_period_bounds(grain, end_hour, value, suffix):
+    dashboard = CityDashboard()
+    try:
+        dashboard.set_snapshot(city_snapshot(comparison=True, grain=grain))
+        panel = dashboard.panels['trip-time']
+        points = [s for s in panel.chart_views[0].data.series if s.key == '平均']
+        assert [(s.faded, s.values[0], s.notes[0]) for s in points] == [
+            (previous, value,
+             f'统计时段 2024-01-0{day} 00:00 至 2024-01-0{day} {end_hour:02}:00{suffix}')
+            for previous, day in ((False, 2), (True, 1))
+        ]
+    finally:
+        dashboard.close()
 
 
 def test_trip_types_detail_summary_names_public_transport_volume():
