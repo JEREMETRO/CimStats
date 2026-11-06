@@ -834,6 +834,7 @@ class MainWindow(FluentMainWindow):
         self._mount_header_tabs(self.map_page,self.map_tabs)
         self.map_page.failed.connect(lambda message: self._notify('地图读取失败', message, error=True))
         self.map_page.ready.connect(self._refresh_exports)
+        self.map_page.route_details_requested.connect(self._show_line_details_from_map)
         self.map_page.export_context_changed.connect(self._refresh_exports)
         self.map_page.canvas.export_availability_changed.connect(lambda _:self._refresh_exports())
         self.pages.addWidget(self.map_page)
@@ -901,6 +902,17 @@ class MainWindow(FluentMainWindow):
         if not self.map_page.show_route(route_id, save_token):
             return False
         self.navigate(1)
+        return True
+
+    def _show_line_details_from_map(self, route_id, save_token):
+        from map_service_time import session_line
+        if tuple(save_token) != self.map_page.save_token:
+            return False
+        line = session_line(self.data, route_id)
+        if line is None:
+            return False
+        self._open_latest_line(line['key'])
+        self.lines_page.set_schedule_expanded(False)
         return True
 
     # ------------------------------------------------------------ import

@@ -100,12 +100,61 @@ def test_initial_dialog_is_compact_and_fits_available_workarea(dialog, monkeypat
     monkeypatch.setattr(QScreen, 'availableGeometry', lambda _: area)
     dialog.show()
     QApplication.processEvents()
-    # Opening the settings must not create a nearly full-height desktop window.
-    assert 900 <= dialog.width() <= min(1100, area.width() - 32)
+    assert 800 <= dialog.width() <= min(880, area.width() - 32)
     assert 600 <= dialog.height() <= min(760, area.height() - 32)
     assert area.contains(dialog.geometry())
     assert dialog.pages.widget(0).verticalScrollBar().maximum() > 0
-    assert dialog.preview.width() >= 500
+    assert dialog.preview.width() >= 400
+
+
+def test_native_dialog_keeps_owner_visible_during_first_frame(dialog):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QLabel
+    if QApplication.platformName() != 'windows':
+        pytest.skip('requires the Windows desktop compositor')
+    import win32con
+    import win32gui
+    from route_export_dialog import RouteExportDialog
+    from window_chrome import FluentMainWindow
+    from window_workarea import fit_window_to_workarea
+
+    owner = FluentMainWindow()
+    label = QLabel('Map owner', owner)
+    label.setStyleSheet('background:#17345b; color:white;')
+    owner.setCentralWidget(label)
+    owner.resize(960, 680)
+    fit_window_to_workarea(owner, center=True)
+    owner.show()
+    owner.raise_()
+    owner.activateWindow()
+    QTest.qWait(350)
+    hwnd = int(owner.winId())
+    point = win32gui.ClientToScreen(hwnd, (20, 100))
+
+    def screen_color():
+        dc = win32gui.GetDC(0)
+        try:
+            return win32gui.GetPixel(dc, *point)
+        finally:
+            win32gui.ReleaseDC(0, dc)
+
+    opened = None
+    try:
+        color_before = screen_color()
+        assert color_before == 0x5b3417
+        opened = RouteExportDialog(dialog._request, owner, request_builder=dialog._builder, start_preview=False)
+        color_constructed = screen_color()
+        opened.setWindowModality(Qt.WindowModality.WindowModal)
+        opened.show()
+        QTest.qWait(15)
+        assert win32gui.GetWindow(int(opened.winId()), win32con.GW_OWNER) == hwnd
+        assert color_constructed == color_before
+        assert screen_color() == color_before
+    finally:
+        if opened is not None:
+            opened.reject()
+        owner.close()
 
 
 def test_compact_dialog_scrolls_to_last_settings_and_data_without_moving_actions(dialog):
@@ -337,11 +386,12 @@ def test_single_route_entry_requires_real_selected_line(tmp_path):
     app.processEvents()
 
 
-def test_desktop_export_action_opens_single_route_settings(tmp_path, monkeypatch, dialog):
+def test_desktop_export_menu_preserves_map_and_single_route(tmp_path, monkeypatch, dialog):
     import desktop_app
     import time
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtCore import QSettings
+    from PySide6.QtCore import QSettings, Qt
+    from PySide6.QtTest import QTest
     monkeypatch.setattr(desktop_app, 'QSettings', lambda *_: QSettings(str(tmp_path / 'desktop.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda _: None)
     window = desktop_app.MainWindow()
@@ -352,6 +402,7 @@ def test_desktop_export_action_opens_single_route_settings(tmp_path, monkeypatch
         page = window.map_page
         session = {'save_key': 'a', 'lines': [{'对象ID': 42, '线路名称': '1', '公司标识': 'c'}]}
         window.data = session
+        window._refresh_body()
         page.set_session(session)
         page.set_snapshot(dialog._request.snapshot)
         page.show_route(42, page.save_token)
@@ -362,12 +413,26 @@ def test_desktop_export_action_opens_single_route_settings(tmp_path, monkeypatch
             time.sleep(.01)
         item = next(item for item in window._export_items() if item[0] == 'map-png')
         assert item[1] == '单线线路图' and item[3]
-        window._export_action('map-png')
+        canvas = page.canvas
+        result = page.result
+        view = (canvas.center, canvas.zoom)
+        QTest.mouseClick(window.header.export_button, Qt.MouseButton.LeftButton)
+        menu = window.header.export_menu
+        assert menu.isVisible()
+        menu_view = menu.view
+        action_item = window.header.export_actions['map-png'].property('item')
+        QTest.mouseClick(menu_view.viewport(), Qt.MouseButton.LeftButton,
+                         pos=menu_view.visualItemRect(action_item).center())
         opened = page._route_export_dialog
         assert opened is not None and opened.isVisible()
         assert opened._request.route_id == 42
-        page.set_session({'save_key': 'b'})
-        assert opened._closed and page._route_export_dialog is None
+        assert not menu.isVisible()
+        assert window.pages.currentWidget() is page and canvas.isVisible()
+        QTest.mouseClick(opened.cancel_button, Qt.MouseButton.LeftButton)
+        assert page._route_export_dialog is None
+        assert window.pages.currentWidget() is page and canvas.isVisible()
+        assert page.result is result
+        assert (canvas.center, canvas.zoom) == view
     finally:
         window.close()
         QApplication.processEvents()

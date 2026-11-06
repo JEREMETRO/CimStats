@@ -1,5 +1,5 @@
 """Compact line query surfaces; the list may float over a stable detail pane."""
-from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QEasingCurve, QEvent, QObject, QTimer, Slot, Signal
+from PySide6.QtCore import Qt, QRect, QPropertyAnimation, QVariantAnimation, QEasingCurve, QEvent, QObject, QTimer, Slot, Signal
 from PySide6.QtGui import QAction, QPainter, QFont, QColor, QFontMetrics
 import re
 from decimal import Decimal
@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridL
     QStyleOptionViewItem, QStyleOptionHeader, QToolTip)
 from qfluentwidgets import (CardWidget, PushButton, CheckableMenu, DropDownPushButton,
     LineEdit, ComboBox, TableWidget, TableItemDelegate, TransparentToolButton, FluentIcon, IconWidget, setCustomStyleSheet)
-from stats_motion import SurfaceMotion, CollapseMotion, animations_enabled
-from stats_controls import StatisticsScrollArea, configure_fluent_table, SummaryToggleButton
+from stats_motion import SurfaceMotion, animations_enabled
+from stats_controls import StatisticsScrollArea, configure_fluent_table
 from stats_elevation import attach_card_elevation
 import stats_tokens as tokens
 from stats_typography import emphasis_font, emphasis_css, apply_emphasis_font
@@ -370,6 +370,67 @@ class CompactFactCard(QFrame):
             str(alternate[0])+' '+shown(alternate[1]) if alternate else '')))
 
 
+class _LineDetailFold(QWidget):
+    """Clip the full-size detail card as it moves across its layout slot."""
+
+    def __init__(self, card, finished):
+        super().__init__()
+        self.card = card
+        self.finished = finished
+        self.animation = None
+        self._collapsed = False
+        self._offset = 0.
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(card)
+
+    def set_collapsed(self, collapsed, animated):
+        self._collapsed = collapsed
+        if not animated or not animations_enabled() or not self.parentWidget().isVisible():
+            self.finish()
+            return
+        self._stop()
+        self.layout().setEnabled(False)
+        animation = QVariantAnimation(self)
+        animation.setDuration(167 if collapsed else 250)
+        animation.setEasingCurve(QEasingCurve.Type.InCubic if collapsed else QEasingCurve.Type.OutCubic)
+        animation.setStartValue(self._offset)
+        animation.setEndValue(1. if collapsed else 0.)
+        animation.valueChanged.connect(self._move_card)
+        animation.finished.connect(self.finish)
+        self.animation = animation
+        self._move_card(self._offset)
+        self.show()
+        animation.start()
+
+    def _move_card(self, offset):
+        self._offset = offset
+        self.card.setGeometry(self.rect().translated(round(offset * self.width()), 0))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.animation is not None:
+            self._move_card(self._offset)
+
+    def _stop(self):
+        if self.animation is not None:
+            self.animation.stop()
+            self.animation.deleteLater()
+            self.animation = None
+
+    def finish(self):
+        self._stop()
+        self._offset = 1. if self._collapsed else 0.
+        if self._collapsed:
+            self.hide()
+        self.layout().setEnabled(True)
+        self.layout().invalidate()
+        self.layout().activate()
+        if not self._collapsed:
+            self.show()
+        self.finished()
+
+
 class LinesPage(QWidget):
     mapRequested = Signal(object, object)
 
@@ -472,7 +533,7 @@ class LinesPage(QWidget):
         self.right_host = QWidget()
         self.right_host.setMinimumWidth(620)
         right = QVBoxLayout(self.right_host); right.setContentsMargins(0,0,0,0); right.setSpacing(12)
-        self.detail = QFrame(); self.detail.setObjectName('lineDetailCard'); self.detail.setMaximumHeight(348)
+        self.detail = QFrame(); self.detail.setObjectName('lineDetailCard')
         attach_card_elevation(self.detail, radius=tokens.RADIUS_CARD)
         self.detail.setStyleSheet(f'QFrame#lineDetailCard {{background:{tokens.CARD_BG};border:1px solid {tokens.BORDER};border-radius:{tokens.RADIUS_CARD}px;}}')
         detail = QVBoxLayout(self.detail); detail.setContentsMargins(16,16,16,16); detail.setSpacing(8)
@@ -490,7 +551,10 @@ class LinesPage(QWidget):
         self.fact_menu_button.setFixedSize(max(104, self.fact_menu_button.sizeHint().width()),32)
         self.fact_menu = CheckableMenu(parent=self.fact_menu_button); self.fact_menu_button.setMenu(self.fact_menu)
         head.addWidget(self.fact_menu_button)
-        self.fact_fold_button = SummaryToggleButton(self.detail)
+        self.fact_fold_button = TransparentToolButton(self.detail)
+        self.fact_fold_button.setFixedSize(32, 32)
+        self.fact_fold_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.fact_fold_button.setIcon(FluentIcon.CHEVRON_RIGHT)
         self.fact_fold_button.setToolTip('收起线路数据')
         self.fact_fold_button.setAccessibleName('收起线路数据')
         self.fact_fold_button.clicked.connect(lambda: self.set_schedule_expanded(not self.schedule_expanded))
@@ -498,10 +562,12 @@ class LinesPage(QWidget):
         self.facts_host = QWidget(); self.facts_grid = QGridLayout(self.facts_host)
         self.facts_grid.setContentsMargins(0,0,0,0); self.facts_grid.setSpacing(8)
         for i in range(3): self.facts_grid.setColumnStretch(i,1)
-        detail.addWidget(self.facts_host, 1); right.addWidget(self.detail)
+        detail.addWidget(self.facts_host, 1)
+        self.detail_motion = _LineDetailFold(self.detail, self._finish_detail_motion)
+        self.detail_motion.setMaximumHeight(348)
+        right.addWidget(self.detail_motion)
         self.schedule_panel = schedule_factory()
         self.schedule_panel.expansionRequested.connect(lambda _: self.set_schedule_expanded(not self.schedule_expanded))
-        self.detail_motion = CollapseMotion(self.detail, self._finish_detail_motion)
         self.schedule_motion = SurfaceMotion(self.schedule_panel)
         right.addWidget(self.schedule_panel, 1)
         self.right_scroll.setWidget(self.right_host)
@@ -560,20 +626,18 @@ class LinesPage(QWidget):
         if expanded == self.schedule_expanded and self.detail_motion.animation is None:
             return
         self.schedule_expanded = expanded
-        self.fact_fold_button.set_collapsed(expanded)
+        self.fact_fold_button.setIcon(FluentIcon.LEFT_ARROW if expanded else FluentIcon.CHEVRON_RIGHT)
         action_text = '显示线路数据' if expanded else '收起线路数据'
         self.fact_fold_button.setToolTip(action_text)
         self.fact_fold_button.setAccessibleName(action_text)
+        if expanded and self.detail.isAncestorOf(self.focusWidget()):
+            button = self.schedule_panel.expansion_button
+            (button if button.isVisible() else self.right_scroll).setFocus()
         if not expanded:
             self.schedule_panel.set_expanded(False)
-        if animated:
-            self.detail_motion.set_collapsed(expanded)
-        else:
-            self.detail_motion.collapsed = expanded
-            self.detail_motion.finish()
+        self.detail_motion.set_collapsed(expanded, animated)
 
     def _finish_detail_motion(self):
-        self.detail.setMaximumHeight(348 if not self.schedule_expanded else 16777215)
         self.schedule_panel.set_expanded(self.schedule_expanded)
         self.right_host.layout().invalidate()
         self.right_host.layout().activate()

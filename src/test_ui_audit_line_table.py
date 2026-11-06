@@ -185,3 +185,32 @@ def test_reduced_motion_finishes_line_list_and_schedule_changes(page,monkeypatch
     assert page.detail.isVisible() and not page.schedule_panel.expanded
     assert page.detail_motion.animation is None
     assert page._animation.state()==QAbstractAnimation.State.Stopped
+
+
+def test_keyboard_fold_moves_details_right_and_restores_focus(page, monkeypatch):
+    from PySide6.QtCore import QPoint
+    monkeypatch.setattr('line_query_page.animations_enabled', lambda: True)
+    page.set_expanded(False, animated=False)
+    page.schedule_panel.set_line({'班次': {'工作日': []}})
+    QTest.qWait(20)
+    fold_button = page.fact_fold_button
+    schedule_button = page.schedule_panel.expansion_button
+    origin = page.detail.mapTo(page.right_host, QPoint())
+    fold_button.setFocus()
+    assert fold_button.hasFocus()
+    QTest.keyClick(fold_button, Qt.Key.Key_Space)
+    animation = page.detail_motion.animation
+    assert animation is not None
+    animation.setCurrentTime(animation.duration() // 2)
+    middle = page.detail.mapTo(page.right_host, QPoint())
+    assert middle.x() > origin.x() and middle.y() == origin.y()
+    animation.setCurrentTime(animation.duration())
+    assert not page.detail.isVisible()
+    assert schedule_button.hasFocus()
+    QTest.keyClick(schedule_button, Qt.Key.Key_Escape)
+    animation = page.detail_motion.animation
+    assert animation is not None
+    animation.setCurrentTime(animation.duration())
+    assert page.detail.isVisible()
+    assert page.detail.mapTo(page.right_host, QPoint()) == origin
+    assert fold_button.hasFocus()

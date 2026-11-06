@@ -116,6 +116,40 @@ def test_single_catalog_is_default_and_selection_opens_information(app,settings)
     finally:page.close()
 
 
+def test_single_map_details_selects_same_line_and_rejects_previous_save(app, settings, monkeypatch):
+    import desktop_app
+
+    monkeypatch.setattr(desktop_app, 'QSettings', lambda *_: settings)
+    monkeypatch.setattr(desktop_app.MainWindow, 'check_install', lambda _: None)
+    window = desktop_app.MainWindow()
+    line = {'对象ID': 20, 'key': 'a:20', '线路名称': 'Hill', '线路编号': '20',
+            '运输制式': '公交', '公司名称': 'Alpha', '公司标识': 'a'}
+    duplicate = {**line, '对象ID': 10, 'key': 'b:10', '公司名称': 'Beta', '公司标识': 'b'}
+    window.data = {'save_key': 'A', 'lines': [duplicate, line]}
+    window._awaiting_dashboards = False
+    window._refresh_body()
+    window.map_page.set_session(window.data)
+    window.map_page.set_snapshot(snapshot())
+    window.show()
+    try:
+        window.navigate(1)
+        assert window.map_page.show_route(20, window.map_page.save_token)
+        app.processEvents()
+        window.query.setText('此前的筛选')
+        button = window.map_page.single_panel.route_detail_button
+        assert button.isVisible() and button.isEnabled()
+        button.click()
+        app.processEvents()
+        assert window.pages.currentWidget() is window.lines_page
+        assert window.selected_key == 'a:20' and window._selected_line is line
+        assert window.query.text() == ''
+        assert not window._show_line_details_from_map(10, ('A', -1))
+        assert window._selected_line is line
+    finally:
+        window.close()
+        app.processEvents()
+
+
 # A detail jump made before the page is shown must override a pending saved list tab.
 def test_hidden_route_jump_keeps_information_active_after_layout_restore(app,settings):
     from map_page import MapPage

@@ -8,7 +8,7 @@ from math import isfinite
 import re
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QColor,QPixmap,QIcon
+from PySide6.QtGui import QColor,QPixmap,QIcon,QFontMetricsF
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QFrame, QHBoxLayout, QListWidgetItem, QSizePolicy, QStyle, QStyleOptionViewItem, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox, LineEdit, PushButton, TransparentPushButton
 
@@ -19,6 +19,7 @@ from map_panels import _ChoiceGroup, _OptionGrid, _SingleLineList, _style_contro
 from display_rules import display_mode
 from semantic_colors import color_for
 from map_line_labels import resolve_line_labels
+from map_service_time import wrap_operating_time
 from line_search import line_matches_search
 from stats_controls import StatisticsScrollArea
 from stats_typography import ui_font
@@ -386,8 +387,34 @@ class SingleLineListPanel(QWidget):
         self.routeSelected.emit(identity)
 
 
+class _OperatingTimeLabel(BodyLabel):
+    def __init__(self):
+        super().__init__()
+        self._schedule_text = '—'
+        self.setText(self._schedule_text)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def set_schedule_text(self, text):
+        if self._schedule_text != text:
+            self._schedule_text = text
+            self.setAccessibleName(text)
+            self._wrap_text()
+
+    def _wrap_text(self):
+        metrics = QFontMetricsF(self.font())
+        text = wrap_operating_time(self._schedule_text, self.contentsRect().width(), metrics.horizontalAdvance)
+        if text != self.text():
+            self.setText(text)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self._wrap_text()
+
+
 class SingleLinePanel(_PresetPanel):
     routeSelected = Signal(object)
+    detailRequested = Signal(object)
     directionChanged = Signal(str)
     deadheadChanged = Signal(bool)
 
@@ -403,7 +430,14 @@ class SingleLinePanel(_PresetPanel):
         self._catalog_view.line_list.setProperty('heightCap',112)
         self.search = self._catalog_view.search; self.route_list = self._catalog_view.line_list
         self._catalog_view.activated.connect(self._route_selected)
-        section = _section(self.body_layout); self.route_title = _label(section, '线路信息', True)
+        section = _section(self.body_layout)
+        header = QHBoxLayout()
+        self.route_title = _label(header, '线路信息', True)
+        header.setStretch(0, 1)
+        self.route_detail_button = _style_control(TransparentPushButton('线路详情'))
+        self.route_detail_button.clicked.connect(self._request_route_details)
+        header.addWidget(self.route_detail_button)
+        section.addLayout(header)
         self.route_identity = _label(section, '')
         self._direction = _ChoiceGroup([('up', '上行'), ('down', '下行'), ('whole', '双向')], 3)
         self.direction_buttons = dict(self._direction.buttons)
@@ -452,7 +486,8 @@ class SingleLinePanel(_PresetPanel):
 
     def _build_information(self):
         sections=_field(self._information,'sections') or (
-            ('line_information','线路信息',(('duration_minutes','核定时间（全线）','—'),('scheduled_departures','当日发班','—'))),
+            ('line_information','线路信息',(('运营时间','运营时间','—'),
+                ('duration_minutes','核定时间（全线）','—'),('scheduled_departures','当日发班','—'))),
             ('passenger_data','客流数据',(('transported_today','当日客流','—'),)))
         schema=tuple((key,tuple((field,label) for field,label,text in rows)) for key,title,rows in sections)
         if schema!=self._information_schema:
@@ -463,9 +498,12 @@ class SingleLinePanel(_PresetPanel):
                     if item.widget():item.widget().hide();item.widget().deleteLater()
             def add_row(layout,key,title):
                 host=QWidget();row=QHBoxLayout(host);row.setContentsMargins(0,0,0,0);row.setSpacing(10)
+                if key == '运营时间':
+                    title = '首末班时间'
                 caption=_style_control(BodyLabel(title),tokens.FONT_SIZE_BODY,tokens.TEXT_SECONDARY);caption.setWordWrap(True)
                 self.information_captions[key]=caption
-                value=_style_control(BodyLabel('—'));value.setWordWrap(True);value.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+                value=_style_control(_OperatingTimeLabel() if key=='运营时间' else BodyLabel('—'))
+                value.setWordWrap(key!='运营时间');value.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(caption);row.addWidget(value,1);layout.addWidget(host);self.information_labels[key]=value
                 return host,value
             geometry=self._data_layouts['line_information'];geometry_added=False
@@ -484,7 +522,19 @@ class SingleLinePanel(_PresetPanel):
             if not geometry_added:add_geometry()
         for section_id,title,rows in sections:
             for key,label,text in rows:
-                if key in self.information_labels:self.information_labels[key].setText(str(text))
+                if key in self.information_labels:self._set_information_value(key, text)
+
+    def _set_information_value(self, key, text):
+        value = self.information_labels[key]
+        if key == '运营时间':
+            value.set_schedule_text(str(text))
+        else:
+            value.setText(str(text))
+
+    def _request_route_details(self):
+        identity = _field(_field(self._information, 'identity'), 'id')
+        if identity is not None:
+            self.detailRequested.emit(identity)
 
     def _route_selected(self, identity):
         self.collapse_results()
@@ -503,6 +553,7 @@ class SingleLinePanel(_PresetPanel):
         route = self._route
         identity=_field(self._information,'identity')
         route_id=_field(route,'id')
+        self.route_detail_button.setVisible(route_id is not None and _field(identity, 'id') == route_id)
         label=next((record.get('display_label') for record in self._routes if record['id']==route_id),None)
         if route is not None and not label:label=resolve_line_labels((route,)).get(route_id)
         self.route_title.setText(str(label or _field(identity,'name',_field(route, 'name', '线路信息'))))
@@ -542,7 +593,7 @@ class SingleLinePanel(_PresetPanel):
                 for key,label,text in rows:
                     if key in self.information_labels:
                         pending=key in ('单程时间','核定速度') and information_direction != direction
-                        self.information_labels[key].setText('—' if pending else str(text))
+                        self._set_information_value(key, '—' if pending else text)
 
 
 class BuildingLineMenu(QFrame):

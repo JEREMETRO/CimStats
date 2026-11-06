@@ -201,7 +201,11 @@ class CityChartPanel(ChartPanel):
 
     def _chart_specs(self):
         if self.mode != 'pie' or self.result is None or not self.result.comparison:
-            return super()._chart_specs()
+            specs = super()._chart_specs()
+            if self.city_key == 'trip-time':
+                for _, data in specs:
+                    data.hidden_series_text = '曲线已隐藏，点击图例显示'
+            return specs
         output = []
         for previous, source, window in (
             (False, self.result.series, self.result.current_window),

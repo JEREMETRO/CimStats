@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QPoint, QRect, QTimer, Signal, QByteArray, QBuffer, QIODevice, QRegularExpression
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QByteArray, QBuffer, QIODevice, QRegularExpression
 from PySide6.QtGui import QPainter, QImage, QColor, QRegularExpressionValidator
-from PySide6.QtWidgets import QWidget, QLabel, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QSizePolicy
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QSizePolicy
 from qfluentwidgets import (Pivot, CheckBox, PushButton, PrimaryPushButton, DoubleSpinBox,
                             ColorDialog, ColorPickerButton, LineEdit)
 from window_chrome import FluentDialog, FluentFileDialog
@@ -44,7 +44,10 @@ class RouteExportDialog(FluentDialog):
     exported = Signal(object)
 
     def __init__(self, request, parent=None, *, request_builder, start_preview=True):
-        super().__init__(parent)
+        owner = None
+        if parent is not None and QApplication.platformName() == 'windows':
+            owner = parent.window().windowHandle()
+        super().__init__(None if owner is not None else parent)
         from route_export_model import FIELD_SECTIONS, measure_output
         self._request = request
         self._builder = request_builder
@@ -224,23 +227,23 @@ class RouteExportDialog(FluentDialog):
         self._updating = False
         self._sync_logo()
         self._sync_colors()
+        if owner is not None:
+            # Creating a QWidget-owned native dialog can clear the owner's
+            # composited frame. Attach the completed window instead.
+            self.windowHandle().setTransientParent(owner)
         if start_preview:
             self._timer.start()
 
     def sizeHint(self):
         # Settings scroll independently; their full height must not size the window.
-        return QSize(1040, 720)
+        return QSize(880, 720)
 
     def showEvent(self, event):
         if not self._initial_content_sized:
             self._initial_content_sized = True
-            available = self.screen().availableGeometry()
-            parent = self.parentWidget()
-            if parent is not None:
-                visible = QRect(parent.mapToGlobal(QPoint()), parent.size()).intersected(available)
-                if not visible.isEmpty():available = visible
+            available = self._dialog_placement_bounds()
             wanted = self.sizeHint()
-            self.resize(min(wanted.width(), max(1, available.width() - 32)),
+            self.resize(min(wanted.width(), max(1, available.width() - 80)),
                         min(wanted.height(), max(1, available.height() - 32)))
             self.move(available.center() - self.rect().center())
         super().showEvent(event)

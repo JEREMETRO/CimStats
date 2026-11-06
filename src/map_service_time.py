@@ -5,10 +5,31 @@ their running-day mask belongs to the template's starting calendar day.
 """
 from __future__ import annotations
 from datetime import datetime, timedelta
+import re
 from map_model import RouteService, ServiceTimetable
 from line_schedule import optional_integer, running_day_mask
 
 DAY_TICKS = 864_000_000_000
+
+
+def wrap_operating_time(value, width, measure):
+    """Keep weekday names and clock ranges intact when replacing separators with newlines."""
+    lines = []
+    line = ''
+    for group in value.split('，'):
+        parts = ([group] if measure(group) <= width else
+                 re.split(r'(?<=\d{2}:\d{2})、', group))
+        for index, part in enumerate(parts):
+            separator = '，' if index == 0 else '、'
+            candidate = line + (separator if line else '') + part
+            if line and measure(candidate) > width:
+                lines.append(line)
+                line = part
+            else:
+                line = candidate
+    if line:
+        lines.append(line)
+    return '\n'.join(lines)
 
 
 def session_line(session, route_id):

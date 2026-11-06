@@ -234,9 +234,11 @@ def test_fact_collapse_gives_timetable_full_right_and_restores_fields(lines_wind
     desktop_app.QApplication.processEvents()
     assert page.right_scroll.verticalScrollBar().maximum() == 0
 
-def test_fact_collapse_animation_reverses_from_current_height(lines_window, monkeypatch):
+
+def test_fact_collapse_animation_reverses_from_current_horizontal_position(lines_window, monkeypatch):
     from PySide6.QtTest import QTest
-    from PySide6.QtCore import QAbstractAnimation
+    from PySide6.QtCore import QAbstractAnimation, QPoint
+    monkeypatch.setattr('line_query_page.animations_enabled', lambda: True)
     monkeypatch.setattr('stats_motion.animations_enabled', lambda: True)
     page = lines_window.lines_page
 
@@ -257,19 +259,24 @@ def test_fact_collapse_animation_reverses_from_current_height(lines_window, monk
         assert page.detail_motion.animation is None
 
     page.motion.finish()
-    original = page.detail.height()
+    origin = page.detail.mapTo(page.right_host, QPoint())
+    original_size = page.detail.size()
+    schedule_geometry = page.schedule_panel.geometry()
     right = page.right_scroll.geometry()
     page.set_schedule_expanded(True)
     sample_current(90)
     assert page.detail_motion.animation is not None
-    middle = page.detail.height()
-    assert 0 < middle < original
-    assert page.schedule_panel.height() > 458
+    middle = page.detail.mapTo(page.right_host, QPoint())
+    assert origin.x() < middle.x() < origin.x() + original_size.width()
+    assert middle.y() == origin.y()
+    assert page.detail.size() == original_size
+    assert page.schedule_panel.geometry() == schedule_geometry
     page.set_schedule_expanded(False)
-    assert abs(page.detail.maximumHeight() - middle) <= 1
+    assert page.detail.mapTo(page.right_host, QPoint()) == middle
     wait_completed()
     assert not page.schedule_expanded and page.detail.isVisible()
-    assert page.detail.height() == original
+    assert page.detail.mapTo(page.right_host, QPoint()) == origin
+    assert page.detail.size() == original_size
     assert page.right_scroll.geometry() == right
     assert all(card.isVisible() for card in lines_window.fact_cards)
     for state in (True, False, True):
@@ -281,13 +288,15 @@ def test_fact_collapse_animation_reverses_from_current_height(lines_window, monk
     assert page.schedule_panel.matrix.minimum_row_height == 24
     page.set_schedule_expanded(False)
     sample_current(35)
+    assert page.detail.mapTo(page.right_host, QPoint()).x() > origin.x()
     interrupted = page.detail_motion.animation
     lines_window.navigate(0)
     assert interrupted.state() == QAbstractAnimation.State.Stopped
     lines_window.navigate(2)
     QTest.qWait(350)
     assert not page.schedule_expanded and page.detail.isVisible()
-    assert page.detail.height() == original, (page.detail.maximumHeight(),page.detail.sizeHint(),page.detail.minimumSizeHint(),page.schedule_panel.height(),page.schedule_panel.minimumHeight(),page.schedule_panel.matrix.columns,page.schedule_panel.summary_host.height(),page.right_host.size(),[(c.isVisible(),c.isHidden(),c.geometry()) for c in lines_window.fact_cards])
+    assert page.detail.mapTo(page.right_host, QPoint()) == origin
+    assert page.detail.size() == original_size
     assert page.detail_motion.animation is None
     assert page.schedule_panel.graphicsEffect() is None
 

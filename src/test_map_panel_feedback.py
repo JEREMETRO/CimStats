@@ -118,10 +118,48 @@ def test_length_duration_speed_are_contiguous_before_stop_count_after_line_dates
         # Actual visible Qt row positions, rather than a source-code order check.
         keys=[next(key for key,value in p.information_labels.items() if value.parentWidget() is layout.itemAt(i).widget())
               for i in range(1,layout.count()) if not layout.itemAt(i).widget().isHidden()]
-        expected=['线路车库','开线日期','最近改线日期','geometry_km']
+        expected=['运营时间','线路车库','开线日期','最近改线日期','geometry_km']
         if direction=='whole':expected+=['地图里程']
         expected+=['单程时间','核定速度','站点数']
         assert keys[:len(expected)]==expected
+
+
+def test_single_line_shows_export_service_times_and_requests_details(qt_application):
+    from map_line_presentation import line_information
+    from map_preset_panels import SingleLinePanel
+    from map_service_time import operating_time_text
+    from line_schedule import prepare_schedule
+
+    route = catalog()[0]
+    def schedule(*times):
+        return prepare_schedule([{'time': time} for time in times])
+
+    session = {'lines': [{'对象ID': route.id, '时刻表': {
+        '周一至周四': schedule('06:00', '07:00', '08:00', '09:00', '15:00', '16:00', '17:00',
+                              '18:00', '19:00', '20:00', '21:00', '22:00'),
+        '周五': schedule('07:00', '08:00'), '周六': schedule('08:00', '09:00'),
+        '周日': schedule('09:00', '10:00')}}]}
+    panel = SingleLinePanel()
+    panel.resize(320, 680)
+    panel.show()
+    try:
+        assert panel.route_detail_button.isHidden()
+        info = line_information(session, route.id, route=route)
+        panel.set_route(route, None, 8, 0, information=info)
+        qt_application.processEvents()
+        text = operating_time_text(session, route.id, route=route)
+        assert '06:00-09:00、15:00-22:00' in text
+        assert info['sections'][0][2][0] == ('运营时间', '运营时间', text)
+        assert panel.information_captions['运营时间'].text() == '首末班时间'
+        rows = panel.information_labels['运营时间'].text().splitlines()
+        assert len(rows) > 1 and not any(row.endswith(('，', '、')) for row in rows)
+        spy = QSignalSpy(panel.detailRequested)
+        QTest.mouseClick(panel.route_detail_button, Qt.MouseButton.LeftButton)
+        assert spy.count() == 1 and spy.at(0)[0] == route.id
+        panel.set_route(None, None, None, None)
+        assert panel.route_detail_button.isHidden()
+    finally:
+        panel.close()
 
 
 def test_replacing_information_schema_hides_old_rows_immediately(qt_application):

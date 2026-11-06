@@ -2,12 +2,13 @@
 from collections.abc import Mapping
 from display_rules import display_mode
 from line_query_page import line_display_value, line_query_name, shown
-from map_service_time import session_line
+from map_service_time import operating_time_text, session_line
 from report_model import display_company
 
 
 # Preserve the detail page's field order within the two requested categories.
 _LINE_FIELDS = (
+    ('运营时间', '运营时间', ''),
     ('线路车库', '线路车库', ''),
     ('开线日期', '开线日期', ''),
     ('最近改线日期', '最近改线日期', ''),
@@ -30,7 +31,7 @@ _PASSENGER_FIELDS = (
 )
 
 
-def line_information(session, route_id, *, direction_metrics=None):
+def line_information(session, route_id, *, direction_metrics=None, route=None):
     """Resolve a unique stable object ID, preserving the line page's missing rules."""
     line = session_line(session, route_id)
     if line is None:
@@ -48,6 +49,9 @@ def line_information(session, route_id, *, direction_metrics=None):
         result=[]
         for key,title,unit in fields:
             if key == '地图里程' and direction != 'whole':
+                continue
+            if key == '运营时间':
+                result.append((key, title, operating_time_text(session, route_id, route=route)))
                 continue
             value = line_display_value(line, key, lines)
             if key == '站点数' and direction != 'whole':

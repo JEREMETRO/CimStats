@@ -337,6 +337,7 @@ class _MapSurface(QWidget):
 class MapPage(QWidget):
     ready = Signal()
     failed = Signal(str)
+    route_details_requested = Signal(object, object)
     statistics_preparation_started=Signal()
     statistics_preparation_finished=Signal(object)
     export_context_changed=Signal()
@@ -452,6 +453,8 @@ class MapPage(QWidget):
             self.single_list_panel.routeSelected.connect(lambda identity:self.show_route(identity,self.save_token))
             self.single_panel=SingleLinePanel(self)
             self.single_panel.routeSelected.connect(lambda identity:self.show_route(identity,self.save_token))
+            self.single_panel.detailRequested.connect(
+                lambda identity: self.route_details_requested.emit(identity, self.save_token))
             self.single_panel.directionChanged.connect(lambda value:self._preset_changed('single',direction=value))
             self.single_panel.deadheadChanged.connect(lambda value:self._preset_changed('single',deadhead=value))
             panels={'lines':self.single_list_panel,'single':self.single_panel}
@@ -961,7 +964,7 @@ class MapPage(QWidget):
             self.single_panel.set_state(dict(self.presets.state('single')['query'],selected_route_id=identity))
             self.single_panel.set_route(route,facts,
                 metrics.operating_km if metrics else None,metrics.deadhead_km if metrics else None,
-                information=line_information(self.session,identity,direction_metrics=metrics))
+                information=line_information(self.session,identity,direction_metrics=metrics,route=route))
         else:
             self.planning_panel.set_state(self.presets.state('planning')['query'])
 

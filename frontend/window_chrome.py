@@ -255,22 +255,24 @@ class FluentDialog(_ChromeMixin, WindowsFramelessWindowBase, QDialog):
         if QApplication.platformName() != 'offscreen':
             self.windowEffect.disableMaximizeButton(self.winId())
 
+    def _dialog_placement_bounds(self):
+        parent = self.parentWidget()
+        handle = self.windowHandle()
+        owner = handle.transientParent() if parent is None and handle is not None else None
+        screen = owner.screen() if owner is not None else self.screen()
+        available = screen.availableGeometry() if screen is not None else self.geometry()
+        if parent is not None:
+            parent_rect = QRect(parent.mapToGlobal(QPoint()), parent.size())
+        else:
+            parent_rect = owner.geometry() if owner is not None else QRect()
+        visible = parent_rect.intersected(available)
+        return available if visible.isEmpty() else visible
+
     def showEvent(self, event):
         if not self._initial_content_sized:
             self._initial_content_sized = True
             self.adjustSize()
-            parent = self.parentWidget()
-            handle = self.windowHandle()
-            owner = handle.transientParent() if parent is None and handle is not None else None
-            screen = owner.screen() if owner is not None else self.screen()
-            available = screen.availableGeometry() if screen is not None else self.geometry()
-            if parent is not None:
-                parent_rect = QRect(parent.mapToGlobal(QPoint()), parent.size())
-            else:
-                parent_rect = owner.geometry() if owner is not None else QRect()
-            visible = parent_rect.intersected(available)
-            if not visible.isEmpty():
-                available = visible
+            available = self._dialog_placement_bounds()
             self.resize(min(self.width(), max(1, available.width() - 32)),
                         min(self.height(), max(1, available.height() - 32)))
             self.move(available.center() - self.rect().center())

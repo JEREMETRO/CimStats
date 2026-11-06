@@ -173,6 +173,7 @@ def test_city_legend_toggle_can_hide_all_and_persists_without_changing_average(t
     assert set(panel.legend_buttons) == {'平均', 'WhiteCollar'}
     assert panel.chart_views[0].hidden == {'平均', 'WhiteCollar'}
     assert not panel.chart_views[0].visible_series()
+    assert panel.chart_views[0].accessibleName() == '曲线已隐藏，点击图例显示'
     assert widget.tiles['trip-time'].model.value == 50
     widget.close()
     restored = CityDashboard(settings)
@@ -182,6 +183,7 @@ def test_city_legend_toggle_can_hide_all_and_persists_without_changing_average(t
     panel.legend_buttons['WhiteCollar'].click()
     assert restored.selected_curves == ('WhiteCollar',)
     assert panel.legend_buttons['WhiteCollar'].isChecked()
+    assert '曲线已隐藏' not in panel.chart_views[0].accessibleName()
     assert restored.snapshot is snap
     restored.close()
 

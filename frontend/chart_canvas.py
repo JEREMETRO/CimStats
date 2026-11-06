@@ -143,6 +143,7 @@ class ChartData:
     donut_legend: bool = True        # paired charts can share their host's category legend
     center_key: str = ''            # optional category whose visibility also controls the center
     donut_value_labels: bool = False
+    hidden_series_text: str = ''
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -355,6 +356,8 @@ class ChartCanvas(QWidget):
         settle_surface_motion(self)
         self.touch_cancel(clear_inspection=True)
         self.hidden = set(keys)
+        if self.data is not None and self.data.hidden_series_text:
+            self.setAccessibleName(self._accessible_summary())
         self.update()
 
     def set_axis(self, spec: AxisSpec | None) -> None:
@@ -414,10 +417,22 @@ class ChartCanvas(QWidget):
     # -------------------------------------------------------------- helpers
     def _accessible_summary(self) -> str:
         data = self.data
-        if not data or not self.has_values():
-            return data.empty_text if data else ''
+        if data is None:
+            return ''
+        message = self._empty_message()
+        if message:
+            return message
         names = '、'.join(item.name for item in data.series[:6])
         return f'{len(data.labels)} 个数据点 · {names}'
+
+    def _empty_message(self) -> str:
+        if self.data is None:
+            return '暂无可用数据'
+        if not self.has_values():
+            return self.data.empty_text
+        if self.data.hidden_series_text and not self.visible_series():
+            return self.data.hidden_series_text
+        return ''
 
     def _metrics(self, font=None) -> QFontMetricsF:
         return QFontMetricsF(font or self._font)
@@ -559,10 +574,11 @@ class ChartCanvas(QWidget):
         self._slices = []
         self._bar_hits = []
         data = self.data
-        if data is None or not self.has_values():
+        message = self._empty_message()
+        if message:
+            self._plot = QRectF()
             painter.setPen(QColor(tokens.TEXT_SECONDARY))
-            painter.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter,
-                             data.empty_text if data else '暂无可用数据')
+            painter.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter, message)
             return
         if data.kind == 'donut':
             previous = getattr(self, '_donut_body_only', False)
