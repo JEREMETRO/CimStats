@@ -155,6 +155,59 @@ def test_range_dialog_fits_content_instead_of_frame_default(app):
     dialog.close()
 
 
+def test_range_picker_keeps_native_owner_painted_on_first_open(app):
+    if app.platformName() != 'windows':
+        pytest.skip('requires the Windows desktop compositor')
+    import win32con
+    import win32gui
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QLabel
+    from stats_range_picker import RangePicker
+    from window_chrome import FluentMainWindow
+    from window_workarea import fit_window_to_workarea
+
+    owner = FluentMainWindow()
+    owner.setCentralWidget(QLabel('Owner contents', owner))
+    owner.centralWidget().setStyleSheet('background:#17345b; color:white;')
+    owner.resize(960, 680)
+    fit_window_to_workarea(owner, center=True)
+    owner.show()
+    owner.raise_()
+    owner.activateWindow()
+    QTest.qWait(350)
+    handle = int(owner.winId())
+    point = win32gui.ClientToScreen(handle, (60, 100))
+
+    def screen_color():
+        dc = win32gui.GetDC(0)
+        try:
+            return win32gui.GetPixel(dc, *point)
+        finally:
+            win32gui.ReleaseDC(0, dc)
+
+    dialog = None
+    try:
+        expected = screen_color()
+        assert expected == 0x5b3417
+        dialog = RangePicker(datetime(2024, 1, 1), datetime(2024, 1, 2), parent=owner)
+        constructed = screen_color()
+        frames = []
+
+        def capture():
+            frames.append((screen_color(), win32gui.GetWindow(int(dialog.winId()), win32con.GW_OWNER)))
+            dialog.reject()
+
+        QTimer.singleShot(15, dialog, capture)
+        QTimer.singleShot(1000, dialog, dialog.reject)
+        dialog.exec()
+        assert constructed == expected
+        assert frames == [(expected, handle)]
+    finally:
+        if dialog is not None:
+            dialog.close()
+        owner.close()
+
+
 def test_short_reminder_dialog_does_not_expand_into_large_empty_area(window):
     from frontend.latest_info_alerts import LatestInfoAlertsPanel
     from PySide6.QtWidgets import QLabel

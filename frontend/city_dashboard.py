@@ -244,7 +244,10 @@ class CityChartPanel(ChartPanel):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._layout_pies() and self.city_controller and not self._detailed:
+        columns_changed = self._layout_pies()
+        paired = self.mode == 'pie' and len(self.chart_views) == 2
+        width_changed = event.size().width() != event.oldSize().width()
+        if paired and (columns_changed or width_changed) and self.city_controller and not self._detailed:
             QTimer.singleShot(0, self.city_controller, self.city_controller._summary_reflow)
 
     def _point_note(self, company, group, bucket, previous):
@@ -400,6 +403,9 @@ class CityDashboard(QWidget):
         for target in targets:
             target.set_presentation(mode, result)
             self._sync_mode_control(target)
+        # The new chart cells and legend post layout requests when rendered.
+        # Measure the card after those requests have settled.
+        QTimer.singleShot(0, self, self._summary_reflow)
         panel.motion.reveal()
 
     def set_snapshot(self, snapshot, comparison_label='对比期'):
@@ -475,7 +481,14 @@ class CityDashboard(QWidget):
         for panel in self.panels.values():
             if panel.mode == 'pie' and panel.result and panel.result.comparison:
                 panel._layout_pies()
-                chart_height = max(chart_height, panel.layout().minimumSize().height())
+                layout = panel.layout()
+                # The legend can wrap at the actual card width. Its generic
+                # minimum size only budgets one line.
+                legend = panel.legend_host
+                margins = layout.contentsMargins()
+                width = max(1, panel.width() - margins.left() - margins.right())
+                wrapped = legend.heightForWidth(width) - legend.minimumSizeHint().height()
+                chart_height = max(chart_height, layout.minimumSize().height() + max(0, wrapped))
         for panel in self.panels.values():
             paired = panel.mode == 'pie' and panel.result and bool(panel.result.comparison)
             if paired:

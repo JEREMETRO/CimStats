@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from window_chrome import FluentDialog
 from qfluentwidgets import CalendarPicker, CheckBox, DateTimeEdit, PrimaryPushButton, PushButton
 from stats_motion import attach_surface_reveal
@@ -16,7 +16,10 @@ class RangePicker(FluentDialog):
     """Return a half-open interval; in date-only mode the last day is included."""
 
     def __init__(self, start: datetime, end: datetime, *, title: str = '自定义时间', parent=None):
-        super().__init__(parent)
+        owner = None
+        if parent is not None and QApplication.platformName() == 'windows':
+            owner = parent.window().windowHandle()
+        super().__init__(None if owner is not None else parent)
         self.setWindowTitle(title)
         self.setObjectName('statsRangePicker')
         self.setMinimumWidth(520)
@@ -82,6 +85,10 @@ class RangePicker(FluentDialog):
         self.time_toggle.setChecked(timed)
         self.time_toggle.blockSignals(False)
         self._time_mode_changed(timed)
+        if owner is not None:
+            # Building a QWidget-owned native dialog can clear the owner's
+            # first composited frame. Attach the completed window instead.
+            self.windowHandle().setTransientParent(owner)
 
     def _edit(self, value: datetime) -> DateTimeEdit:
         edit = DateTimeEdit(self)

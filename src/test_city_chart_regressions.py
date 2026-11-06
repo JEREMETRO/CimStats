@@ -2,6 +2,7 @@
 from datetime import datetime as D, timedelta
 
 import pytest
+from PySide6.QtCore import QRectF
 from PySide6.QtWidgets import QApplication, QMainWindow, QScrollArea
 
 from city_dashboard import CityDashboard
@@ -39,6 +40,34 @@ def city_window(monkeypatch, comparison=False):
     window.show()
     QApplication.processEvents()
     return window, dashboard
+
+
+@pytest.mark.parametrize(('width', 'stacked'), [(720, True), (864, False)])
+def test_city_comparison_card_displays_both_rings_after_mode_change(width, stacked):
+    app = QApplication.instance() or QApplication([])
+    dashboard = CityDashboard()
+    try:
+        dashboard.resize(width, 1800)
+        dashboard.set_snapshot(city_snapshot())
+        dashboard.reflow(width, 480)
+        dashboard.show()
+        app.processEvents()
+        dashboard.set_snapshot(city_snapshot(comparison=True), '上一等长区间')
+        app.processEvents()
+        app.processEvents()
+        panel = dashboard.panels['city-mode-share']
+        first, second = panel.chart_views
+        assert (first.parentWidget().y() < second.parentWidget().y()) == stacked
+        if stacked:
+            assert panel.legend_host.heightForWidth(panel.legend_host.width()) > panel.legend_host.sizeHint().height()
+        for view in panel.chart_views:
+            view.grab()
+            sector = view._slices[0]
+            center, radius = sector['center'], sector['outer']
+            ring = QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
+            assert QRectF(view.visibleRegion().boundingRect()).contains(ring)
+    finally:
+        dashboard.close()
 
 
 @pytest.mark.parametrize('comparison', [False, True])

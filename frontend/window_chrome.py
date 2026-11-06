@@ -259,13 +259,18 @@ class FluentDialog(_ChromeMixin, WindowsFramelessWindowBase, QDialog):
         if not self._initial_content_sized:
             self._initial_content_sized = True
             self.adjustSize()
-            screen = self.screen()
-            available = screen.availableGeometry() if screen is not None else self.geometry()
             parent = self.parentWidget()
+            handle = self.windowHandle()
+            owner = handle.transientParent() if parent is None and handle is not None else None
+            screen = owner.screen() if owner is not None else self.screen()
+            available = screen.availableGeometry() if screen is not None else self.geometry()
             if parent is not None:
-                visible = QRect(parent.mapToGlobal(QPoint()), parent.size()).intersected(available)
-                if not visible.isEmpty():
-                    available = visible
+                parent_rect = QRect(parent.mapToGlobal(QPoint()), parent.size())
+            else:
+                parent_rect = owner.geometry() if owner is not None else QRect()
+            visible = parent_rect.intersected(available)
+            if not visible.isEmpty():
+                available = visible
             self.resize(min(self.width(), max(1, available.width() - 32)),
                         min(self.height(), max(1, available.height() - 32)))
             self.move(available.center() - self.rect().center())
