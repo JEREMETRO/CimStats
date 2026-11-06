@@ -298,7 +298,8 @@ class CityDashboard(QWidget):
         self.panels, self.tiles = {}, {}
         if settings:
             saved = settings.value('city/curves', ['平均'])
-            self.selected_curves = tuple(saved) if isinstance(saved, (list, tuple)) else ('平均',)
+            if isinstance(saved, (list, tuple)) and saved:
+                self.selected_curves = tuple(saved)
             saved_mode = settings.value('city/mode', '')
             self.mode_preference = saved_mode if saved_mode in ('pie', 'line') else None
         box = QVBoxLayout(self)

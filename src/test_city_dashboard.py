@@ -159,7 +159,7 @@ def test_city_fullscreen_keeps_selected_curves_mode_and_legend():
     widget.close()
 
 
-def test_city_legend_toggle_can_hide_all_and_persists_without_changing_average(tmp_path):
+def test_city_legend_can_hide_all_and_restarts_with_average(tmp_path):
     from city_dashboard import CityDashboard
     from PySide6.QtCore import QSettings
     QApplication.instance() or QApplication([])
@@ -175,11 +175,17 @@ def test_city_legend_toggle_can_hide_all_and_persists_without_changing_average(t
     assert not panel.chart_views[0].visible_series()
     assert panel.chart_views[0].accessibleName() == '曲线已隐藏，点击图例显示'
     assert widget.tiles['trip-time'].model.value == 50
+    widget.set_snapshot(snap, '新对比期')
+    assert widget.selected_curves == () and not panel.chart_views[0].visible_series()
     widget.close()
     restored = CityDashboard(settings)
     restored.set_snapshot(snap)
     panel = restored.panels['trip-time']
-    assert all(not button.isChecked() for button in panel.legend_buttons.values())
+    assert restored.selected_curves == ('平均',)
+    assert panel.legend_buttons['平均'].isChecked()
+    assert not panel.legend_buttons['WhiteCollar'].isChecked()
+    assert [series.key for series in panel.chart_views[0].visible_series()] == ['平均']
+    panel.legend_buttons['平均'].click()
     panel.legend_buttons['WhiteCollar'].click()
     assert restored.selected_curves == ('WhiteCollar',)
     assert panel.legend_buttons['WhiteCollar'].isChecked()
